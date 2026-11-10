@@ -16,6 +16,7 @@
   <Config Name="WebUI Port" Target="8790" Default="8790" Mode="tcp" Description="Web interface" Type="Port" Display="always" Required="true" Mask="false">8790</Config>
   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/omniarr" Mode="rw" Description="Database and TRaSH Guides cache" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/omniarr</Config>
   <Config Name="Data" Target="/data" Default="/mnt/user/data" Mode="rw" Description="Share holding both usenet downloads and media (TRaSH layout) so imports are instant" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/data</Config>
+  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/data/usenet" Mode="rw" Description="Where the built-in downloader saves files (unpacked into completed/movies and completed/tv, then moved into your library). A folder on the same share as your media makes those moves instant" Type="Path" Display="always" Required="false" Mask="false">/mnt/user/data/usenet</Config>
   <Config Name="PUID" Target="PUID" Default="99" Description="" Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Description="" Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
   <Config Name="UMASK" Target="UMASK" Default="002" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">002</Config>

@@ -574,7 +574,8 @@ async def copy_servers():
 async def downloader_status():
     s = db.get_settings()
     out = {"client": s["download_client"], "installed": downloader.installed(), "running": downloader.running(),
-           "servers": len(downloader.servers()), "download_dir": s["download_dir"], "ok": False}
+           "servers": len(downloader.servers()), "download_dir": downloader.download_dir(),
+           "downloads_mapped": os.path.isdir(downloader.DOWNLOADS_MOUNT), "ok": False}
     try:
         st = await nzbget.status()
         out.update(ok=True, version=await nzbget.version(), speed=st.get("DownloadRate", 0),
@@ -583,7 +584,7 @@ async def downloader_status():
     except Exception as e:  # noqa: BLE001
         out["message"] = str(e)
     if s["download_client"] == "builtin":
-        out["free"] = downloader.disk_free(s["download_dir"])
+        out["free"] = downloader.disk_free(downloader.download_dir())
     return out
 
 

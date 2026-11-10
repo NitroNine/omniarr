@@ -21,3 +21,5 @@ services:
       # One share containing both downloads and media lets imports use
       # instant hardlinks/moves (TRaSH recommended layout).
       - /mnt/user/data:/data
+      # Built-in downloader's folder (optional; without it downloads go to /data/usenet)
+      - /mnt/user/data/usenet:/downloads

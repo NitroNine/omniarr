@@ -108,7 +108,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Downloads. "builtin" = the NZBGet that ships inside Omniarr (servers set in Omniarr);
     # "external" = a separate NZBGet reached at nzbget_url.
     "download_client": "builtin",
-    "download_dir": "/data/usenet",  # built-in: completed downloads land in <dir>/completed/<category>
+    # built-in: completed downloads land in <dir>/completed/<category>. Empty = the Downloads path
+    # from the Unraid template (/downloads) when it's mapped, else /data/usenet.
+    "download_dir": "",
     "download_speed_limit": 0,  # built-in: KB/s, 0 = unlimited
     "_downloader_password": "",  # built-in: generated, localhost-only control password
     # external NZBGet

@@ -61,6 +61,8 @@ if docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then
   docker rm -f "$NAME" >/dev/null
 fi
 
+mkdir -p "$DATA_SHARE/usenet" && chown 99:100 "$DATA_SHARE/usenet" 2>/dev/null || true
+
 say "Starting $NAME"
 docker run -d \
   --name "$NAME" \
@@ -69,6 +71,7 @@ docker run -d \
   -e PUID="$PUID" -e PGID="$PGID" -e UMASK=002 -e TZ="$TZ_VALUE" \
   -v "$APPDATA:/config" \
   -v "$DATA_SHARE:/data" \
+  -v "$DATA_SHARE/usenet:/downloads" \
   -l net.unraid.docker.managed=dockerman \
   -l "net.unraid.docker.webui=http://[IP]:[PORT:$PORT]/" \
   "$NAME:latest" >/dev/null

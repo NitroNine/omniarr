@@ -19,6 +19,7 @@ from .. import db
 log = logging.getLogger("omniarr.downloader")
 
 APP_DIR = os.environ.get("OMNIARR_NZBGET_DIR", "/opt/nzbget")
+DOWNLOADS_MOUNT = os.environ.get("OMNIARR_DOWNLOADS", "/downloads")  # the template's Downloads path
 PORT = 16789  # inside the container only; never published
 USERNAME = "omniarr"
 
@@ -54,6 +55,14 @@ def url() -> str:
     return f"http://127.0.0.1:{PORT}"
 
 
+def download_dir() -> str:
+    """The folder set in Settings, else the Downloads path from the container setup, else /data/usenet."""
+    chosen = (db.setting("download_dir") or "").strip().rstrip("/")
+    if chosen:
+        return chosen
+    return DOWNLOADS_MOUNT if os.path.isdir(DOWNLOADS_MOUNT) else "/data/usenet"
+
+
 def servers() -> list[dict]:
     return db.q("SELECT * FROM usenet_servers ORDER BY level, id")
 
@@ -68,7 +77,7 @@ def _cert_store() -> str:
 def options() -> dict[str, str]:
     """Every option Omniarr sets; anything else keeps NZBGet's own default."""
     s = db.get_settings()
-    main = s["download_dir"].rstrip("/") or "/data/usenet"
+    main = download_dir()
     cfg = conf_dir()
     rate = max(0, int(s.get("download_speed_limit") or 0))  # KB/s, 0 = unlimited
     opts = {
@@ -165,7 +174,7 @@ def write_config() -> str:
     os.makedirs(conf_dir(), exist_ok=True)
     for d in ("nzb", "queue", "scripts"):
         os.makedirs(os.path.join(conf_dir(), d), exist_ok=True)
-    main = db.setting("download_dir") or "/data/usenet"
+    main = download_dir()
     try:
         os.makedirs(main, exist_ok=True)
     except OSError as e:

@@ -109,10 +109,11 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 | Port | `8790` |
 | `/config` | `/mnt/user/appdata/omniarr` |
 | `/data` | `/mnt/user/data` (one share holding both `usenet/` downloads and `media/`) |
+| `/downloads` | `/mnt/user/data/usenet` — where the built-in downloader saves files (optional; changeable any time in the container's Edit screen) |
 | `PUID` / `PGID` | `99` / `100` |
 | `OMNIARR_PASSWORD` | optional; creates the admin account on first start (otherwise the web UI asks you to create one) |
 
-**Paths:** follow TRaSH's folder layout. The built-in downloader saves to `/data/usenet` (changeable under **Settings → Downloads**), on the same share as your media, so moves into the library are instant and the `hardlink` import mode works. Using a separate NZBGet instead? Give it the same `/data` mapping, or set the remote path mapping under **Settings → Downloads**.
+**Paths:** follow TRaSH's folder layout. The built-in downloader saves to the **Downloads** path from the container settings (`/downloads`; without one, `/data/usenet`). Keep it on the same share as your media, so moves into the library are instant and the `hardlink` import mode works. Using a separate NZBGet instead? Give it the same `/data` mapping, or set the remote path mapping under **Settings → Downloads**.
 
 ### First-run setup (web UI at `http://<unraid-ip>:8790`)
 

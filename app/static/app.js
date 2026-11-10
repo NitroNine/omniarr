@@ -659,9 +659,9 @@ async function renderDownloads(el, s) {
   el.innerHTML = `<div class="form" id="dlform">
     <label>Downloader</label><div>${formRows([["download_client", "", [["builtin", "Built-in (recommended)"], ["external", "A separate NZBGet"]]]], s).replace(/^<label><\/label>/, "")} ${state}</div>
     ${builtin ? formRows([
-      ["download_dir", "Download folder", "folder", "Downloads are unpacked into <code>completed/movies</code> and <code>completed/tv</code> in here, then moved into your library. Keep it on the same share as your media (e.g. <code>/data/usenet</code>) so moves are instant."],
+      ["download_dir", "Download folder", "folder", `Leave empty to use the <b>Downloads</b> folder from the Unraid container settings${st && st.downloads_mapped ? " (<code>/downloads</code>)" : " (not set there, so <code>/data/usenet</code> is used)"}. Change it in Unraid: Docker tab → Omniarr → Edit → Downloads. Downloads are unpacked into <code>completed/movies</code> and <code>completed/tv</code> in here, then moved into your library.`],
       ["download_speed_limit", "Speed limit (KB/s)", "number", "0 = no limit."],
-    ], s) : formRows([
+    ], s).replace(`data-k="download_dir" value=""`, `data-k="download_dir" value="" placeholder="${esc((st && st.download_dir) || "/downloads")}"`) : formRows([
       ["nzbget_url", "NZBGet URL", "text", "e.g. http://192.168.1.10:6789"],
       ["nzbget_username", "Username", "text"], ["nzbget_password", "Password", "password"],
       ["remote_path_from", "Remote path (NZBGet)", "text", "If NZBGet sees downloads at a different path, e.g. /downloads/completed"],
@@ -737,7 +737,7 @@ async function pickFolder(input) {
       await draw(r.path);
     });
   };
-  await draw(input.value || "");
+  await draw(input.value || input.placeholder || "");
 }
 function collect(el) {
   const out = {};

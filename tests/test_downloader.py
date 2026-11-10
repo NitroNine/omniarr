@@ -159,3 +159,14 @@ def test_settings_cannot_set_internal_keys(client, monkeypatch):
     client.put("/api/settings", json={"_downloader_password": "hacked", "download_speed_limit": 10})
     assert downloader.control_password() == pw and db.setting("download_speed_limit") == 10
     assert "_downloader_password" not in client.get("/api/settings").json()
+
+
+def test_download_folder_follows_container_setup(env, tmp_path, monkeypatch):
+    mount = tmp_path / "downloads"
+    monkeypatch.setattr(downloader, "DOWNLOADS_MOUNT", str(mount))
+    assert downloader.download_dir() == "/data/usenet"  # no Downloads path in the container setup
+    mount.mkdir()
+    assert downloader.download_dir() == str(mount)  # mapped in the Unraid template -> used
+    assert downloader.options()["MainDir"] == str(mount)
+    db.save_settings({"download_dir": "/data/elsewhere/"})
+    assert downloader.download_dir() == "/data/elsewhere"  # chosen in Settings wins
