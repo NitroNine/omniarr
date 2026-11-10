@@ -446,9 +446,12 @@ async def test_nzbget():
 @app.get("/api/lookup/movie")
 async def lookup_movie(term: str):
     res = await metadata.search_movies(term)
-    have = {r["tmdb_id"] for r in db.q("SELECT tmdb_id FROM movies")}
+    have: dict[int, list[str]] = {}
+    for r in db.q("SELECT tmdb_id, tier FROM movies ORDER BY tier"):
+        have.setdefault(r["tmdb_id"], []).append(r["tier"])
     for r in res:
-        r["in_library"] = r["tmdb_id"] in have
+        r["library_tiers"] = have.get(r["tmdb_id"], [])
+        r["in_library"] = len(r["library_tiers"]) == len(library.TIERS)
 
     # say which of the top results belong to a collection, so the UI can offer "add whole collection"
     async def coll(r):
@@ -534,7 +537,7 @@ def edit_collection(cid: int, body: dict):
     data = {}
     if "monitored" in body:
         data["monitored"] = int(bool(body["monitored"]))
-    if body.get("tier") in library.TIERS:
+    if body.get("tier") in (*library.TIERS, "both"):
         data["tier"] = body["tier"]  # applies to movies added from now on
     db.update("collections", cid, data)
     return {"ok": True}
@@ -560,10 +563,12 @@ class AddMovie(BaseModel):
 
 @app.post("/api/movies")
 async def add_movie(body: AddMovie):
-    m = await library.add_movie(body.tmdb_id, body.tier, body.monitored)
-    if body.search and body.monitored and library.movie_available(m):
-        asyncio.create_task(_job(f"search-movie-{m['id']}", lambda: search.search_movie(m["id"])))
-    return m
+    """tier: hd | uhd | both. Adds the versions that aren't in the library yet."""
+    added = await library.add_movie_tiers(body.tmdb_id, body.tier, body.monitored)
+    for m in added:
+        if body.search and body.monitored and library.movie_available(m):
+            asyncio.create_task(_job(f"search-movie-{m['id']}", lambda mid=m["id"]: search.search_movie(mid)))
+    return {**added[0], "added": [{"id": m["id"], "tier": m["tier"]} for m in added]}
 
 
 @app.get("/api/movies")
@@ -581,6 +586,7 @@ def get_movie(mid: int, request: Request = None):
     m = db.one("SELECT * FROM movies WHERE id=?", (mid,))
     if not m:
         raise HTTPException(404)
+    m["versions"] = _versions("movie", m)
     if request is not None and not _is_admin(request):
         m["file_path"] = bool(m["file_path"]) or None
         m["history"], m["path"] = [], ""
@@ -588,6 +594,20 @@ def get_movie(mid: int, request: Request = None):
     m["history"] = db.q("SELECT * FROM downloads WHERE kind='movie' AND movie_id=? ORDER BY id DESC", (mid,))
     m["path"] = library.movie_dir(m)
     return m
+
+
+def _versions(kind: str, item: dict) -> list[dict]:
+    out = []
+    for v in library.versions(kind, item):
+        if kind == "movie":
+            have, total = int(bool(v["file_path"])), 1
+        else:
+            c = db.one("SELECT SUM(file_path IS NOT NULL) have, SUM(season>0 AND air_date<=date('now')) aired "
+                       "FROM episodes WHERE series_id=?", (v["id"],))
+            have, total = c["have"] or 0, c["aired"] or 0
+        out.append({"id": v["id"], "tier": v["tier"], "monitored": v["monitored"], "have": have, "total": total,
+                    "file_quality": v.get("file_quality")})
+    return out
 
 
 @app.put("/api/movies/{mid}")
@@ -601,11 +621,8 @@ def edit_movie(mid: int, body: dict):
 
 @app.delete("/api/movies/{mid}")
 def delete_movie(mid: int, delete_files: bool = False):
-    m = db.one("SELECT * FROM movies WHERE id=?", (mid,))
-    if m and delete_files and os.path.isdir(library.movie_dir(m)):
-        import shutil
-        shutil.rmtree(library.movie_dir(m), ignore_errors=True)
-    db.ex("DELETE FROM movies WHERE id=?", (mid,))
+    """Removes this version; the other version (if any) and its files stay."""
+    library.delete_version("movie", mid, delete_files)
     return {"ok": True}
 
 
@@ -618,11 +635,11 @@ async def search_movie(mid: int, interactive: bool = False):
 @app.get("/api/lookup/series")
 async def lookup_series(term: str):
     res = await metadata.search_series(term)
-    rows = db.q("SELECT tvdb_id, tmdb_id FROM series")
-    have_tvdb = {r["tvdb_id"] for r in rows if r["tvdb_id"]}
-    have_tmdb = {r["tmdb_id"] for r in rows if r["tmdb_id"]}
+    rows = db.q("SELECT tvdb_id, tmdb_id, tier FROM series ORDER BY tier")
     for r in res:
-        r["in_library"] = (r.get("tvdb_id") in have_tvdb) or (r.get("tmdb_id") in have_tmdb)
+        r["library_tiers"] = sorted({x["tier"] for x in rows if (r.get("tvdb_id") and x["tvdb_id"] == r["tvdb_id"])
+                                     or (r.get("tmdb_id") and x["tmdb_id"] == r["tmdb_id"])})
+        r["in_library"] = len(r["library_tiers"]) == len(library.TIERS)
     return res
 
 
@@ -636,10 +653,12 @@ class AddSeries(BaseModel):
 
 @app.post("/api/series")
 async def add_series(body: AddSeries):
-    s = await library.add_series(body.tvdb_id, body.tier, body.monitor, tmdb_id=body.tmdb_id)
-    if body.search and body.monitor != "none":
-        asyncio.create_task(_job(f"search-series-{s['id']}", lambda: search.search_series(s["id"])))
-    return s
+    """tier: hd | uhd | both. monitor 'same' copies episode monitoring from the other version."""
+    added = await library.add_series_tiers(body.tvdb_id, body.tier, body.monitor, tmdb_id=body.tmdb_id)
+    for s in added:
+        if body.search and body.monitor != "none":
+            asyncio.create_task(_job(f"search-series-{s['id']}", lambda sid=s["id"]: search.search_series(sid)))
+    return {**added[0], "added": [{"id": s["id"], "tier": s["tier"]} for s in added]}
 
 
 @app.get("/api/series")
@@ -656,6 +675,7 @@ def get_series(sid: int, request: Request = None):
     s = db.one("SELECT * FROM series WHERE id=?", (sid,))
     if not s:
         raise HTTPException(404)
+    s["versions"] = _versions("tv", s)
     s["episodes"] = db.q("SELECT * FROM episodes WHERE series_id=? ORDER BY season DESC, episode DESC", (sid,))
     s["path"] = library.series_dir(s)
     active = {}
@@ -693,12 +713,8 @@ def monitor_episodes(body: dict):
 
 @app.delete("/api/series/{sid}")
 def delete_series(sid: int, delete_files: bool = False):
-    s = db.one("SELECT * FROM series WHERE id=?", (sid,))
-    if s and delete_files and os.path.isdir(library.series_dir(s)):
-        import shutil
-        shutil.rmtree(library.series_dir(s), ignore_errors=True)
-    db.ex("DELETE FROM episodes WHERE series_id=?", (sid,))
-    db.ex("DELETE FROM series WHERE id=?", (sid,))
+    """Removes this version; the other version (if any) and its files stay."""
+    library.delete_version("tv", sid, delete_files)
     return {"ok": True}
 
 

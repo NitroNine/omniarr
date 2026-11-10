@@ -9,6 +9,9 @@ moved to local; this file carries the context over.
   `tvdb_id` from TMDB's external ids for indexer searches and `{tvdb-…}` folder names).
 - **TRaSH Guides** synced from GitHub (`app/trash/`): quality profiles, custom formats
   (.NET regexes via the `regex` module), scores, size limits, naming formats.
+- **Versions:** each `movies`/`series` row is one version ("tier" hd/uhd); a title can have both
+  rows (UNIQUE(tmdb_id, tier)), sharing a folder when the hd/uhd root folders are the same
+  (`library.versions/sibling/shares_folder`). Adding takes tier hd | uhd | both.
 - **1080p vs 4K libraries** ("tier" hd/uhd) for movies and TV, each with its own root folder
   and TRaSH profile; per-library **quality limits** override (allowed qualities, upgrade-until
   cutoff, upgrades on/off, CF score cutoff) in setting `quality_overrides`.

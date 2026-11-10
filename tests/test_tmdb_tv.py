@@ -63,16 +63,17 @@ def test_add_show_from_tmdb(env, monkeypatch):
     assert [(e["season"], e["episode"]) for e in eps] == [(0, 1), (1, 1), (1, 2), (1, 3), (2, 1), (2, 2)]
     assert [e["absolute"] for e in eps] == [None, 1, 2, 3, 4, 5]
     assert eps[0]["monitored"] == 0  # specials not monitored
-    # adding the same show by its TheTVDB id is caught as a duplicate
+    # adding the same version by its TheTVDB id is caught as a duplicate
     try:
-        asyncio.run(library.add_series(121361, "hd"))
+        asyncio.run(library.add_series(121361, "uhd"))
         raise AssertionError("duplicate allowed")
     except ValueError as e:
         assert "already" in str(e)
     # refresh keeps working
     SEASONS[(1399, 2)][1]["air_date"] = "2012-04-08"
     asyncio.run(library.refresh_series(s["id"]))
-    assert db.one("SELECT air_date FROM episodes WHERE season=2 AND episode=2")["air_date"] == "2012-04-08"
+    assert db.one("SELECT air_date FROM episodes WHERE series_id=? AND season=2 AND episode=2",
+                  (s["id"],))["air_date"] == "2012-04-08"
 
 
 def test_show_without_tvdb_id_and_indexer_fallback(env, monkeypatch):
@@ -110,7 +111,8 @@ def test_request_tv_without_tvdb(client, monkeypatch):
     assert r["status"] == "approved" and r["source"] == "tmdb" and r["title"] == "Brand New Show"
     assert db.one("SELECT tmdb_id FROM series")["tmdb_id"] == 999
     # lookups mark it as in the library
-    assert client.get("/api/lookup/series", params={"term": "tmdb:999"}).json()[0]["in_library"]
+    hit = client.get("/api/lookup/series", params={"term": "tmdb:999"}).json()[0]
+    assert hit["library_tiers"] == ["hd"] and not hit["in_library"]  # the 4K version can still be added
 
 
 def test_migrates_v1_series_table(tmp_path):

@@ -103,8 +103,11 @@ def test_user_permissions_and_approval(client, monkeypatch):
     d = client.post(f"/api/requests/{r2['id']}/decline", json={"note": "Not on this server"}).json()
     assert d["status"] == "declined" and d["note"] == "Not on this server"
     assert db.one("SELECT COUNT(*) c FROM series")["c"] == 0
-    # already in the library -> can't request
-    assert kid.post("/api/requests", json={"kind": "movie", "tmdb_id": 5}).status_code == 400
+    # already in the library in 4K -> can't request 4K again, but the 1080p version can be requested
+    assert client.post("/api/requests", json={"kind": "movie", "tmdb_id": 5, "tier": "uhd"}).status_code == 400
+    r3 = kid.post("/api/requests", json={"kind": "movie", "tmdb_id": 5, "tier": "hd", "search": False}).json()
+    assert r3["status"] == "pending"
+    kid.delete(f"/api/requests/{r3['id']}")
 
     # other users' requests are private
     client.post("/api/users", json={"username": "sis", "password": "sispassword"})

@@ -22,7 +22,21 @@ Movies and TV in one self-hosted app, built for Unraid:
 | TV, 1080p and lower | `/data/media/tv` | WEB-1080p |
 | TV, 4K | `/data/media/tv-4k` | WEB-2160p |
 
-You choose the library when you add a title. The profile decides which releases are allowed: for example, the 1080p library never grabs a 2160p release. All four profiles can be changed to any TRaSH profile (Remux, SQP, Anime, French, German, …) under **Settings → Profiles**.
+When you add a title you choose **1080p**, **4K** or **1080p + 4K**. Each version uses its own profile: for example, the 1080p version never grabs a 2160p release. All four profiles can be changed to any TRaSH profile (Remux, SQP, Anime, French, German, …) under **Settings → Profiles**.
+
+### Both versions in one folder
+
+A title can have a 1080p version, a 4K version, or both. Each version is searched for, downloaded and upgraded on its own. You can add the missing version later from the title's page (**+ Add 4K version**), and remove one version without touching the other.
+
+To keep both versions side by side, set the 1080p and 4K root folders to the same folder under **Settings → Root folders**. The files then sit together in one title folder:
+
+```
+Dune Part Two (2024) {tmdb-693134}/
+  Dune Part Two (2024) {tmdb-693134} - [Bluray-1080p][DTS-HD MA 5.1][x264]-GROUP.mkv
+  Dune Part Two (2024) {tmdb-693134} - [Remux-2160p][TrueHD Atmos 7.1][DV HDR10][HEVC]-GROUP.mkv
+```
+
+Plex, Jellyfin and Emby show these as two versions of one movie and pick the right one for each screen. TRaSH naming puts the quality in the file name, so the two files never collide. With a shared folder, **Library Import** scans it once and adds a version for each quality it finds, and a rescan gives 2160p files to the 4K version and everything else to the 1080p version.
 
 ## Install on Unraid
 

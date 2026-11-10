@@ -6,8 +6,18 @@ let settingsCache = null;
 let ME = null;
 const isAdmin = () => !!ME && ME.role === "admin";
 const canUhd = () => !!ME && (ME.role === "admin" || !!ME.allow_uhd);
-function tierOptions(long = true) {
-  return `<option value="hd">1080p${long ? " library" : ""}</option>${canUhd() ? `<option value="uhd">4K${long ? " library" : ""}</option>` : ""}`;
+// have = versions already in the library: only the missing ones are offered
+function tierOptions(long = true, have = []) {
+  const opts = [["hd", "1080p"], ...(canUhd() ? [["uhd", "4K"], ["both", "1080p + 4K"]] : [])]
+    .filter(([v]) => !(v === "both" ? have.length : have.includes(v)));
+  return opts.map(([v, l]) => `<option value="${v}">${l}${long && v !== "both" ? " library" : ""}</option>`).join("");
+}
+const TIER_LABEL = { hd: "1080p", uhd: "4K", both: "1080p + 4K", auto: "by file" };
+// one entry per title, its versions (1080p / 4K) sorted
+function groupVersions(rows, key) {
+  const m = new Map();
+  rows.forEach((r) => { const k = key(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); });
+  return [...m.values()].map((vs) => vs.sort((a, b) => (a.tier < b.tier ? -1 : 1)));
 }
 
 async function api(path, opts = {}) {
@@ -27,7 +37,44 @@ function toast(msg, err = false) {
 }
 async function guard(fn) { try { return await fn(); } catch (e) { toast(e.message, true); } }
 function size(b) { if (!b) return ""; const g = b / 1073741824; return g >= 1 ? g.toFixed(2) + " GB" : (b / 1048576).toFixed(0) + " MB"; }
-function tierChip(t) { return t === "uhd" ? '<span class="chip uhd">4K</span>' : '<span class="chip hd">1080p</span>'; }
+function tierChip(t) { return t === "uhd" ? '<span class="chip uhd">4K</span>' : t === "hd" ? '<span class="chip hd">1080p</span>' : `<span class="chip">${esc(TIER_LABEL[t] || t)}</span>`; }
+// movie version status: "4K · Bluray-2160p" / "1080p · Missing" / "4K · downloading 40%"
+function movieVerChip(m) {
+  const st = m.download ? [`warn`, `${m.download.status} ${Math.round(m.download.progress)}%`] : m.file_path ? ["ok", m.file_quality] : m.monitored ? ["bad", "Missing"] : ["", "Unmonitored"];
+  return `<span class="chip ${st[0]}">${TIER_LABEL[m.tier]} · ${esc(st[1])}</span>`;
+}
+// versions bar on a title page: switch between versions, or add the missing one
+function versionBar(kind, item) {
+  const page = kind === "movie" ? "movie" : "show";
+  return `<div class="chips versions"><span class="small muted">Versions:</span>${["hd", "uhd"].map((t) => {
+    const v = item.versions.find((x) => x.tier === t);
+    if (v) {
+      const done = v.total && v.have >= v.total;
+      const st = kind === "movie" ? (v.have ? esc(v.file_quality) : "Missing") : `${v.have}/${v.total}`;
+      return `<a class="chip ${t} ${v.id === item.id ? "current" : ""}" href="#/${page}/${v.id}" title="${v.id === item.id ? "Showing this version" : "Open this version"}">${TIER_LABEL[t]} · ${st}${done ? " ✓" : ""}</a>`;
+    }
+    return isAdmin() && (t === "hd" || canUhd()) ? `<button class="small" onclick="addVersion('${kind}', '${t}', this)">+ Add ${TIER_LABEL[t]} version</button>` : "";
+  }).join("")}</div>`;
+}
+async function addVersion(kind, tier, btn) {
+  const it = window._item; btn.disabled = true;
+  await guard(async () => {
+    const r = kind === "movie"
+      ? await api("/movies", { method: "POST", body: { tmdb_id: it.tmdb_id, tier, search: true } })
+      : await api("/series", { method: "POST", body: { tmdb_id: it.tmdb_id || undefined, tvdb_id: it.tvdb_id || undefined, tier, monitor: "same", search: true } });
+    toast(`Added the ${TIER_LABEL[tier]} version — searching`);
+    location.hash = `#/${kind === "movie" ? "movie" : "show"}/${r.added[0].id}`;
+  });
+  btn.disabled = false;
+}
+async function deleteVersion(kind, item) {
+  const others = item.versions.filter((v) => v.id !== item.id);
+  const what = others.length ? `the ${TIER_LABEL[item.tier]} version of ${item.title}` : item.title;
+  if (!confirm(`Remove ${what}?`)) return;
+  const files = confirm(others.length ? `Also delete the ${TIER_LABEL[item.tier]} files from disk? The ${TIER_LABEL[others[0].tier]} version and its files stay.` : "Also delete its files from disk?");
+  await api(`/${kind === "movie" ? "movies" : "series"}/${item.id}?delete_files=${files}`, { method: "DELETE" });
+  location.hash = others.length ? `#/${kind === "movie" ? "movie" : "show"}/${others[0].id}` : `#/${kind === "movie" ? "movies" : "series"}`;
+}
 function poster(url, title) { return url ? `<img loading="lazy" src="${esc(url)}" alt="">` : `<div class="noposter">${esc(title)}</div>`; }
 function modal(html) { $("#modal .modal-body").innerHTML = html; $("#modal").classList.remove("hidden"); }
 function closeModal() { $("#modal").classList.add("hidden"); }
@@ -58,7 +105,7 @@ async function checkBanner() {
 
 // ------------------------------------------------------------- movies ---
 async function renderMovies() {
-  const movies = await api("/movies");
+  const movies = groupVersions(await api("/movies"), (m) => m.tmdb_id);
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Movies <span class="muted small">(${movies.length})</span></h2>
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
     <select id="statf"><option value="">Any status</option><option value="missing">Missing</option><option value="have">Downloaded</option></select>
@@ -66,12 +113,11 @@ async function renderMovies() {
     <a href="#/add"><button class="primary">Add movie</button></a></div><div class="grid" id="g"></div>`;
   const draw = () => {
     const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, st = $("#statf").value;
-    $("#g").innerHTML = movies.filter((m) => (!f || m.title.toLowerCase().includes(f)) && (!t || m.tier === t) && (!st || (st === "have") === !!m.file_path))
-      .map((m) => `<div class="card" onclick="location.hash='#/movie/${m.id}'">${poster(m.poster, m.title)}
+    $("#g").innerHTML = movies.filter((vs) => (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((m) => m.tier === t))
+        && (!st || (st === "have" ? vs.some((m) => m.file_path) : vs.some((m) => !m.file_path && m.monitored))))
+      .map((vs) => { const m = vs[0]; return `<div class="card" onclick="location.hash='#/movie/${m.id}'">${poster(m.poster, m.title)}
         <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
-        <div class="chips">${tierChip(m.tier)}<span class="chip">${m.year || ""}</span>
-        ${m.download ? `<span class="chip warn">${esc(m.download.status)} ${Math.round(m.download.progress)}%</span>` : m.file_path ? `<span class="chip ok">${esc(m.file_quality)}</span>` : m.monitored ? '<span class="chip bad">Missing</span>' : '<span class="chip">Unmonitored</span>'}
-        </div></div></div>`).join("") || '<p class="muted">Nothing here yet.</p>';
+        <div class="chips"><span class="chip">${m.year || ""}</span>${vs.map(movieVerChip).join("")}</div></div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
   };
   ["flt", "tierf", "statf"].forEach((id) => $("#" + id).addEventListener("input", draw));
   draw();
@@ -79,29 +125,34 @@ async function renderMovies() {
 
 async function renderMovie(id) {
   const m = await api("/movies/" + id);
+  window._item = m;
+  const multi = m.versions.length > 1;
   view.innerHTML = `<div class="detail">${m.poster ? `<img src="${esc(m.poster)}" alt="">` : ""}<div class="info">
     <h2>${esc(m.title)} <span class="muted">(${m.year || "?"})</span></h2>
-    <div class="chips">${tierChip(m.tier)}${m.runtime ? `<span class="chip">${m.runtime} min</span>` : ""}
+    <div class="chips">${m.runtime ? `<span class="chip">${m.runtime} min</span>` : ""}
       <a class="chip" target="_blank" rel="noopener" href="https://www.themoviedb.org/movie/${m.tmdb_id}">TMDB</a>
       ${m.imdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.imdb.com/title/${esc(m.imdb_id)}">IMDb</a>` : ""}
       ${m.collection_id ? `<a class="chip" href="javascript:void(0)" onclick="openCollection('collection', ${m.collection_id})">Part of ${esc(m.collection_name)} →</a>` : ""}</div>
     <p>${esc(m.overview)}</p>
+    ${versionBar("movie", m)}
     ${isAdmin() ? `<p class="small muted">Folder: <code>${esc(m.path)}</code></p>` : ""}
-    <p class="small">${m.file_path ? `${isAdmin() ? `File: <code>${esc(m.file_path)}</code> ` : "Downloaded "}<span class="chip ok">${esc(m.file_quality)}</span> <span class="chip">score ${m.file_score}</span> ${size(m.file_size)}` : '<span class="chip bad">Not downloaded yet</span>'}</p>
+    <p class="small"><b>${TIER_LABEL[m.tier]} version:</b> ${m.file_path ? `${isAdmin() ? `File: <code>${esc(m.file_path)}</code> ` : "Downloaded "}<span class="chip ok">${esc(m.file_quality)}</span> <span class="chip">score ${m.file_score}</span> ${size(m.file_size)}` : '<span class="chip bad">Not downloaded yet</span>'}</p>
     <div class="toolbar admin-only">
       <button class="primary" id="as">Automatic search</button><button id="is">Interactive search</button>
-      <select id="tier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
+      ${multi ? "" : '<select id="tier" title="Move to the other library"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>'}
       <label><input type="checkbox" id="mon" ${m.monitored ? "checked" : ""}> Monitored</label>
       <button id="rs">Rescan folder</button>
-      <button class="danger" id="del">Delete</button></div>
+      <button class="danger" id="del">${multi ? `Remove ${TIER_LABEL[m.tier]} version` : "Delete"}</button></div>
     <div class="admin-only"><h3>History</h3>${historyTable(m.history)}</div></div></div>`;
-  $("#tier").value = m.tier;
-  $("#tier").onchange = () => guard(async () => { await api("/movies/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
+  if ($("#tier")) {
+    $("#tier").value = m.tier;
+    $("#tier").onchange = () => guard(async () => { await api("/movies/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
+  }
   $("#mon").onchange = () => guard(() => api("/movies/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
   $("#as").onclick = () => guard(async () => { $("#as").disabled = true; const r = await api(`/movies/${id}/search`, { method: "POST" }); toast(r.some((x) => x.accepted) ? "Release grabbed" : `No acceptable release (${r.length} found)`); route(); });
   $("#is").onclick = () => interactive("movie", id, `/movies/${id}/search?interactive=true`);
   $("#rs").onclick = () => rescan(`/movies/${id}/rescan`);
-  $("#del").onclick = () => guard(async () => { if (!confirm("Remove this movie?")) return; const files = confirm("Also delete its files from disk?"); await api(`/movies/${id}?delete_files=${files}`, { method: "DELETE" }); location.hash = "#/movies"; });
+  $("#del").onclick = () => guard(() => deleteVersion("movie", m));
 }
 
 function historyTable(rows) {
@@ -135,16 +186,16 @@ async function grabRow(kind, itemId, i, btn) {
 
 // ------------------------------------------------------------- series ---
 async function renderSeries() {
-  const series = await api("/series");
+  const series = groupVersions(await api("/series"), (s) => (s.tmdb_id ? "tmdb" + s.tmdb_id : "tvdb" + s.tvdb_id));
   view.innerHTML = `<div class="toolbar"><h2 class="grow">TV <span class="muted small">(${series.length})</span></h2>
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
     <a href="#/add"><button class="primary">Add series</button></a></div><div class="grid" id="g"></div>`;
   const draw = () => {
     const f = $("#flt").value.toLowerCase(), t = $("#tierf").value;
-    $("#g").innerHTML = series.filter((s) => (!f || s.title.toLowerCase().includes(f)) && (!t || s.tier === t))
-      .map((s) => `<div class="card" onclick="location.hash='#/show/${s.id}'">${poster(s.poster, s.title)}
+    $("#g").innerHTML = series.filter((vs) => (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((s) => s.tier === t)))
+      .map((vs) => { const s = vs[0]; return `<div class="card" onclick="location.hash='#/show/${s.id}'">${poster(s.poster, s.title)}
         <div class="meta"><div class="title" title="${esc(s.title)}">${esc(s.title)}</div>
-        <div class="chips">${tierChip(s.tier)}<span class="chip ${s.have >= s.aired && s.aired ? "ok" : ""}">${s.have}/${s.aired}</span>${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}</div></div></div>`).join("") || '<p class="muted">Nothing here yet.</p>';
+        <div class="chips">${vs.map((v) => `<span class="chip ${v.have >= v.aired && v.aired ? "ok" : ""}">${TIER_LABEL[v.tier]} · ${v.have}/${v.aired}</span>`).join("")}${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}</div></div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
   };
   ["flt", "tierf"].forEach((id) => $("#" + id).addEventListener("input", draw));
   draw();
@@ -152,21 +203,24 @@ async function renderSeries() {
 
 async function renderShow(id) {
   const s = await api("/series/" + id);
+  window._item = s;
+  const multi = s.versions.length > 1;
   const seasons = {};
   s.episodes.forEach((e) => (seasons[e.season] = seasons[e.season] || []).push(e));
   const today = new Date().toISOString().slice(0, 10);
   view.innerHTML = `<div class="detail">${s.poster ? `<img src="${esc(s.poster)}" alt="">` : ""}<div class="info">
     <h2>${esc(s.title)} <span class="muted">(${s.year || "?"})</span></h2>
-    <div class="chips">${tierChip(s.tier)}${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}<span class="chip">${esc(s.series_type)}</span>
+    <div class="chips">${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}<span class="chip">${esc(s.series_type)}</span>
       ${s.tmdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.themoviedb.org/tv/${s.tmdb_id}">TMDB</a>` : ""}
       ${s.tvdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://thetvdb.com/dereferrer/series/${s.tvdb_id}">TheTVDB</a>` : ""}</div>
-    <p>${esc(s.overview)}</p>${isAdmin() ? `<p class="small muted">Folder: <code>${esc(s.path)}</code></p>` : ""}
+    <p>${esc(s.overview)}</p>${versionBar("tv", s)}${isAdmin() ? `<p class="small muted">Folder: <code>${esc(s.path)}</code></p>` : ""}
+    ${multi ? `<p class="small"><b>Showing the ${TIER_LABEL[s.tier]} version.</b> Episodes, searches and monitoring below are for this version only.</p>` : ""}
     <div class="toolbar admin-only"><button class="primary" id="as">Search all missing</button><button id="rf">Refresh episode list</button>
-      <select id="tier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
+      ${multi ? "" : '<select id="tier" title="Move to the other library"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>'}
       <select id="stype"><option value="standard">Standard</option><option value="daily">Daily</option><option value="anime">Anime</option></select>
       <label><input type="checkbox" id="mon" ${s.monitored ? "checked" : ""}> Monitored</label>
       <button id="rs">Rescan folder</button>
-      <button class="danger" id="del">Delete</button></div></div></div>
+      <button class="danger" id="del">${multi ? `Remove ${TIER_LABEL[s.tier]} version` : "Delete"}</button></div></div></div>
     ${Object.keys(seasons).sort((a, b) => b - a).map((sn) => {
       const eps = seasons[sn]; const have = eps.filter((e) => e.file_path).length;
       return `<details class="season" ${sn == Math.max(...Object.keys(seasons)) ? "open" : ""}><summary>${sn == 0 ? "Specials" : "Season " + sn} <span class="muted small">${have}/${eps.length}</span>
@@ -179,14 +233,17 @@ async function renderShow(id) {
           <td>${e.download ? `<span class="chip warn">${esc(e.download.status)} ${Math.round(e.download.progress)}%</span>` : e.file_path ? `<span class="chip ok" title="${isAdmin() ? esc(e.file_path) : ""}">${esc(e.file_quality)}</span>` : e.air_date && e.air_date <= today ? (e.monitored ? '<span class="chip bad">Missing</span>' : '<span class="chip">Skipped</span>') : '<span class="chip">Unaired</span>'}</td>
           <td class="admin-only"><button class="small" onclick="epSearch(${id},${e.id},this)">Search</button> <button class="small" onclick="interactive('tv',${id},'/series/${id}/search?episode_id=${e.id}&interactive=true')">…</button></td></tr>`).join("")}</table></div></details>`;
     }).join("")}`;
-  $("#tier").value = s.tier; $("#stype").value = s.series_type || "standard";
-  $("#tier").onchange = () => guard(async () => { await api("/series/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
+  $("#stype").value = s.series_type || "standard";
+  if ($("#tier")) {
+    $("#tier").value = s.tier;
+    $("#tier").onchange = () => guard(async () => { await api("/series/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
+  }
   $("#stype").onchange = () => guard(() => api("/series/" + id, { method: "PUT", body: { series_type: $("#stype").value } }));
   $("#mon").onchange = () => guard(() => api("/series/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
   $("#as").onclick = () => guard(async () => { $("#as").disabled = true; const r = await api(`/series/${id}/search`, { method: "POST" }); toast(`${r.filter((x) => x.accepted).length} acceptable releases found`); route(); });
   $("#rs").onclick = () => rescan(`/series/${id}/rescan`);
   $("#rf").onclick = () => guard(async () => { await api(`/series/${id}/refresh`, { method: "POST" }); toast("Refreshed"); route(); });
-  $("#del").onclick = () => guard(async () => { if (!confirm("Remove this series?")) return; const files = confirm("Also delete its files from disk?"); await api(`/series/${id}?delete_files=${files}`, { method: "DELETE" }); location.hash = "#/series"; });
+  $("#del").onclick = () => guard(() => deleteVersion("tv", s));
 }
 async function rescan(path) {
   const rename = confirm("Also rename the files to your TRaSH naming scheme?\n\nOK = rescan and rename, Cancel = rescan only");
@@ -222,8 +279,9 @@ async function renderAdd() {
     $("#results").innerHTML = res.map((r, i) => `<div class="result-row">${r.poster ? `<img src="${esc(r.poster)}" alt="">` : ""}
       <div class="grow"><b>${esc(r.title)}</b> <span class="muted">${r.year || ""}</span>${r.status ? ` <span class="chip">${esc(r.status)}</span>` : ""}<p>${esc(r.overview)}</p>
         ${r.collection ? `<button class="small" onclick="openCollection('collection', ${r.collection.id})">Part of ${esc(r.collection.name)} — add whole collection…</button>` : ""}</div>
-      <div class="add-ctrls">${r.in_library ? '<span class="chip ok">In library</span>' : `
-        <select id="t${i}">${tierOptions()}</select>
+      <div class="add-ctrls">${r.in_library || (!canUhd() && (r.library_tiers || []).includes("hd")) ? '<span class="chip ok">In library</span>' : `
+        ${(r.library_tiers || []).length ? `<span class="chip ok">In library: ${r.library_tiers.map((x) => TIER_LABEL[x]).join(", ")}</span>` : ""}
+        <select id="t${i}">${tierOptions(true, r.library_tiers || [])}</select>
         ${kind === "series" ? `<select id="m${i}"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option>${isAdmin() ? '<option value="none">None</option>' : ""}</select>` : ""}
         <label class="small"><input type="checkbox" id="s${i}" checked> Search now</label>
         <button class="primary" onclick="addItem('${kind}', ${i}, this)">${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted" style="padding:12px">No results.</p>';
@@ -346,9 +404,14 @@ async function openCollection(source, id) {
       <td>${p.poster ? `<img src="${esc(p.poster)}" alt="" style="width:40px;border-radius:3px">` : ""}</td>
       <td><b>${esc(p.title)}</b> <span class="muted">${p.year || ""}</span></td>
       <td class="small">${esc(p.release_date || "TBA")}${!p.release_date || p.release_date > today ? ' <span class="chip warn">upcoming</span>' : ""}</td>
-      <td>${p.in_library ? `${tierChip(p.tier)} <span class="chip ${p.has_file ? "ok" : ""}">${p.has_file ? "Downloaded" : "In library"}</span>` : ""}</td></tr>`).join("")}</table></div>
+      <td>${p.in_library ? `${(p.tiers || [p.tier]).map(tierChip).join("")} <span class="chip ${p.has_file ? "ok" : ""}">${p.has_file ? "Downloaded" : "In library"}</span>` : ""}</td></tr>`).join("")}</table></div>
     <p class="small muted">Unticked movies are remembered and won't be added automatically later. Upcoming movies are added now and searched for once they're released.</p>`;
   if (saved && (saved.tier === "hd" || canUhd())) $("#ctier").value = saved.tier;
+  // a movie already in the library can still get its other version when the collection is set to both
+  if (canUhd()) $("#ctier").addEventListener("change", () => document.querySelectorAll(".cpick").forEach((b) => {
+    const p = c.parts.find((x) => x.tmdb_id === +b.value);
+    if (p && p.in_library) { const missing = $("#ctier").value === "both" ? (p.tiers || []).length < 2 : !(p.tiers || []).includes($("#ctier").value); b.disabled = !missing; b.checked = missing; }
+  }));
   const boxes = () => [...document.querySelectorAll(".cpick:not(:disabled)")];
   $("#call").onclick = () => boxes().forEach((b) => (b.checked = true));
   $("#cnone").onclick = () => boxes().forEach((b) => (b.checked = false));
@@ -365,12 +428,12 @@ async function renderCollections() {
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Collections <span class="muted small">(${rows.length})</span></h2>
     <a href="#/add"><button class="primary">${addLabel()} a collection</button></a></div>
     ${rows.length ? `<div class="table-wrap"><table><tr><th></th><th>Collection</th><th>Have</th><th>Library</th><th>Auto-add new</th><th></th></tr>
-    ${rows.map((c) => { const have = c.movies.filter((m) => m.file_path).length; return `<tr>
+    ${rows.map((c) => { const have = new Set(c.movies.filter((m) => m.file_path).map((m) => m.tmdb_id)).size; c.movies = groupVersions(c.movies, (m) => m.tmdb_id).map((vs) => vs[0]); return `<tr>
       <td>${c.poster ? `<img src="${esc(c.poster)}" alt="" style="width:46px;border-radius:4px">` : ""}</td>
       <td><b>${esc(c.name)}</b> <span class="chip">${c.source === "keyword" ? "Universe" : "Collection"}</span>
         <div class="small muted">${c.movies.map((m) => `<a href="#/movie/${m.id}" style="color:inherit">${esc(m.title)}</a>`).join(" · ")}</div></td>
       <td><span class="chip ${have && have >= c.total ? "ok" : ""}">${have}/${c.total}</span></td>
-      <td>${isAdmin() ? "" : tierChip(c.tier)}<select class="admin-only" onchange="editColl(${c.id}, {tier: this.value})"><option value="hd" ${c.tier === "hd" ? "selected" : ""}>1080p</option><option value="uhd" ${c.tier === "uhd" ? "selected" : ""}>4K</option></select></td>
+      <td>${isAdmin() ? "" : tierChip(c.tier)}<select class="admin-only" onchange="editColl(${c.id}, {tier: this.value})">${["hd", "uhd", "both"].map((v) => `<option value="${v}" ${c.tier === v ? "selected" : ""}>${TIER_LABEL[v]}</option>`).join("")}</select></td>
       <td><input type="checkbox" ${c.monitored ? "checked" : ""} ${isAdmin() ? "" : "disabled"} onchange="editColl(${c.id}, {monitored: this.checked})"></td>
       <td><button class="small" onclick="openCollection('${c.source}', ${c.tmdb_id})">View</button>
         <button class="small admin-only" onclick="refreshColl(${c.id})">Check for new</button>
@@ -687,7 +750,7 @@ async function renderRequests(sub = "all") {
     ${rows.map((r) => `<tr><td>${r.poster ? `<img src="${esc(r.poster)}" alt="" style="width:42px;border-radius:4px">` : ""}</td>
       <td><b>${link(r)}</b> <span class="muted">${r.year || ""}</span><div class="small muted">${kindName[r.kind]}${r.kind === "collection" && r.options.tmdb_ids ? ` · ${r.options.tmdb_ids.length} movies` : ""}</div>
         ${r.note && r.note !== "Auto-approved" ? `<div class="small ${r.status === "declined" || r.status === "failed" ? "rej" : "muted"}">${esc(r.note)}</div>` : ""}</td>
-      <td>${isAdmin() && r.status === "pending" ? `<select id="rt${r.id}"><option value="hd" ${r.tier === "hd" ? "selected" : ""}>1080p</option><option value="uhd" ${r.tier === "uhd" ? "selected" : ""}>4K</option></select>` : tierChip(r.tier)}</td>
+      <td>${isAdmin() && r.status === "pending" ? `<select id="rt${r.id}">${["hd", "uhd", "both"].map((v) => `<option value="${v}" ${r.tier === v ? "selected" : ""}>${TIER_LABEL[v]}</option>`).join("")}</select>` : tierChip(r.tier)}</td>
       ${isAdmin() ? `<td>${esc(r.username || "deleted user")}</td>` : ""}
       <td class="small muted">${esc(r.created)}${r.decided_by_name ? `<br>${r.note === "Auto-approved" ? "auto-approved" : (r.status === "declined" ? "declined" : "approved") + " by " + esc(r.decided_by_name)}` : ""}</td>
       <td>${statusChip(r)}</td>

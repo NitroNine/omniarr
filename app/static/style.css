@@ -54,6 +54,11 @@ button.small { padding: 3px 8px; font-size: 12px; }
 .chip.ok { background: var(--ok); color: #fff; }
 .chip.bad { background: var(--bad); color: #fff; }
 .chip.warn { background: var(--warn); color: #000; }
+.card .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.versions { align-items: center; margin: 4px 0 10px; }
+.versions .chip { font-size: 12px; padding: 3px 8px; text-decoration: none; opacity: .65; }
+.versions .chip.current { opacity: 1; box-shadow: 0 0 0 2px var(--text, currentColor) inset; }
+.versions .chip:hover { opacity: 1; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
 table { width: 100%; border-collapse: collapse; background: var(--panel); }
 th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }

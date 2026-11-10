@@ -10,6 +10,48 @@ from . import db, naming, trash
 from .services import metadata
 
 TIERS = ("hd", "uhd")
+TIER_NAMES = {"hd": "1080p", "uhd": "4K"}
+
+
+def tiers_of(tier: str) -> list[str]:
+    """'hd' | 'uhd' | 'both' -> the versions to add."""
+    if tier == "both":
+        return list(TIERS)
+    if tier not in TIERS:
+        raise ValueError("tier must be 'hd', 'uhd' or 'both'")
+    return [tier]
+
+
+def tier_of_quality(quality: str | None) -> str:
+    return "uhd" if quality and "2160" in quality else "hd"
+
+
+def versions(kind: str, item: dict) -> list[dict]:
+    """All rows (versions) of the same title, including `item`."""
+    if kind == "movie":
+        return db.q("SELECT * FROM movies WHERE tmdb_id=? ORDER BY tier", (item["tmdb_id"],))
+    rows = []
+    if item.get("tmdb_id"):
+        rows = db.q("SELECT * FROM series WHERE tmdb_id=? ORDER BY tier", (item["tmdb_id"],))
+    if item.get("tvdb_id"):
+        seen = {r["id"] for r in rows}
+        rows += [r for r in db.q("SELECT * FROM series WHERE tvdb_id=? ORDER BY tier", (item["tvdb_id"],))
+                 if r["id"] not in seen]
+    return rows or [item]
+
+
+def sibling(kind: str, item: dict) -> dict | None:
+    """The other version of this title, if there is one."""
+    return next((v for v in versions(kind, item) if v["id"] != item["id"]), None)
+
+
+def shares_folder(kind: str, item: dict) -> dict | None:
+    """The other version when both versions live in the same folder (shared root folder)."""
+    sib = sibling(kind, item)
+    if not sib:
+        return None
+    d = movie_dir if kind == "movie" else series_dir
+    return sib if os.path.normpath(d(sib)) == os.path.normpath(d(item)) else None
 
 
 def root_for(kind: str, tier: str) -> str:
@@ -47,18 +89,31 @@ def series_dir(series: dict) -> str:
 
 # ----------------------------------------------------------------- movies --
 async def add_movie(tmdb_id: int, tier: str, monitored: bool = True, folder: str | None = None) -> dict:
-    """`folder` keeps an existing folder name (library import) instead of TRaSH naming."""
+    """Add one version (tier) of a movie. `folder` keeps an existing folder name (library
+    import) instead of TRaSH naming; a second version reuses the first one's folder."""
     if tier not in TIERS:
         raise ValueError("tier must be 'hd' or 'uhd'")
-    existing = db.one("SELECT * FROM movies WHERE tmdb_id=?", (tmdb_id,))
+    existing = db.one("SELECT * FROM movies WHERE tmdb_id=? AND tier=?", (tmdb_id, tier))
     if existing:
-        raise ValueError(f"{existing['title']} is already in your library")
+        raise ValueError(f"{existing['title']} is already in your library in {TIER_NAMES[tier]}")
+    other = db.one("SELECT * FROM movies WHERE tmdb_id=?", (tmdb_id,))
     m = await metadata.movie_details(tmdb_id)
     m.update(tier=tier, monitored=int(monitored))
-    m["folder"] = folder or movie_folder_name(m)
+    m["folder"] = folder or (other["folder"] if other else None) or movie_folder_name(m)
     m["id"] = db.insert("movies", m)
-    db.log(f"Added movie {m['title']} ({m.get('year')}) [{tier.upper()}]")
+    db.log(f"Added movie {m['title']} ({m.get('year')}) [{TIER_NAMES[tier]}]")
     return m
+
+
+async def add_movie_tiers(tmdb_id: int, tier: str, monitored: bool = True) -> list[dict]:
+    """Add every requested version that isn't in the library yet ('both' = 1080p and 4K)."""
+    wanted = tiers_of(tier)
+    have = {r["tier"] for r in db.q("SELECT tier FROM movies WHERE tmdb_id=?", (tmdb_id,))}
+    todo = [t for t in wanted if t not in have]
+    if not todo:
+        title = db.one("SELECT title FROM movies WHERE tmdb_id=?", (tmdb_id,))["title"]
+        raise ValueError(f"{title} is already in your library in {' and '.join(TIER_NAMES[t] for t in wanted)}")
+    return [await add_movie(tmdb_id, t, monitored) for t in todo]
 
 
 async def refresh_movie(movie_id: int) -> None:
@@ -84,35 +139,61 @@ def movie_available(m: dict) -> bool:
 # ----------------------------------------------------------------- series --
 async def add_series(tvdb_id: int | None, tier: str, monitor: str = "all", folder: str | None = None,
                      tmdb_id: int | None = None) -> dict:
-    """monitor: all | future | missing | none | latest. Give a TheTVDB id, a TMDB id, or both."""
+    """Add one version (tier) of a show. monitor: all | future | missing | none | latest |
+    same (copy episode monitoring from the other version). Give a TheTVDB id, a TMDB id, or both."""
     if tier not in TIERS:
         raise ValueError("tier must be 'hd' or 'uhd'")
     if not tvdb_id and not tmdb_id:
         raise ValueError("A TheTVDB or TMDB id is needed")
-    existing = _find_series(tvdb_id, tmdb_id)
+    existing = _find_series(tvdb_id, tmdb_id, tier)
     if existing:
-        raise ValueError(f"{existing['title']} is already in your library")
+        raise ValueError(f"{existing['title']} is already in your library in {TIER_NAMES[tier]}")
     s = await metadata.series_details(tvdb_id=tvdb_id, tmdb_id=tmdb_id)
-    existing = _find_series(s.get("tvdb_id"), s.get("tmdb_id"))
+    existing = _find_series(s.get("tvdb_id"), s.get("tmdb_id"), tier)
     if existing:
-        raise ValueError(f"{existing['title']} is already in your library")
+        raise ValueError(f"{existing['title']} is already in your library in {TIER_NAMES[tier]}")
+    other = _find_series(s.get("tvdb_id") or tvdb_id, s.get("tmdb_id") or tmdb_id)
     s = {k: s.get(k) for k in ("tvdb_id", "tmdb_id", "imdb_id", "title", "year", "overview", "poster", "runtime",
                                "status", "series_type")}
+    if other:  # keep both versions on the same ids and settings
+        for k in ("tvdb_id", "tmdb_id"):
+            s[k] = s[k] or other[k]
+        s["series_type"] = other["series_type"]
+    if monitor == "same" and not other:
+        monitor = "all"
     s.update(tier=tier, monitored=int(monitor != "none"), series_type=s.get("series_type") or "standard")
-    s["folder"] = folder or series_folder_name(s)
+    s["folder"] = folder or (other["folder"] if other else None) or series_folder_name(s)
     s["id"] = db.insert("series", s)
-    await refresh_series(s["id"], initial_monitor=monitor)
-    db.log(f"Added series {s['title']} [{tier.upper()}]")
+    await refresh_series(s["id"], initial_monitor="all" if monitor == "same" else monitor)
+    if monitor == "same":
+        db.ex("UPDATE episodes SET monitored = COALESCE((SELECT o.monitored FROM episodes o WHERE o.series_id=? "
+              "AND o.season=episodes.season AND o.episode=episodes.episode), monitored) WHERE series_id=?",
+              (other["id"], s["id"]))
+        db.update("series", s["id"], {"monitored": other["monitored"]})
+    db.log(f"Added series {s['title']} [{TIER_NAMES[tier]}]")
     return s
 
 
-def _find_series(tvdb_id: int | None, tmdb_id: int | None) -> dict | None:
+async def add_series_tiers(tvdb_id: int | None, tier: str, monitor: str = "all",
+                           tmdb_id: int | None = None) -> list[dict]:
+    """Add every requested version that isn't in the library yet ('both' = 1080p and 4K)."""
+    wanted = tiers_of(tier)
+    todo = [t for t in wanted if not _find_series(tvdb_id, tmdb_id, t)]
+    if not todo:
+        title = _find_series(tvdb_id, tmdb_id)["title"]
+        raise ValueError(f"{title} is already in your library in {' and '.join(TIER_NAMES[t] for t in wanted)}")
+    return [await add_series(tvdb_id, t, monitor, tmdb_id=tmdb_id) for t in todo]
+
+
+def _find_series(tvdb_id: int | None, tmdb_id: int | None, tier: str | None = None) -> dict | None:
+    """A show by either id; with `tier`, only that version."""
+    extra, params = (" AND tier=?", (tier,)) if tier else ("", ())
     if tvdb_id:
-        row = db.one("SELECT * FROM series WHERE tvdb_id=?", (tvdb_id,))
+        row = db.one("SELECT * FROM series WHERE tvdb_id=?" + extra, (tvdb_id, *params))
         if row:
             return row
     if tmdb_id:
-        return db.one("SELECT * FROM series WHERE tmdb_id=?", (tmdb_id,))
+        return db.one("SELECT * FROM series WHERE tmdb_id=?" + extra, (tmdb_id, *params))
     return None
 
 
@@ -125,7 +206,7 @@ async def refresh_series(series_id: int, initial_monitor: str | None = None) -> 
         upd = {k: d.get(k) for k in ("title", "year", "overview", "poster", "imdb_id", "runtime", "status")}
         for k in ("tvdb_id", "tmdb_id"):  # fill in ids we learn, never blank out known ones
             if d.get(k) and not s[k] and not _find_series(d[k] if k == "tvdb_id" else None,
-                                                           d[k] if k == "tmdb_id" else None):
+                                                           d[k] if k == "tmdb_id" else None, s["tier"]):
                 upd[k] = d[k]
         db.update("series", series_id, upd)
     except Exception as e:  # noqa: BLE001
@@ -198,9 +279,11 @@ def change_tier(kind: str, item_id: int, tier: str) -> None:
     item = db.one(f"SELECT * FROM {table} WHERE id=?", (item_id,))
     if not item or item["tier"] == tier:
         return
+    if any(v["tier"] == tier for v in versions(kind, item)):
+        raise ValueError(f"{item['title']} already has a {TIER_NAMES[tier]} version")
     old = os.path.join(root_for(kind, item["tier"]), item["folder"])
     new = os.path.join(root_for(kind, tier), item["folder"])
-    if os.path.isdir(old):
+    if os.path.normpath(old) != os.path.normpath(new) and os.path.isdir(old):  # shared root: nothing to move
         os.makedirs(os.path.dirname(new), exist_ok=True)
         shutil.move(old, new)
         if kind == "movie" and item["file_path"]:
@@ -209,4 +292,41 @@ def change_tier(kind: str, item_id: int, tier: str) -> None:
             for e in db.q("SELECT id, file_path FROM episodes WHERE series_id=? AND file_path IS NOT NULL", (item_id,)):
                 db.update("episodes", e["id"], {"file_path": e["file_path"].replace(old, new, 1)})
     db.update(table, item_id, {"tier": tier})
-    db.log(f"Moved {item['title']} to the {'4K' if tier == 'uhd' else '1080p'} library")
+    db.log(f"Moved {item['title']} to the {TIER_NAMES[tier]} library")
+
+
+def delete_version(kind: str, item_id: int, delete_files: bool = False) -> None:
+    """Remove one version of a title. With `delete_files`, its files go too; when the other
+    version shares the folder, only this version's own files are deleted."""
+    table = "movies" if kind == "movie" else "series"
+    item = db.one(f"SELECT * FROM {table} WHERE id=?", (item_id,))
+    if not item:
+        return
+    if delete_files:
+        folder = movie_dir(item) if kind == "movie" else series_dir(item)
+        if shares_folder(kind, item):
+            paths = [item["file_path"]] if kind == "movie" else [
+                r["file_path"] for r in db.q("SELECT DISTINCT file_path FROM episodes WHERE series_id=? "
+                                             "AND file_path IS NOT NULL", (item_id,))]
+            for p in filter(None, paths):
+                _delete_with_subs(p)
+        elif os.path.isdir(folder):
+            shutil.rmtree(folder, ignore_errors=True)
+    if kind == "tv":
+        db.ex("DELETE FROM episodes WHERE series_id=?", (item_id,))
+    db.ex(f"DELETE FROM {table} WHERE id=?", (item_id,))
+    db.log(f"Removed {item['title']} [{TIER_NAMES.get(item['tier'], item['tier'])}]")
+
+
+def _delete_with_subs(video: str) -> None:
+    base = os.path.splitext(video)[0]
+    d = os.path.dirname(video)
+    if not os.path.isdir(d):
+        return
+    for f in os.listdir(d):
+        p = os.path.join(d, f)
+        if p == video or (f.startswith(os.path.basename(base) + ".") and os.path.isfile(p)):
+            try:
+                os.remove(p)
+            except OSError:
+                pass

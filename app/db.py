@@ -23,20 +23,22 @@ CREATE TABLE IF NOT EXISTS indexers (
   enabled INTEGER DEFAULT 1, priority INTEGER DEFAULT 25
 );
 
+-- one row per version: a title can have a 1080p row ('hd') and a 4K row ('uhd')
 CREATE TABLE IF NOT EXISTS movies (
-  id INTEGER PRIMARY KEY, tmdb_id INTEGER UNIQUE NOT NULL, imdb_id TEXT, title TEXT NOT NULL,
+  id INTEGER PRIMARY KEY, tmdb_id INTEGER NOT NULL, imdb_id TEXT, title TEXT NOT NULL,
   original_title TEXT, year INTEGER, overview TEXT, poster TEXT, runtime INTEGER,
   release_date TEXT, tier TEXT NOT NULL DEFAULT 'hd', monitored INTEGER DEFAULT 1,
   folder TEXT, file_path TEXT, file_quality TEXT, file_score INTEGER, file_size INTEGER,
-  added TEXT DEFAULT CURRENT_TIMESTAMP, last_search TEXT
+  added TEXT DEFAULT CURRENT_TIMESTAMP, last_search TEXT, collection_id INTEGER, collection_name TEXT,
+  UNIQUE(tmdb_id, tier)
 );
 
 CREATE TABLE IF NOT EXISTS series (
-  id INTEGER PRIMARY KEY, tvdb_id INTEGER UNIQUE, imdb_id TEXT, tmdb_id INTEGER UNIQUE,
+  id INTEGER PRIMARY KEY, tvdb_id INTEGER, imdb_id TEXT, tmdb_id INTEGER,
   title TEXT NOT NULL, year INTEGER, overview TEXT, poster TEXT, runtime INTEGER,
   status TEXT, series_type TEXT DEFAULT 'standard', tier TEXT NOT NULL DEFAULT 'hd',
   monitored INTEGER DEFAULT 1, folder TEXT, added TEXT DEFAULT CURRENT_TIMESTAMP,
-  last_refresh TEXT
+  last_refresh TEXT, UNIQUE(tvdb_id, tier), UNIQUE(tmdb_id, tier)
 );
 
 CREATE TABLE IF NOT EXISTS episodes (
@@ -160,27 +162,41 @@ MIGRATIONS = [
 def _migrate(c: sqlite3.Connection) -> None:
     # TheTVDB support was removed: TV comes from TMDB only
     c.execute("DELETE FROM settings WHERE key IN ('tvdb_api_key', 'tvdb_pin', 'tv_metadata_source')")
-    # v1 required a TheTVDB id for every show; TV can now come from TMDB alone
-    cols = {r["name"]: r for r in c.execute("PRAGMA table_info(series)")}
-    if cols.get("tvdb_id") is not None and cols["tvdb_id"]["notnull"]:
-        c.execute("PRAGMA foreign_keys=OFF")
-        c.execute("BEGIN")
-        old = [r["name"] for r in cols.values()]
-        sql = c.execute("SELECT sql FROM sqlite_master WHERE name='series'").fetchone()["sql"]
-        new_sql = (sql.replace("tvdb_id INTEGER UNIQUE NOT NULL", "tvdb_id INTEGER UNIQUE")
-                      .replace("tmdb_id INTEGER,", "tmdb_id INTEGER UNIQUE,", 1)
-                      .replace("CREATE TABLE series", "CREATE TABLE series_new", 1)
-                      .replace("CREATE TABLE IF NOT EXISTS series", "CREATE TABLE series_new", 1))
-        c.execute(new_sql)
-        c.execute(f"INSERT INTO series_new ({','.join(old)}) SELECT {','.join(old)} FROM series")
-        c.execute("DROP TABLE series")
-        c.execute("ALTER TABLE series_new RENAME TO series")
-        c.execute("COMMIT")
-        c.execute("PRAGMA foreign_keys=ON")
+    # Older databases allowed one row per title (tmdb_id / tvdb_id UNIQUE). Rows are now
+    # per version (1080p / 4K), so rebuild those tables with UNIQUE(id, tier).
+    for table in ("movies", "series"):
+        _rebuild_if_old(c, table)
     for table, col, decl in MIGRATIONS:
         cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
         if col not in cols:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+
+
+def _create_sql(table: str) -> str:
+    start = SCHEMA.index(f"CREATE TABLE IF NOT EXISTS {table} (")
+    return SCHEMA[start:SCHEMA.index(");", start) + 2]
+
+
+def _rebuild_if_old(c: sqlite3.Connection, table: str) -> None:
+    row = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    if not row or "UNIQUE(tmdb_id,tier)" in row["sql"].replace(" ", ""):
+        return
+    old_cols = [r["name"] for r in c.execute(f"PRAGMA table_info({table})")]
+    c.execute("PRAGMA foreign_keys=OFF")
+    c.execute("BEGIN")
+    try:
+        c.execute(_create_sql(table).replace(f"CREATE TABLE IF NOT EXISTS {table} (", f"CREATE TABLE {table}_new (", 1))
+        new_cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table}_new)")}
+        cols = ",".join(x for x in old_cols if x in new_cols)
+        c.execute(f"INSERT INTO {table}_new ({cols}) SELECT {cols} FROM {table}")
+        c.execute(f"DROP TABLE {table}")
+        c.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+        c.execute("COMMIT")
+    except Exception:
+        c.execute("ROLLBACK")
+        raise
+    finally:
+        c.execute("PRAGMA foreign_keys=ON")
 
 
 def reset_for_tests(path: str) -> None:

@@ -88,6 +88,23 @@ def _rename_cfs(kind: str, cf_names: list[str]) -> list[str]:
     return [n for n in cf_names if n in keep]
 
 
+def _avoid_sibling(dest: str, taken: set[str], tier: str) -> str:
+    """Both versions share a folder: never overwrite the other version's file. TRaSH names
+    include the quality so this rarely triggers; when it does, tag the name Plex-style."""
+    if dest not in taken:
+        return dest
+    base, ext = os.path.splitext(dest)
+    return f"{base} - {library.TIER_NAMES[tier]}{ext}"
+
+
+def _sibling_episode_files(series: dict) -> set[str]:
+    sib = library.shares_folder("tv", series)
+    if not sib:
+        return set()
+    return {r["file_path"] for r in db.q("SELECT file_path FROM episodes WHERE series_id=? AND file_path IS NOT NULL",
+                                          (sib["id"],))}
+
+
 def match_episode_file(path: str, all_by_se: dict) -> list[dict]:
     """Map a video file to episodes using SxxEyy / 1x01 / air date in its name,
     falling back to a 'Season NN' parent folder plus an 'E01'/'Episode 1' file name."""
@@ -131,6 +148,9 @@ async def import_movie(dl: dict, source_dir: str) -> None:
     name = movie_file_name(movie, rel, dl["quality"], json.loads(dl["custom_formats"] or "[]"), mi)
     dest_dir = library.movie_dir(movie)
     dest = os.path.join(dest_dir, name + os.path.splitext(video)[1].lower())
+    sib = library.shares_folder("movie", movie)
+    dest = _avoid_sibling(dest, {sib["file_path"]} if sib and sib["file_path"] else set(), movie["tier"])
+    name = os.path.splitext(os.path.basename(dest))[0]
     subs = subtitles_for(video)
     if movie["file_path"] and movie["file_path"] != dest:
         _remove_old(movie["file_path"])
@@ -165,12 +185,15 @@ async def import_episodes(dl: dict, source_dir: str) -> None:
         raise RuntimeError("Could not match any downloaded file to an episode")
     rel = parse(dl["release_title"])
     cfs = json.loads(dl["custom_formats"] or "[]")
+    sibling_files = _sibling_episode_files(series)
     imported = 0
     for video, episodes in plan:
         mi = await mediainfo.probe(video)
         name = episode_file_name(series, episodes, rel, dl["quality"], cfs, mi)
         dest_dir = os.path.join(library.series_dir(series), library.season_folder_name(episodes[0]["season"]))
         dest = os.path.join(dest_dir, name + os.path.splitext(video)[1].lower())
+        dest = _avoid_sibling(dest, sibling_files, series["tier"])
+        name = os.path.splitext(os.path.basename(dest))[0]
         subs = subtitles_for(video) if len(plan) == 1 else []
         for e in episodes:
             if e["file_path"] and e["file_path"] != dest:

@@ -31,13 +31,13 @@ async def _describe(kind: str, target_id: int, source: str | None) -> tuple[int,
     return target_id, source, {"title": c["name"], "year": None, "poster": c.get("poster")}
 
 
-def _in_library(kind: str, target_id: int, source: str | None = None) -> dict | None:
-    if kind == "movie":
-        return db.one("SELECT id FROM movies WHERE tmdb_id=?", (target_id,))
-    if kind == "tv":
-        col = "tmdb_id" if source == "tmdb" else "tvdb_id"
-        return db.one(f"SELECT id FROM series WHERE {col}=?", (target_id,))
-    return None
+def _in_library(kind: str, target_id: int, source: str | None = None, tier: str = "hd") -> bool:
+    """True when every requested version ('both' = 1080p and 4K) is already in the library."""
+    if kind not in ("movie", "tv"):
+        return False
+    table, col = ("movies", "tmdb_id") if kind == "movie" else ("series", "tmdb_id" if source == "tmdb" else "tvdb_id")
+    have = {r["tier"] for r in db.q(f"SELECT tier FROM {table} WHERE {col}=?", (target_id,))}
+    return all(t in have for t in library.tiers_of(tier))
 
 
 async def create(user: dict, body: dict) -> dict:
@@ -45,9 +45,8 @@ async def create(user: dict, body: dict) -> dict:
     if kind not in KINDS:
         raise ValueError("kind must be movie, tv or collection")
     tier = body.get("tier") or "hd"
-    if tier not in library.TIERS:
-        raise ValueError("tier must be 'hd' or 'uhd'")
-    if tier == "uhd" and not user["allow_uhd"]:
+    library.tiers_of(tier)  # hd | uhd | both
+    if tier != "hd" and not user["allow_uhd"]:
         raise PermissionError("Your account can't request 4K. Ask an admin to allow it.")
     if kind == "tv":
         source = "tmdb" if body.get("tmdb_id") else "tvdb"
@@ -60,7 +59,8 @@ async def create(user: dict, body: dict) -> dict:
     if not raw_id:
         raise ValueError("Missing id")
     target_id, source, info = await _describe(kind, int(raw_id), source)
-    if _in_library(kind, target_id, source) or (kind == "tv" and body.get("tvdb_id") and _in_library("tv", int(body["tvdb_id"]), "tvdb")):
+    if _in_library(kind, target_id, source, tier) or (
+            kind == "tv" and body.get("tvdb_id") and _in_library("tv", int(body["tvdb_id"]), "tvdb", tier)):
         raise ValueError(f"{info['title']} is already in the library")
     dup = db.one("SELECT * FROM requests WHERE kind=? AND target_id=? AND IFNULL(source,'')=? AND status='pending'",
                  (kind, target_id, source or ""))
@@ -70,10 +70,14 @@ async def create(user: dict, body: dict) -> dict:
     rid = db.insert("requests", {"user_id": user["id"], "kind": kind, "target_id": target_id, "source": source,
                                  "title": info["title"], "year": info["year"], "poster": info["poster"], "tier": tier,
                                  "options": json.dumps(options)})
-    db.log(f"{user['username']} requested {info['title']} [{'4K' if tier == 'uhd' else '1080p'}]")
+    db.log(f"{user['username']} requested {info['title']} [{_tier_label(tier)}]")
     if user["auto_approve"] or user["role"] == "admin":
         return await approve(rid, user, auto=True)
     return get(rid)
+
+
+def _tier_label(tier: str) -> str:
+    return "1080p + 4K" if tier == "both" else library.TIER_NAMES.get(tier, tier)
 
 
 async def fulfill(req: dict) -> int | None:
@@ -81,21 +85,23 @@ async def fulfill(req: dict) -> int | None:
     opts = req["options"] if isinstance(req["options"], dict) else json.loads(req["options"] or "{}")
     search = bool(opts.get("search", True))
     if req["kind"] == "movie":
-        m = await library.add_movie(req["target_id"], req["tier"])
-        if search and library.movie_available(m):
-            from . import search as search_mod
-            asyncio.create_task(search_mod.search_movie(m["id"]))
-        return m["id"]
+        added = await library.add_movie_tiers(req["target_id"], req["tier"])
+        from . import search as search_mod
+        for m in added:
+            if search and library.movie_available(m):
+                asyncio.create_task(search_mod.search_movie(m["id"]))
+        return added[0]["id"]
     if req["kind"] == "tv":
         monitor = opts.get("monitor") if opts.get("monitor") in ("all", "future", "latest") else "all"
         if req["source"] == "tmdb":
-            s = await library.add_series(None, req["tier"], monitor, tmdb_id=req["target_id"])
+            added = await library.add_series_tiers(None, req["tier"], monitor, tmdb_id=req["target_id"])
         else:  # TheTVDB id (also requests made before TMDB TV support)
-            s = await library.add_series(req["target_id"], req["tier"], monitor)
-        if search:
-            from . import search as search_mod
-            asyncio.create_task(search_mod.search_series(s["id"]))
-        return s["id"]
+            added = await library.add_series_tiers(req["target_id"], req["tier"], monitor)
+        from . import search as search_mod
+        for s in added:
+            if search:
+                asyncio.create_task(search_mod.search_series(s["id"]))
+        return added[0]["id"]
     r = await collections_.add(req["source"] or "collection", req["target_id"], req["tier"],
                                opts.get("tmdb_ids"), monitor=bool(opts.get("monitor", True)), search=search)
     return r["id"]
@@ -107,7 +113,7 @@ async def approve(rid: int, admin: dict, tier: str | None = None, auto: bool = F
         raise ValueError("Request not found")
     if req["status"] != "pending":
         raise ValueError(f"Request is already {req['status']}")
-    if tier in library.TIERS:
+    if tier in (*library.TIERS, "both"):
         db.update("requests", rid, {"tier": tier})
         req["tier"] = tier
     try:

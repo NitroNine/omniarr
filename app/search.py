@@ -128,17 +128,17 @@ async def rss_sync() -> int:
         series_ids = {e["series_id"] for e in wanted_eps}
         series = {s["id"]: s for s in db.q(f"SELECT * FROM series WHERE id IN ({','.join('?' * len(series_ids))})",
                                           tuple(series_ids))}
-        names = {}
+        names: dict[str, list[dict]] = defaultdict(list)  # a title can have a 1080p and a 4K version
         for s in series.values():
-            for t in (s["title"], strip_year(s["title"]), f"{strip_year(s['title'])} {s.get('year') or ''}"):
-                names[normalize_title(t)] = s
+            for t in {s["title"], strip_year(s["title"]), f"{strip_year(s['title'])} {s.get('year') or ''}"}:
+                names[normalize_title(t)].append(s)
         rels = await newznab.rss("tv")
         buckets = defaultdict(list)
         for r in rels:
-            s = names.get(normalize_title(parse(r.title).clean_name))
-            if s is None and r.tvdb_id:
-                s = next((x for x in series.values() if x["tvdb_id"] == r.tvdb_id), None)
-            if s:
+            matches = names.get(normalize_title(parse(r.title).clean_name)) or []
+            if not matches and r.tvdb_id:
+                matches = [x for x in series.values() if x["tvdb_id"] == r.tvdb_id]
+            for s in matches:
                 buckets[s["id"]].append(r)
         for sid, rs in buckets.items():
             eps = [e for e in wanted_eps if e["series_id"] == sid and not decision.active_download_for("tv", e["id"])]

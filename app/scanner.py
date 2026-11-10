@@ -60,17 +60,22 @@ def _dir_stats(path: str) -> tuple[int, int]:
 
 
 def scan(kind: str) -> list[dict]:
-    """List folders (and loose video files) in both root folders of `kind`
-    that aren't in the library yet."""
+    """List folders (and loose video files) in the root folders of `kind` that aren't in the
+    library yet. When the 1080p and 4K root folders are the same folder it's scanned once,
+    with tier 'auto' (the versions are worked out from the files at import)."""
     table = "movies" if kind == "movie" else "series"
-    known = {(r["tier"], r["folder"]) for r in db.q(f"SELECT tier, folder FROM {table}")}
-    out = []
+    known = {(os.path.normpath(library.root_for(kind, r["tier"]) or ""), r["folder"])
+             for r in db.q(f"SELECT tier, folder FROM {table}")}
+    roots: dict[str, list[str]] = {}
     for tier in library.TIERS:
         root = library.root_for(kind, tier)
-        if not root or not os.path.isdir(root):
-            continue
+        if root and os.path.isdir(root):
+            roots.setdefault(os.path.normpath(root), []).append(tier)
+    out = []
+    for root, tiers in roots.items():
+        tier = tiers[0] if len(tiers) == 1 else "auto"
         for entry in sorted(os.listdir(root), key=str.lower):
-            if entry.startswith((".", "@")) or (tier, entry) in known:
+            if entry.startswith((".", "@")) or (root, entry) in known:
                 continue
             path = os.path.join(root, entry)
             loose = os.path.isfile(path)
@@ -145,22 +150,45 @@ async def match_many(items: list[dict]) -> list[dict]:
 
 
 # ------------------------------------------------------------ file detection --
-async def detect(path: str, kind: str, profile: trash.Profile) -> tuple[str, int, list[str]]:
-    """Work out quality + TRaSH score for a file already on disk.
-    Uses the file name (and its folder name) like a release title; ffprobe
-    fills in the resolution when the name doesn't say."""
-    stem = os.path.splitext(os.path.basename(path))[0]
-    rel = parse(stem)
+async def _parse_file(path: str):
+    """Parse a file name like a release title, filling gaps from its folder name and ffprobe."""
+    rel = parse(os.path.splitext(os.path.basename(path))[0])
     if not rel.resolution or rel.source == "unknown":
         parent = parse(os.path.basename(os.path.dirname(path)))
         if not rel.resolution and parent.resolution:
             rel.resolution = parent.resolution
         if rel.source == "unknown" and parent.source != "unknown":
             rel.source, rel.modifier = parent.source, parent.modifier
-    mi = {}
     if not rel.resolution:
         mi = await mediainfo.probe(path)
         rel.resolution = mi.get("resolution") or 0
+    return rel
+
+
+async def file_tier(path: str) -> str:
+    """Which version a file on disk belongs to: 'uhd' for 2160p, otherwise 'hd'."""
+    return "uhd" if ((await _parse_file(path)).resolution or 0) >= 2160 else "hd"
+
+
+async def _own_files(kind: str, item: dict, files: list[str]) -> list[str]:
+    """When both versions share a folder, each version only takes the files of its tier."""
+    if not library.shares_folder(kind, item):
+        return files
+    return [f for f in files if await file_tier(f) == item["tier"]]
+
+
+async def tiers_in(path: str) -> list[str]:
+    """The versions found in a folder (or loose file): ['hd'], ['uhd'] or both."""
+    files = importer.video_files(path) if os.path.exists(path) else []
+    found = {await file_tier(f) for f in files}
+    return [t for t in library.TIERS if t in found] or ["hd"]
+
+
+async def detect(path: str, kind: str, profile: trash.Profile) -> tuple[str, int, list[str]]:
+    """Work out quality + TRaSH score for a file already on disk.
+    Uses the file name (and its folder name) like a release title; ffprobe
+    fills in the resolution when the name doesn't say."""
+    rel = await _parse_file(path)
     if rel.source == "unknown" and rel.resolution:
         rel.source = "dvd" if rel.resolution <= 576 else "webdl"
     if rel.source == "bluray" and not rel.resolution:
@@ -191,6 +219,7 @@ async def rescan_movie(movie_id: int, rename: bool = False) -> dict:
     movie = db.one("SELECT * FROM movies WHERE id=?", (movie_id,))
     folder = library.movie_dir(movie)
     files = importer.video_files(folder) if os.path.isdir(folder) else []
+    files = await _own_files("movie", movie, files)
     if not files:
         db.update("movies", movie_id, {"file_path": None, "file_quality": None, "file_score": None, "file_size": None})
         return {"files": 0}
@@ -214,7 +243,7 @@ async def rescan_series(series_id: int, rename: bool = False) -> dict:
     by_se = {(e["season"], e["episode"]): e for e in eps}
     found: dict[int, str] = {}  # episode id -> file
     groups: dict[str, list[dict]] = {}
-    for f in importer.video_files(root) if os.path.isdir(root) else []:
+    for f in await _own_files("tv", series, importer.video_files(root) if os.path.isdir(root) else []):
         matched = importer.match_episode_file(f, by_se)
         if not matched:
             continue
@@ -265,40 +294,58 @@ JOB: dict = {"running": False, "total": 0, "done": 0, "imported": 0, "errors": [
 
 
 async def import_one(item: dict) -> dict:
-    """item: kind, tier, folder, loose, id (movie: tmdb) / tvdb_id + tmdb_id (tv), monitor, search, rename."""
+    """item: kind, tier (hd | uhd | both | auto), folder, loose, id (movie: tmdb) /
+    tvdb_id + tmdb_id (tv), monitor, search, rename. 'auto' adds a version for each
+    quality found in the folder (shared 1080p/4K root folder)."""
     kind, tier, folder = item["kind"], item["tier"], item["folder"]
     rename = bool(item.get("rename"))
+    shared = [t for t in library.TIERS if library.root_for(kind, t)]
+    src_root = library.root_for(kind, "hd" if tier in ("auto", "both") else tier) or library.root_for(kind, shared[0])
+    tiers = await tiers_in(os.path.join(src_root, folder)) if tier == "auto" else library.tiers_of(tier)
+    from . import search
     if kind == "movie":
         loose = bool(item.get("loose"))
-        m = await library.add_movie(int(item["id"]), tier, item.get("monitor", "all") != "none",
-                                    folder=None if loose else folder)
-        if loose:  # a video file sitting directly in the root: give it a folder
-            src = os.path.join(library.root_for("movie", tier), folder)
-            dest_dir = library.movie_dir(m)
-            os.makedirs(dest_dir, exist_ok=True)
-            shutil.move(src, os.path.join(dest_dir, os.path.basename(src)))
-        res = await rescan_movie(m["id"], rename=rename or loose)
-        if item.get("search") and m.get("id"):
-            from . import search
+        tmdb_id = int(item["id"])
+        have = {r["tier"] for r in db.q("SELECT tier FROM movies WHERE tmdb_id=?", (tmdb_id,))}
+        first = None
+        for t in [x for x in tiers if x not in have]:
+            m = await library.add_movie(tmdb_id, t, item.get("monitor", "all") != "none",
+                                        folder=None if loose else folder)
+            if loose and first is None:  # a video file sitting directly in the root: give it a folder
+                src = os.path.join(src_root, folder)
+                dest_dir = library.movie_dir(m)
+                os.makedirs(dest_dir, exist_ok=True)
+                shutil.move(src, os.path.join(dest_dir, os.path.basename(src)))
+            first = first or m
+        if first is None:
+            raise ValueError("Already in your library")
+        for m in db.q("SELECT * FROM movies WHERE tmdb_id=?", (tmdb_id,)):
+            res = await rescan_movie(m["id"], rename=rename or loose)
             movie = db.one("SELECT * FROM movies WHERE id=?", (m["id"],))
-            prof = decision.profile_for("movie", tier)
-            if movie["monitored"] and not library.cutoff_met(prof, movie["file_quality"], movie["file_score"]) \
-                    and library.movie_available(movie):
+            if item.get("search") and movie["monitored"] and library.movie_available(movie) and not library.cutoff_met(
+                    decision.profile_for("movie", movie["tier"]), movie["file_quality"], movie["file_score"]):
                 asyncio.create_task(search.search_movie(m["id"]))
-        db.log(f"Library import: {m['title']} ({res.get('quality') or 'no file'})")
-        return m
+            db.log(f"Library import: {m['title']} [{library.TIER_NAMES[m['tier']]}] ({res.get('quality') or 'no file'})")
+        return first
     monitor = item.get("monitor", "all")
     tvdb_id = item.get("tvdb_id") or (None if item.get("tmdb_id") else item.get("id"))
-    s = await library.add_series(int(tvdb_id) if tvdb_id else None, tier, "all" if monitor == "existing" else monitor,
-                                 folder=folder, tmdb_id=item.get("tmdb_id"))
-    res = await rescan_series(s["id"], rename=rename)
-    if monitor == "existing":
-        db.ex("UPDATE episodes SET monitored = (file_path IS NOT NULL) WHERE series_id=?", (s["id"],))
-    if item.get("search") and monitor != "none":
-        from . import search
-        asyncio.create_task(search.search_series(s["id"]))
-    db.log(f"Library import: {s['title']} ({res['episodes']} episodes with files)")
-    return s
+    tvdb_id = int(tvdb_id) if tvdb_id else None
+    added = []
+    for t in tiers:
+        if library._find_series(tvdb_id, item.get("tmdb_id"), t):
+            continue
+        added.append(await library.add_series(tvdb_id, t, "all" if monitor == "existing" else monitor,
+                                              folder=folder, tmdb_id=item.get("tmdb_id")))
+    if not added:
+        raise ValueError("Already in your library")
+    for s in added:  # rescan after every version exists, so each one only takes its own files
+        res = await rescan_series(s["id"], rename=rename)
+        if monitor == "existing":
+            db.ex("UPDATE episodes SET monitored = (file_path IS NOT NULL) WHERE series_id=?", (s["id"],))
+        if item.get("search") and monitor != "none":
+            asyncio.create_task(search.search_series(s["id"]))
+        db.log(f"Library import: {s['title']} [{library.TIER_NAMES[s['tier']]}] ({res['episodes']} episodes with files)")
+    return added[0]
 
 
 async def run_import(items: list[dict]) -> None:
