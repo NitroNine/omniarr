@@ -1,8 +1,12 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>omniarr</Name>
-  <Repository>omniarr:latest</Repository>
-  <Registry/>
+  <Repository>ghcr.io/OWNER/REPO:latest</Repository>
+  <Registry>https://github.com/OWNER/REPO/pkgs/container/REPO</Registry>
+  <Support>https://github.com/OWNER/REPO/issues</Support>
+  <Project>https://github.com/OWNER/REPO</Project>
+  <TemplateURL>https://raw.githubusercontent.com/OWNER/REPO/main/unraid/omniarr.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/OWNER/REPO/main/unraid/icon.png</Icon>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>

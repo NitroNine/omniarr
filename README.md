@@ -26,7 +26,32 @@ You choose the library when you add a title. The profile decides which releases 
 
 ## Install on Unraid
 
-### Quickest: the install script
+### Recommended: from GitHub (normal Unraid updates)
+
+Every change pushed to this repository is tested and built automatically into the image `ghcr.io/OWNER/REPO:latest`. Unraid installs and updates it like any other app.
+
+1. In the Unraid web UI, open the **Docker** tab and scroll to the bottom. Under **Template Repositories**, add:
+   ```
+   https://github.com/OWNER/REPO
+   ```
+   then click **Save**.
+2. Click **Add Container**, open the **Template** dropdown, and pick **omniarr** (listed under this repository).
+3. Check the two paths, then click **Apply**:
+   - **Config:** `/mnt/user/appdata/omniarr`
+   - **Data:** your share holding both downloads and media, e.g. `/mnt/user/data`
+4. Open the WebUI (port 8790) and create your admin account.
+
+**Updating:** the Docker tab shows **update ready** when there's a new version. Click it and choose **Apply update**, or use **Check for Updates** / **Update All**. To update automatically, the *Auto Update Applications* plugin from Community Applications works with Omniarr too.
+
+**Already installed with the install script?** Switch over without losing anything:
+1. On the **Docker** tab, click the omniarr icon, then **Edit**.
+2. Change **Repository** to `ghcr.io/OWNER/REPO:latest` and click **Apply**.
+
+Your settings, library and accounts stay in `/mnt/user/appdata/omniarr`. You can delete the `omniarr-src` folder afterwards.
+
+### Alternative: build on the server (install script)
+
+
 
 1. Copy the `omniarr` folder to your server, e.g. into the `appdata` share, so it ends up at `/mnt/user/appdata/omniarr-src`.
 2. Open **Terminal** in the Unraid web UI (the `>_` icon, top right) and run:
@@ -75,7 +100,7 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 
 **Paths:** follow TRaSH's folder layout. Give NZBGet the same `/data` mapping and set its `DestDir` to `/data/usenet/completed`. Then moves are instant, and the `hardlink` import mode works. If NZBGet reports a different path than Omniarr sees, set the remote path mapping under **Settings → NZBGet**.
 
-### 3. First-run setup (web UI at `http://<unraid-ip>:8790`)
+### First-run setup (web UI at `http://<unraid-ip>:8790`)
 
 1. **Settings → Profiles → "Sync TRaSH Guides now"** (afterwards it re-syncs automatically).
 2. **Settings → Metadata:** enter your free TMDB API key (v3 key or v4 read token). Get one at themoviedb.org → Settings → API.

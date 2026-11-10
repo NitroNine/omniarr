@@ -40,6 +40,7 @@ if [ ! -d "$DATA_SHARE" ]; then
 fi
 
 say "Building the Omniarr image (first time takes a few minutes)…"
+echo "(Tip: installing from the GitHub template instead gives you normal Unraid updates — see the README.)"
 docker build --pull -t "$NAME:latest" "$SRC"
 
 say "Preparing $APPDATA"
