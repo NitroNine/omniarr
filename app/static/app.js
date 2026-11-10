@@ -636,5 +636,15 @@ async function renderNaming(el, s) {
 }
 routes.settings = (sub) => renderSettings(sub || "general");
 
+// --------------------------------------------------------------- theme ---
+function currentTheme() { try { return localStorage.getItem("omniarr-theme") || "system"; } catch { return "system"; } }
+function setTheme(t) {
+  try { if (t === "system") localStorage.removeItem("omniarr-theme"); else localStorage.setItem("omniarr-theme", t); } catch { /* private mode */ }
+  if (t === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  document.querySelectorAll("[data-theme-choice]").forEach((b) => b.classList.toggle("active", b.dataset.themeChoice === t));
+}
+document.querySelectorAll("[data-theme-choice]").forEach((b) => (b.onclick = () => setTheme(b.dataset.themeChoice)));
+setTheme(currentTheme());
+
 checkBanner();
 route();

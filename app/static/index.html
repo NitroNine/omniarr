@@ -6,6 +6,10 @@
 <title>Omniarr</title>
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
+<script>
+  // apply the saved theme before first paint so the page never flashes the wrong colours
+  try { var t = localStorage.getItem("omniarr-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 </head>
 <body>
 <header>
@@ -19,6 +23,11 @@
     <a href="#/activity" data-tab="activity">Activity</a>
     <a href="#/settings" data-tab="settings">Settings</a>
   </nav>
+  <div class="theme-toggle" role="group" aria-label="Colour theme">
+    <button data-theme-choice="system" title="Follow your device">Auto</button>
+    <button data-theme-choice="light" title="Light mode">☀ Light</button>
+    <button data-theme-choice="dark" title="Dark mode">☾ Dark</button>
+  </div>
 </header>
 <div id="banner"></div>
 <main id="view"></main>

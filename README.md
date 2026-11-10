@@ -60,6 +60,10 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 5. **Settings → Root folders:** check the four paths.
 6. **Add:** search TMDB or TheTVDB, pick **1080p** or **4K**, and click Add.
 
+## Light and dark mode
+
+Use the switch in the top-right corner: **Auto** follows your device's setting, or pick **Light** or **Dark**. Each browser remembers its own choice.
+
 ## Useful tools
 
 - **Settings → Profiles → "Test a release name"** shows how a release title is parsed, which TRaSH custom formats match, and its score. Handy for working out why something was or wasn't grabbed.
