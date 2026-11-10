@@ -149,6 +149,33 @@ async def fetch_nzb(link: str) -> bytes:
     return r.content
 
 
+def parse_caps(xml_text: str) -> dict:
+    """An indexer's capabilities: its name and its category tree
+    [{id, name, subcats: [{id, name}]}], including any non-standard categories it uses."""
+    root = ET.fromstring(xml_text)
+    if root.tag == "error":
+        raise RuntimeError(root.get("description") or "The indexer returned an error")
+    srv = root.find("server")
+    cats = []
+    for c in root.findall("./categories/category"):
+        if not (c.get("id") or "").isdigit():
+            continue
+        cats.append({"id": int(c.get("id")), "name": c.get("name") or c.get("id"),
+                     "subcats": [{"id": int(s.get("id")), "name": s.get("name") or s.get("id")}
+                                 for s in c.findall("subcat") if (s.get("id") or "").isdigit()]})
+    cats.sort(key=lambda c: c["id"])
+    return {"title": srv.get("title") if srv is not None else None, "categories": cats}
+
+
+async def caps(url: str, apikey: str) -> dict:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+        r = await c.get(_api_url(url), params={"t": "caps", "apikey": apikey})
+    if r.status_code in (401, 403):
+        raise RuntimeError("The indexer rejected the API key")
+    r.raise_for_status()
+    return parse_caps(r.text)
+
+
 async def test(indexer: dict) -> str:
     async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
         r = await c.get(_api_url(indexer["url"]), params={"t": "caps", "apikey": indexer["apikey"]})

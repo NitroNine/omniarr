@@ -200,3 +200,31 @@ def test_edit_indexer(client):
     assert db.one("SELECT apikey FROM indexers WHERE id=?", (iid,))["apikey"] == "newkey999"
     assert client.put(f"/api/indexers/{iid}", json={"url": "  "}).status_code == 400
     assert client.put("/api/indexers/9999", json={"name": "x"}).status_code == 404
+
+
+CAPS = """<?xml version="1.0" encoding="UTF-8"?>
+<caps><server title="ExampleGeek"/>
+  <categories>
+    <category id="5000" name="TV"><subcat id="5040" name="TV/HD"/><subcat id="5045" name="TV/UHD"/></category>
+    <category id="2000" name="Movies"><subcat id="2040" name="Movies/HD"/><subcat id="2045" name="Movies/UHD"/></category>
+    <category id="100100" name="Anime Remux"/>
+  </categories></caps>"""
+
+
+def test_indexer_categories(client, monkeypatch):
+    from app.services import newznab
+    c = newznab.parse_caps(CAPS)
+    assert c["title"] == "ExampleGeek"
+    assert [x["id"] for x in c["categories"]] == [2000, 5000, 100100]
+    assert c["categories"][0]["subcats"][1] == {"id": 2045, "name": "Movies/UHD"}
+    seen = {}
+
+    async def fake_caps(url, key):
+        seen["args"] = (url, key)
+        return newznab.parse_caps(CAPS)
+    monkeypatch.setattr(newznab, "caps", fake_caps)
+    assert client.post("/api/indexers/caps", json={"url": "https://x", "apikey": ""}).status_code == 400
+    assert client.post("/api/indexers/caps", json={"url": "https://x", "apikey": "k"}).json()["title"] == "ExampleGeek"
+    iid = client.post("/api/indexers", json={"name": "G", "url": "https://g", "apikey": "storedkey1"}).json()["id"]
+    client.post("/api/indexers/caps", json={"id": iid, "url": "https://g", "apikey": ""})
+    assert seen["args"] == ("https://g", "storedkey1")  # edit form: saved key used

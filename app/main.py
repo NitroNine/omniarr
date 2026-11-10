@@ -477,6 +477,24 @@ def delete_indexer(iid: int):
     return {"ok": True}
 
 
+@app.post("/api/indexers/caps")
+async def indexer_caps(body: dict):
+    """Categories offered by an indexer: from the URL and key typed in the form, or a saved
+    indexer (id) using its stored key when the key field was left empty."""
+    url, key = (body.get("url") or "").strip(), (body.get("apikey") or "").strip()
+    if body.get("id") and (not key or "…" in key):
+        saved = db.one("SELECT url, apikey FROM indexers WHERE id=?", (int(body["id"]),))
+        if not saved:
+            raise HTTPException(404)
+        url, key = url or saved["url"], saved["apikey"]
+    if not url or not key:
+        raise HTTPException(400, "Enter the URL and API key first")
+    try:
+        return await newznab.caps(url, key)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Couldn't load categories: {e}") from e
+
+
 @app.post("/api/indexers/{iid}/test")
 async def test_indexer(iid: int):
     ix = db.one("SELECT * FROM indexers WHERE id=?", (iid,))

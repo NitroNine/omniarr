@@ -758,9 +758,53 @@ async function renderIndexers(el) {
     <label>API key</label><input data-k="apikey" type="password" autocomplete="off">
     <label>Movie categories</label><input data-k="movie_categories" value="2000">
     <label>TV categories</label><input data-k="tv_categories" value="5000">
+    <span></span><div><button type="button" id="ixload">Load categories from indexer</button><div id="ixcats"></div></div>
     <label>Priority</label><input data-k="priority" type="number" value="25"><div class="help">Lower = preferred.</div>
     <span></span><div><button class="primary" id="addix">Add</button></div></div>`;
+  $("#ixload").onclick = () => loadCats($("#ixf"));
   $("#addix").onclick = () => guard(async () => { const b = collect($("#ixf")); if (!b.name || !b.url || !b.apikey) throw new Error("Name, URL and API key are required"); const r = await api("/indexers", { method: "POST", body: b }); const t = await api(`/indexers/${r.id}/test`, { method: "POST" }); toast(t.ok ? `Added — ${t.message}` : `Added, but test failed: ${t.message}`, !t.ok); route(); });
+}
+// Category picker: the indexer's own category tree as tick boxes, kept in step with the
+// comma-separated category fields. Ticking a main category includes all its subcategories.
+async function loadCats(form, id) {
+  const box = $("#ixcats", form);
+  const v = (k) => $(`[data-k="${k}"]`, form).value;
+  box.innerHTML = '<p class="small muted">Loading the indexer\'s categories…</p>';
+  let caps;
+  try { caps = await api("/indexers/caps", { method: "POST", body: { id, url: v("url"), apikey: v("apikey") } }); }
+  catch (e) { box.innerHTML = `<p class="small rej">${esc(e.message)}</p>`; return; }
+  if (!caps.categories.length) { box.innerHTML = '<p class="small muted">This indexer didn\'t list any categories — type them in the fields above.</p>'; return; }
+  box.innerHTML = `<div class="catpick">${[["movie_categories", "Movies", 2000], ["tv_categories", "TV", 5000]].map(([k, label, main]) =>
+    `<div class="catcol" data-for="${k}" data-main="${main}"><b>${label}</b><div class="catlist"></div></div>`).join("")}</div>
+    <p class="small muted">Ticking a main category includes all of its subcategories. Only the categories you tick are searched.</p>`;
+  box.querySelectorAll(".catcol").forEach((col) => drawCats(col, caps.categories, $(`[data-k="${col.dataset.for}"]`, form)));
+}
+function drawCats(col, cats, input) {
+  const sel = () => new Set(input.value.split(",").map((x) => x.trim()).filter(Boolean).map(Number));
+  const main = +col.dataset.main;
+  const render = () => {
+    const s = sel();
+    const open = (c) => c.id === main || s.has(c.id) || c.subcats.some((x) => s.has(x.id));
+    const ordered = [...cats].sort((a, b) => (b.id === main) - (a.id === main) || (open(b) - open(a)) || a.id - b.id);
+    $(".catlist", col).innerHTML = ordered.map((c) => `<details ${open(c) ? "open" : ""}><summary><label><input type="checkbox" data-id="${c.id}" ${s.has(c.id) ? "checked" : ""}> ${esc(c.name)} <span class="muted small">${c.id}</span></label></summary>
+      ${c.subcats.map((x) => `<label class="sub"><input type="checkbox" data-id="${x.id}" data-parent="${c.id}" ${s.has(c.id) || s.has(x.id) ? "checked" : ""} ${s.has(c.id) ? "disabled" : ""}> ${esc(x.name.replace(new RegExp("^" + c.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[ />-]*", "i"), ""))} <span class="muted small">${x.id}</span></label>`).join("")}</details>`).join("");
+    $(".catlist", col).querySelectorAll("input").forEach((b) => (b.onchange = () => {
+      if (!b.dataset.parent && !b.checked) // unticking a main category clears its subcategories too
+        $(".catlist", col).querySelectorAll(`input[data-parent="${b.dataset.id}"]`).forEach((x) => (x.checked = false));
+      const ids = [];
+      $(".catlist", col).querySelectorAll("input[data-id]:not([data-parent])").forEach((p) => {
+        if (p.checked) ids.push(+p.dataset.id);
+        else $(".catlist", col).querySelectorAll(`input[data-parent="${p.dataset.id}"]:checked`).forEach((x) => ids.push(+x.dataset.id));
+      });
+      // categories in the field that this indexer doesn't list are kept
+      const known = new Set(cats.flatMap((c) => [c.id, ...c.subcats.map((x) => x.id)]));
+      const extra = [...sel()].filter((x) => !known.has(x));
+      input.value = [...ids, ...extra].sort((a, b) => a - b).join(",");
+      render();
+    }));
+  };
+  input.addEventListener("input", render);
+  render();
 }
 function editIx(id) {
   const r = (window._ix || []).find((x) => x.id === id);
@@ -771,6 +815,7 @@ function editIx(id) {
     <label>API key</label><input data-k="apikey" type="password" autocomplete="off" placeholder="Unchanged (${esc(r.apikey)})"><div class="help">Leave empty to keep the current key.</div>
     <label>Movie categories</label><input data-k="movie_categories" value="${esc(r.movie_categories)}"><div class="help">Comma-separated Newznab categories, e.g. 2000 or 2040,2045.</div>
     <label>TV categories</label><input data-k="tv_categories" value="${esc(r.tv_categories)}">
+    <span></span><div><button type="button" id="ixload">Reload categories</button><div id="ixcats"><p class="small muted">Loading the indexer's categories…</p></div></div>
     <label>Priority</label><input data-k="priority" type="number" value="${r.priority}"><div class="help">Lower = preferred.</div>
     <label>Enabled</label><input type="checkbox" data-k="enabled" ${r.enabled ? "checked" : ""}>
     <span></span><div class="toolbar"><button class="primary" id="ixsave">Save</button><button id="ixsavetest">Save &amp; test</button><button onclick="closeModal()">Cancel</button></div></div>`);
@@ -783,6 +828,8 @@ function editIx(id) {
     else toast("Saved");
     route();
   };
+  $("#ixload").onclick = () => loadCats($("#ixe"), id);
+  loadCats($("#ixe"), id);
   $("#ixsave").onclick = () => guard(() => save(false));
   $("#ixsavetest").onclick = () => guard(() => save(true));
 }
