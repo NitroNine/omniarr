@@ -166,3 +166,8 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: 0; }
 .title-link:hover { text-decoration: underline; }
 .add-bar { margin-top: 10px; }
 @media (max-width: 600px) { .detail img { width: 120px; } .hero { padding: 10px; } }
+
+/* downloader bar on Activity → Queue */
+.dlbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; flex-wrap: wrap; }
+.dlbar b { font-size: 15px; }
+.form input[type="checkbox"] { justify-self: start; }

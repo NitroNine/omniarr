@@ -16,6 +16,12 @@ moved to local; this file carries the context over.
   and TRaSH profile; per-library **quality limits** override (allowed qualities, upgrade-until
   cutoff, upgrades on/off, CF score cutoff) in setting `quality_overrides`.
 - **Newznab indexers** + **NZBGet** (JSON-RPC); import with TRaSH naming, blocklist + re-search.
+  **Built-in downloader** (default, `download_client=builtin`): NZBGet's official Linux release is baked
+  into the image at `/opt/nzbget` (pinned version + sha256 in the Dockerfile). `services/downloader.py`
+  renders `/config/nzbget/nzbget.conf` from its template + Omniarr settings (table `usenet_servers`,
+  `download_dir` default `/data/usenet`, speed limit), runs `nzbget -s` on 127.0.0.1:16789 with a
+  generated password, restarts it if it dies, `reload`s on settings changes. Old installs with an
+  NZBGet password migrate to `external`.
 - **Title pages** `#/title/{movie|tv}/{tmdb_id}` (`/api/info/…`, `metadata.movie_info/tv_info`, 6 h cache):
   cast, crew, release dates (cinema/digital/disc per `streaming_region`, else US), trailer, streaming.
   Movies are only searched once `library.available_date` (first digital/disc date, else cinema + 90 d) passes;
@@ -34,7 +40,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 44 tests
+.venv/bin/pytest -q                       # 51 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

@@ -17,6 +17,12 @@ _conn: sqlite3.Connection | None = None
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 
+CREATE TABLE IF NOT EXISTS usenet_servers (
+  id INTEGER PRIMARY KEY, name TEXT, host TEXT NOT NULL, port INTEGER DEFAULT 563, ssl INTEGER DEFAULT 1,
+  username TEXT, password TEXT, connections INTEGER DEFAULT 8, level INTEGER DEFAULT 0,
+  retention INTEGER DEFAULT 0, active INTEGER DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS indexers (
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, apikey TEXT NOT NULL,
   movie_categories TEXT DEFAULT '2000', tv_categories TEXT DEFAULT '5000',
@@ -99,7 +105,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "metadata_language": "en",
     "streaming_region": "US",  # country for "where to watch" (Discover)
     "streaming_hide_ads": True,  # leave "... with Ads" plans of paid services off the Streaming tab
-    # NZBGet
+    # Downloads. "builtin" = the NZBGet that ships inside Omniarr (servers set in Omniarr);
+    # "external" = a separate NZBGet reached at nzbget_url.
+    "download_client": "builtin",
+    "download_dir": "/data/usenet",  # built-in: completed downloads land in <dir>/completed/<category>
+    "download_speed_limit": 0,  # built-in: KB/s, 0 = unlimited
+    "_downloader_password": "",  # built-in: generated, localhost-only control password
+    # external NZBGet
     "nzbget_url": "http://nzbget:6789",
     "nzbget_username": "nzbget",
     "nzbget_password": "",
@@ -169,6 +181,11 @@ def _migrate(c: sqlite3.Connection) -> None:
         if not c.execute("SELECT 1 FROM settings WHERE key=?", (f"root_{kind}",)).fetchone():
             c.execute("UPDATE settings SET key=? WHERE key=?", (f"root_{kind}", f"root_{kind}_hd"))
         c.execute("DELETE FROM settings WHERE key IN (?, ?)", (f"root_{kind}_hd", f"root_{kind}_uhd"))
+    # Installs from before the built-in downloader keep using the NZBGet they set up
+    if not c.execute("SELECT 1 FROM settings WHERE key='download_client'").fetchone():
+        row = c.execute("SELECT value FROM settings WHERE key='nzbget_password'").fetchone()
+        if row and row["value"] not in ('""', "", "null"):
+            c.execute("INSERT INTO settings(key, value) VALUES('download_client', '\"external\"')")
     # TheTVDB support was removed: TV comes from TMDB only
     c.execute("DELETE FROM settings WHERE key IN ('tvdb_api_key', 'tvdb_pin', 'tv_metadata_source')")
     # Older databases allowed one row per title (tmdb_id / tvdb_id UNIQUE). Rows are now

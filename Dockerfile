@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -12,6 +13,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg tini \
  && rm -rf /var/lib/apt/lists/*
+
+# Built-in downloader: NZBGet (GPL-2.0, https://github.com/nzbgetcom/nzbget), run by Omniarr
+# on localhost only. The official Linux release bundles unrar, 7-Zip and par2 support.
+ARG NZBGET_VERSION=26.3
+ADD --checksum=sha256:6a7f0519cf7deeb59cc1457c87d6efc7f28ef3dd17ed5ddc3be6a698a6093391 \
+    https://github.com/nzbgetcom/nzbget/releases/download/v${NZBGET_VERSION}/nzbget-${NZBGET_VERSION}-bin-linux.run /tmp/nzbget.run
+RUN case "$(dpkg --print-architecture)" in \
+      amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; armhf) arch=armhf ;; \
+      *) echo "unsupported architecture" >&2; exit 1 ;; esac \
+ && sh /tmp/nzbget.run --destdir /opt/nzbget --arch "$arch" --silent \
+ && rm -f /tmp/nzbget.run \
+ && /opt/nzbget/nzbget -v
 
 WORKDIR /app
 COPY requirements.txt .

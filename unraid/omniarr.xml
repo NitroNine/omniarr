@@ -10,7 +10,7 @@
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Overview>Movies + TV in one app. TMDB metadata (one free key), TRaSH Guides quality profiles, custom formats and naming, Newznab indexers and NZBGet. Separate 1080p and 4K root folders.</Overview>
+  <Overview>Movies + TV in one app. TMDB metadata (one free key), TRaSH Guides quality profiles, custom formats and naming, Newznab indexers and a built-in Usenet downloader (NZBGet inside, no second container). 1080p and 4K versions.</Overview>
   <Category>Downloaders: MediaApp:Video</Category>
   <WebUI>http://[IP]:[PORT:8790]/</WebUI>
   <Config Name="WebUI Port" Target="8790" Default="8790" Mode="tcp" Description="Web interface" Type="Port" Display="always" Required="true" Mask="false">8790</Config>

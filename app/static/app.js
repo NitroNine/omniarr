@@ -100,6 +100,10 @@ async function checkBanner() {
   const msgs = [];
   if (st && !st.trash_loaded) msgs.push('TRaSH Guides data not downloaded yet — <a href="#/settings">Settings → Profiles</a> → "Sync TRaSH Guides now".');
   if (s && !s.tmdb_api_key) msgs.push('Add your free TMDB API key in <a href="#/settings">Settings → Metadata</a> — it powers movies, TV and the Streaming tab.');
+  if (s && s.download_client === "builtin") {
+    const sv = await api("/usenet-servers").catch(() => null);
+    if (sv && !sv.length) msgs.push('Add your Usenet provider in <a href="#/settings/downloads">Settings → Downloads</a> so the built-in downloader can start downloading.');
+  }
   $("#banner").innerHTML = msgs.join(" ");
 }
 
@@ -566,6 +570,13 @@ async function renderActivity(sub = "queue") {
   view.innerHTML = `<div class="tabs2">${["queue", "history", "events", "blocklist"].map((t) => `<button class="${t === sub ? "active" : ""}" onclick="location.hash='#/activity/${t}'">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
     <span class="grow"></span><button onclick="runTask('rss')">Run RSS sync</button><button onclick="runTask('missing')">Search missing</button><button onclick="runTask('downloads')">Check downloads</button></div><div id="act"></div>`;
   const el = $("#act");
+  if (sub === "queue") {
+    const st = await api("/downloader/status").catch(() => null);
+    if (st) el.insertAdjacentHTML("beforebegin", `<div class="panel dlbar">${st.ok
+      ? `<b>${st.paused ? "Paused" : st.speed ? speed(st.speed) : "Idle"}</b><span class="small muted">${st.remaining_mb ? `${size(st.remaining_mb * 1048576)} left` : "Nothing downloading"}${st.free != null ? ` · ${size(st.free)} free` : ""}${st.speed_limit ? ` · limit ${speed(st.speed_limit)}` : ""}</span>
+         <span class="grow"></span><button class="small" onclick="pauseDl(${!st.paused})">${st.paused ? "▶ Resume" : "❚❚ Pause"}</button>`
+      : `<span class="chip bad">Downloader not running</span><span class="small muted">${esc(st.message || "")}</span><span class="grow"></span><a href="#/settings/downloads"><button class="small">Settings</button></a>`}</div>`);
+  }
   if (sub === "queue" || sub === "history") {
     const rows = (await api("/queue")).filter((d) => (sub === "queue") === ["queued", "downloading", "importing", "import_failed"].includes(d.status));
     el.innerHTML = rows.length ? `<div class="table-wrap"><table><tr><th>Item</th><th>Release</th><th>Quality</th><th>Score</th><th>Status</th><th></th></tr>
@@ -582,6 +593,7 @@ async function renderActivity(sub = "queue") {
   }
 }
 routes.activity = (sub) => renderActivity(sub || "queue");
+async function pauseDl(p) { await guard(async () => { await api("/downloader/" + (p ? "pause" : "resume"), { method: "POST" }); route(); }); }
 async function runTask(n) { await guard(async () => { await api("/tasks/" + n, { method: "POST" }); toast("Started " + n); }); }
 async function retryImport(id) { await guard(async () => { await api(`/queue/${id}/retry-import`, { method: "POST" }); toast("Imported"); route(); }); }
 async function rmDl(id) { if (!confirm("Remove download?")) return; const bl = confirm("Blocklist this release and search for another?"); await guard(async () => { await api(`/queue/${id}?blocklist=${bl}`, { method: "DELETE" }); route(); }); }
@@ -595,14 +607,6 @@ const SECTIONS = {
     ["streaming_region", "Streaming region", "text", "Country for the Streaming tab, e.g. US, GB, CA, AU, DE"],
     ["streaming_hide_ads", "Hide \"with Ads\" plans", "checkbox", "Leaves the ad plans of paid services (e.g. \"Netflix Standard with Ads\", \"Amazon Prime Video with Ads\") off the Streaming tab. Netflix, Prime Video and free services like Tubi stay."],
   ] },
-  downloads: { title: "NZBGet", fields: [
-    ["nzbget_url", "NZBGet URL", "text", "e.g. http://192.168.1.10:6789"],
-    ["nzbget_username", "Username", "text"], ["nzbget_password", "Password", "password"],
-    ["nzbget_category_movies", "Movie category", "text"], ["nzbget_category_tv", "TV category", "text"],
-    ["remote_path_from", "Remote path (NZBGet)", "text", "If NZBGet sees downloads at a different path, e.g. /downloads/completed"],
-    ["remote_path_to", "Local path (Omniarr)", "folder", "…and Omniarr sees them at, e.g. /data/downloads/completed"],
-    ["import_mode", "Import mode", ["move", "hardlink", "copy"], "Hardlink needs downloads and media on the same share (e.g. /mnt/user/data)."],
-  ] },
   roots: { title: "Root folders", fields: [
     ["root_movies", "Movies folder", "folder", "Every movie gets its own folder in here. When you have both versions, the 1080p and 4K files sit side by side in it."],
     ["root_tv", "TV folder", "folder", "Every show gets its own folder in here, with 1080p and 4K episodes side by side."],
@@ -615,7 +619,7 @@ const SECTIONS = {
 };
 async function renderSettings(sub = "general") {
   const s = await api("/settings");
-  const tabs = { general: "Metadata", downloads: "NZBGet", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", users: "Users", naming: "Naming (TRaSH)", schedule: "Schedule" };
+  const tabs = { general: "Metadata", downloads: "Downloads", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", users: "Users", naming: "Naming (TRaSH)", schedule: "Schedule" };
   view.innerHTML = `<h2>Settings</h2><div class="tabs2">${Object.entries(tabs).map(([k, v]) => `<button class="${k === sub ? "active" : ""}" onclick="location.hash='#/settings/${k}'">${v}</button>`).join("")}</div><div id="set" class="panel"></div>`;
   const el = $("#set");
   if (SECTIONS[sub]) {
@@ -626,15 +630,90 @@ async function renderSettings(sub = "general") {
       else if (type === "folder") input = `<div class="folder-field"><input type="text" data-k="${k}" value="${esc(s[k])}" autocomplete="off"><button type="button" onclick="pickFolder(this.previousElementSibling)">Browse…</button></div>`;
       else input = `<input type="${type}" data-k="${k}" value="${esc(s[k])}" autocomplete="off">`;
       return `<label>${label}</label>${input}${help ? `<div class="help">${help}</div>` : ""}`;
-    }).join("")}<span></span><div class="toolbar"><button class="primary" id="save">Save</button>${sub === "downloads" ? '<button id="test">Test NZBGet</button>' : ""}</div></div>`;
+    }).join("")}<span></span><div class="toolbar"><button class="primary" id="save">Save</button></div></div>`;
     $("#save").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect(el) }); toast("Saved"); checkBanner(); });
-    if ($("#test")) $("#test").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect(el) }); const r = await api("/nzbget/test", { method: "POST" }); toast(r.message, !r.ok); });
-  } else if (sub === "indexers") await renderIndexers(el);
+  } else if (sub === "downloads") await renderDownloads(el, s);
+  else if (sub === "indexers") await renderIndexers(el);
   else if (sub === "profiles") await renderProfiles(el, s);
   else if (sub === "limits") await renderLimits(el);
   else if (sub === "users") await renderUsers(el);
   else if (sub === "naming") await renderNaming(el, s);
 }
+// ---------------------------------------------------- downloads (settings) --
+function formRows(fields, s) {
+  return fields.map(([k, label, type, help]) => {
+    let input;
+    if (Array.isArray(type)) input = `<select data-k="${k}">${type.map((o) => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${v}" ${s[k] === v ? "selected" : ""}>${l}</option>`; }).join("")}</select>`;
+    else if (type === "checkbox") input = `<input type="checkbox" data-k="${k}" ${s[k] ? "checked" : ""}>`;
+    else if (type === "folder") input = `<div class="folder-field"><input type="text" data-k="${k}" value="${esc(s[k])}" autocomplete="off"><button type="button" onclick="pickFolder(this.previousElementSibling)">Browse…</button></div>`;
+    else input = `<input type="${type}" data-k="${k}" value="${esc(s[k] ?? "")}" autocomplete="off">`;
+    return `<label>${label}</label>${input}${help ? `<div class="help">${help}</div>` : ""}`;
+  }).join("");
+}
+function speed(bps) { return bps >= 1048576 ? (bps / 1048576).toFixed(1) + " MB/s" : Math.round(bps / 1024) + " KB/s"; }
+async function renderDownloads(el, s) {
+  const builtin = s.download_client === "builtin";
+  const [st, servers] = await Promise.all([api("/downloader/status").catch(() => null), builtin ? api("/usenet-servers") : []]);
+  const state = !st ? "" : st.ok ? `<span class="chip ok">Running</span> <span class="small muted">NZBGet ${esc(st.version)}${st.paused ? " · paused" : st.speed ? " · " + speed(st.speed) : ""}${st.free != null ? ` · ${size(st.free)} free` : ""}</span>`
+    : `<span class="chip ${builtin && !st.servers ? "warn" : "bad"}">${builtin && !st.servers ? "Waiting for a Usenet server" : "Not running"}</span> <span class="small muted">${esc(builtin && !st.servers ? "" : st.message || "")}</span>`;
+  el.innerHTML = `<div class="form" id="dlform">
+    <label>Downloader</label><div>${formRows([["download_client", "", [["builtin", "Built-in (recommended)"], ["external", "A separate NZBGet"]]]], s).replace(/^<label><\/label>/, "")} ${state}</div>
+    ${builtin ? formRows([
+      ["download_dir", "Download folder", "folder", "Downloads are unpacked into <code>completed/movies</code> and <code>completed/tv</code> in here, then moved into your library. Keep it on the same share as your media (e.g. <code>/data/usenet</code>) so moves are instant."],
+      ["download_speed_limit", "Speed limit (KB/s)", "number", "0 = no limit."],
+    ], s) : formRows([
+      ["nzbget_url", "NZBGet URL", "text", "e.g. http://192.168.1.10:6789"],
+      ["nzbget_username", "Username", "text"], ["nzbget_password", "Password", "password"],
+      ["remote_path_from", "Remote path (NZBGet)", "text", "If NZBGet sees downloads at a different path, e.g. /downloads/completed"],
+      ["remote_path_to", "Local path (Omniarr)", "folder", "…and Omniarr sees them at, e.g. /data/downloads/completed"],
+    ], s)}
+    ${formRows([["import_mode", "Import mode", ["move", "hardlink", "copy"], "Move is right for most setups. Hardlink keeps the download too (for seeding-style setups) and needs the same share."]], s)}
+    <span></span><div class="toolbar"><button class="primary" id="save">Save</button>${builtin ? "" : '<button id="test">Test NZBGet</button>'}</div></div>
+    ${builtin ? `<h3>Usenet servers</h3>
+    <p class="small muted">Your news server provider's details (not your indexer). Servers with a higher level are only used for articles the level 0 servers are missing (backup / block accounts).</p>
+    ${servers.length ? `<div class="table-wrap"><table><tr><th>Server</th><th>Port</th><th>Connections</th><th>Level</th><th>On</th><th></th></tr>
+      ${servers.map((v) => `<tr><td><b>${esc(v.name || v.host)}</b><div class="small muted">${esc(v.host)}${v.username ? " · " + esc(v.username) : ""}</div></td>
+        <td>${v.port}${v.ssl ? ' <span class="chip ok">SSL</span>' : ""}</td><td>${v.connections}</td><td>${v.level}</td>
+        <td><input type="checkbox" ${v.active ? "checked" : ""} onchange="editServer(${v.id}, {active: this.checked})"></td>
+        <td><button class="small" onclick="testServer({id: ${v.id}}, this)">Test</button> <button class="small" onclick="serverForm(${v.id})">Edit</button> <button class="small danger" onclick="delServer(${v.id})">Delete</button></td></tr>`).join("")}</table></div>`
+      : '<p class="muted">No servers yet — add your Usenet provider below to start downloading.</p>'}
+    <div class="toolbar" style="margin-top:10px"><button class="primary" onclick="serverForm()">Add server</button>
+      <button onclick="copyServers(this)" title="Uses the separate NZBGet's address and login from before">Copy servers from my old NZBGet</button></div>` : ""}`;
+  window._servers = servers;
+  $("#save").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect($("#dlform")) }); toast("Saved"); route(); });
+  if ($("#test")) $("#test").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect($("#dlform")) }); const r = await api("/nzbget/test", { method: "POST" }); toast(r.message, !r.ok); });
+  $('[data-k="download_client"]').onchange = () => guard(async () => { await api("/settings", { method: "PUT", body: { download_client: $('[data-k="download_client"]').value } }); route(); });
+}
+function serverForm(id) {
+  const v = (window._servers || []).find((x) => x.id === id) || { host: "", name: "", port: 563, ssl: 1, username: "", password: "", connections: 8, level: 0, retention: 0, active: 1 };
+  modal(`<h2>${id ? "Edit" : "Add"} Usenet server</h2><div class="form" id="svf">
+    ${formRows([["host", "Address", "text", "e.g. news.newshosting.com"], ["port", "Port", "number", "Usually 563 with SSL, 119 without."],
+      ["ssl", "SSL", "checkbox"], ["username", "Username", "text"], ["password", "Password", "password"],
+      ["connections", "Connections", "number", "Your provider's limit, e.g. 20–50."], ["level", "Level", "number", "0 = main server. 1, 2… = backup servers."],
+      ["retention", "Retention (days)", "number", "0 = unlimited / unknown."], ["name", "Name", "text", "Optional."]], v)}
+    <span></span><div class="toolbar"><button class="primary" id="svsave">Save</button><button id="svtest">Test</button><button onclick="closeModal()">Cancel</button></div></div>`);
+  const body = () => ({ ...collect($("#svf")), ...(id ? { id } : {}) });
+  $("#svtest").onclick = () => testServer(body(), $("#svtest"));
+  $("#svsave").onclick = () => guard(async () => {
+    const b = body();
+    if (!b.host) throw new Error("Enter the server address");
+    if (id) await api("/usenet-servers/" + id, { method: "PUT", body: b }); else await api("/usenet-servers", { method: "POST", body: b });
+    closeModal(); toast("Saved — the downloader picks it up in a few seconds"); route();
+  });
+}
+async function testServer(body, btn) {
+  btn.disabled = true; const t = btn.textContent; btn.textContent = "Testing…";
+  await guard(async () => { const r = await api("/usenet-servers/test", { method: "POST", body }); toast(r.ok ? "✓ " + r.message : r.message, !r.ok); });
+  btn.disabled = false; btn.textContent = t;
+}
+async function editServer(id, body) { await guard(() => api("/usenet-servers/" + id, { method: "PUT", body })); }
+async function delServer(id) { if (confirm("Delete this server?")) await guard(async () => { await api("/usenet-servers/" + id, { method: "DELETE" }); route(); }); }
+async function copyServers(btn) {
+  btn.disabled = true;
+  await guard(async () => { const r = await api("/usenet-servers/copy", { method: "POST" }); toast(r.added ? `Copied ${r.added} server(s)` : r.found ? "Those servers are already here" : "No servers found in the other NZBGet"); route(); });
+  btn.disabled = false;
+}
+
 // Folder picker: browse the folders Omniarr can see (/data = the Data share from the Unraid template)
 async function pickFolder(input) {
   const join = (a, b) => (a.endsWith("/") ? a : a + "/") + b;

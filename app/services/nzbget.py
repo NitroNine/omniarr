@@ -12,15 +12,26 @@ class NZBGetError(Exception):
     pass
 
 
-async def call(method: str, *params):
+def _target(external: bool = False) -> tuple[str, tuple[str, str] | None, str]:
+    """(url, auth, name) of the downloader in use: the built-in one, or a separate NZBGet."""
     s = db.get_settings()
-    url = s["nzbget_url"].rstrip("/") + "/jsonrpc"
+    if s["download_client"] == "builtin" and not external:
+        from . import downloader
+        return downloader.url(), (downloader.USERNAME, downloader.control_password()), "the built-in downloader"
     auth = (s["nzbget_username"], s["nzbget_password"]) if s["nzbget_username"] else None
+    return s["nzbget_url"].rstrip("/"), auth, f"NZBGet at {s['nzbget_url']}"
+
+
+async def call(method: str, *params, external: bool = False):
+    base, auth, name = _target(external)
     async with httpx.AsyncClient(timeout=30, auth=auth) as c:
         try:
-            r = await c.post(url, json={"method": method, "params": list(params), "id": 1})
+            r = await c.post(base + "/jsonrpc", json={"method": method, "params": list(params), "id": 1})
         except httpx.HTTPError as e:
-            raise NZBGetError(f"Cannot reach NZBGet at {s['nzbget_url']}: {e}") from e
+            if base.startswith("http://127.0.0.1"):
+                raise NZBGetError("The built-in downloader isn't running yet. Add a Usenet server under "
+                                  "Settings → Downloads, or check the Events log.") from e
+            raise NZBGetError(f"Cannot reach {name}: {e}") from e
     if r.status_code == 401:
         raise NZBGetError("NZBGet rejected the username/password.")
     r.raise_for_status()
@@ -54,3 +65,18 @@ async def history() -> dict[int, dict]:
 
 async def delete(nzb_id: int, from_history: bool = False) -> None:
     await call("editqueue", "HistoryDelete" if from_history else "GroupFinalDelete", "", [nzb_id])
+
+
+async def status() -> dict:
+    return await call("status") or {}
+
+
+async def pause(paused: bool) -> None:
+    await call("pausedownload" if paused else "resumedownload")
+
+
+async def test_server(host: str, port: int, username: str, password: str, ssl: bool) -> str:
+    """Connects and logs in to a news server (NZBGet's own "Test connection").
+    Returns "" when it works, otherwise NZBGet's error message."""
+    cert_level = 2 if ssl else 0  # strict | none
+    return await call("testserver", host, int(port), username or "", password or "", bool(ssl), "", 30, cert_level) or ""

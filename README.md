@@ -11,7 +11,7 @@ Movies and TV in one self-hosted app, built for Unraid:
 - **Streaming tab:** browse Netflix, Apple TV+, Prime Video, Disney+, Max, Hulu, Paramount+, Peacock and more. Click a service's logo to see the movies and TV shows it offers, and add them with one click.
 - **Library import:** brings in media that's already in your movies and TV folders. Omniarr matches each folder on TMDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
 - **Quality limits per library:** choose which qualities are allowed (your maximum and minimum), the quality to *upgrade until*, and whether upgrades happen at all.
-- **Downloads:** sent to **NZBGet**. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the title's folder. Failed downloads are blocklisted and searched again.
+- **Downloads:** a **built-in downloader** (NZBGet, shipped inside the image and run by Omniarr — no second container). Add your Usenet provider under **Settings → Downloads**. A separate NZBGet still works if you prefer. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the title's folder. Failed downloads are blocklisted and searched again.
 
 ## 1080p and 4K versions
 
@@ -112,13 +112,13 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 | `PUID` / `PGID` | `99` / `100` |
 | `OMNIARR_PASSWORD` | optional; creates the admin account on first start (otherwise the web UI asks you to create one) |
 
-**Paths:** follow TRaSH's folder layout. Give NZBGet the same `/data` mapping and set its `DestDir` to `/data/usenet/completed`. Then moves are instant, and the `hardlink` import mode works. If NZBGet reports a different path than Omniarr sees, set the remote path mapping under **Settings → NZBGet**.
+**Paths:** follow TRaSH's folder layout. The built-in downloader saves to `/data/usenet` (changeable under **Settings → Downloads**), on the same share as your media, so moves into the library are instant and the `hardlink` import mode works. Using a separate NZBGet instead? Give it the same `/data` mapping, or set the remote path mapping under **Settings → Downloads**.
 
 ### First-run setup (web UI at `http://<unraid-ip>:8790`)
 
 1. **Settings → Profiles → "Sync TRaSH Guides now"** (afterwards it re-syncs automatically).
 2. **Settings → Metadata:** enter your free TMDB API key (v3 key or v4 read token). Get one at themoviedb.org → Settings → API.
-3. **Settings → NZBGet:** URL, username and password, then **Test**. Create the `movies` and `tv` categories in NZBGet, or change the names here.
+3. **Settings → Downloads:** **Add server** with your Usenet provider's address, port, SSL, username, password and connection count, then **Test**. Moving from a separate NZBGet? **Copy servers from my old NZBGet** brings its servers over; then you can remove that container.
 4. **Settings → Indexers:** add each Usenet indexer (URL + API key). It's tested as soon as you add it.
 5. **Settings → Root folders:** pick your movies folder and TV folder.
 6. **Add:** search for a movie or show, pick **1080p** or **4K**, and click Add.
@@ -277,6 +277,12 @@ unraid/omniarr.xml Unraid template
 
 ## Known limitations
 
-- Usenet + NZBGet only (no torrents, no SABnzbd yet).
+- Usenet only (no torrents). Downloads use the built-in NZBGet or a separate NZBGet; no SABnzbd.
 - Library import doesn't watch the disk. Use **Rescan folder** (or import again) after changing files by hand.
 - TRaSH `IndexerFlagSpecification` custom formats (freeleech, etc.) never match, since they're torrent-oriented. Language CFs are inferred from release titles.
+
+## Third-party software
+
+The Docker image includes [NZBGet](https://github.com/nzbgetcom/nzbget) (GPL-2.0, source at that link)
+as the built-in downloader, unmodified, with the unrar and 7-Zip binaries from its official release
+(their licences are in `/opt/nzbget` inside the image). Omniarr runs it as a separate program.

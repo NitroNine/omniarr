@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import auth, collections_, db, requests_, decision, importer, library, scanner, search, trash
-from .services import metadata, newznab, nzbget
+from .services import downloader, metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("omniarr")
@@ -57,6 +57,7 @@ async def scheduler():
         s = db.get_settings()
         now = time.time()
         jobs = [
+            ("downloader", 30, downloader.ensure),  # keeps the built-in NZBGet running
             ("downloads", 30, importer.process_downloads),
             ("trash", 3600, _trash_auto),
             ("series_refresh", 3600, _refresh_all_series),
@@ -78,10 +79,15 @@ async def lifespan(_app: FastAPI):
     db.connect()
     auth.bootstrap_from_env()
     trash.ensure_loaded()
+    try:
+        await downloader.ensure()
+    except Exception as e:  # noqa: BLE001
+        log.warning("Built-in downloader didn't start: %s", e)
     task = asyncio.create_task(scheduler())
     log.info("Omniarr started — config dir %s", db.CONFIG_DIR)
     yield
     task.cancel()
+    await asyncio.to_thread(downloader.stop)
 
 
 app = FastAPI(title="Omniarr", lifespan=lifespan)
@@ -264,9 +270,10 @@ def get_settings():
 
 
 @app.put("/api/settings")
-def put_settings(values: dict):
-    values = {k: v for k, v in values.items() if not (k in SECRET_KEYS and v == "********")}
+async def put_settings(values: dict):
+    values = {k: v for k, v in values.items() if not (k in SECRET_KEYS and v == "********") and not k.startswith("_")}
     db.save_settings(values)
+    asyncio.create_task(_job("downloader", downloader.ensure))
     return get_settings()
 
 
@@ -468,6 +475,124 @@ async def test_indexer(iid: int):
         return {"ok": True, "message": await newznab.test(ix)}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": str(e)}
+
+
+# ------------------------------------------------- built-in downloader --
+class ServerIn(BaseModel):
+    name: str = ""
+    host: str
+    port: int = 563
+    ssl: bool = True
+    username: str = ""
+    password: str = ""
+    connections: int = 8
+    level: int = 0
+    retention: int = 0
+    active: bool = True
+
+
+MASK = "********"
+
+
+def _server_row(body: dict) -> dict:
+    row = {k: v for k, v in body.items() if k in ServerIn.model_fields}
+    for k in ("ssl", "active"):
+        if k in row:
+            row[k] = int(bool(row[k]))
+    if row.get("password") == MASK:
+        row.pop("password")
+    if "host" in row:
+        row["host"] = str(row["host"]).strip()
+        if not row["host"]:
+            raise HTTPException(400, "Server address is required")
+    return row
+
+
+def _reconfigure():
+    asyncio.create_task(_job("downloader", downloader.ensure))
+
+
+@app.get("/api/usenet-servers")
+def list_servers():
+    return [{**s, "password": MASK if s["password"] else ""} for s in downloader.servers()]
+
+
+@app.post("/api/usenet-servers")
+async def add_server(body: ServerIn):
+    sid = db.insert("usenet_servers", _server_row(body.model_dump()))
+    _reconfigure()
+    return {"id": sid}
+
+
+@app.put("/api/usenet-servers/{sid}")
+async def edit_server(sid: int, body: dict):
+    db.update("usenet_servers", sid, _server_row(body))
+    _reconfigure()
+    return {"ok": True}
+
+
+@app.delete("/api/usenet-servers/{sid}")
+async def delete_server(sid: int):
+    db.ex("DELETE FROM usenet_servers WHERE id=?", (sid,))
+    _reconfigure()
+    return {"ok": True}
+
+
+@app.post("/api/usenet-servers/test")
+async def test_server(body: dict):
+    """Test a server as typed in the form, or a saved one (id) with its stored password."""
+    if body.get("id"):
+        saved = db.one("SELECT * FROM usenet_servers WHERE id=?", (int(body["id"]),)) or {}
+        body = {**saved, **{k: v for k, v in body.items() if v != MASK}}
+    if not body.get("host"):
+        return {"ok": False, "message": "Enter the server address first"}
+    try:
+        err = await nzbget.test_server(body["host"], body.get("port") or 563, body.get("username", ""),
+                                       body.get("password", ""), bool(body.get("ssl")))
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "message": str(e)}
+    return {"ok": not err, "message": err or "Connected and logged in"}
+
+
+@app.post("/api/usenet-servers/copy")
+async def copy_servers():
+    """One-time move from a separate NZBGet: copy its news servers (using the external
+    NZBGet address and login saved in settings)."""
+    try:
+        found = downloader.parse_servers(await nzbget.call("config", external=True))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Couldn't read the other NZBGet's settings: {e}") from e
+    have = {(s["host"].lower(), s["username"] or "") for s in downloader.servers()}
+    added = [s for s in found if (s["host"].lower(), s["username"] or "") not in have]
+    for s in added:
+        db.insert("usenet_servers", s)
+    _reconfigure()
+    return {"found": len(found), "added": len(added)}
+
+
+@app.get("/api/downloader/status")
+async def downloader_status():
+    s = db.get_settings()
+    out = {"client": s["download_client"], "installed": downloader.installed(), "running": downloader.running(),
+           "servers": len(downloader.servers()), "download_dir": s["download_dir"], "ok": False}
+    try:
+        st = await nzbget.status()
+        out.update(ok=True, version=await nzbget.version(), speed=st.get("DownloadRate", 0),
+                   paused=bool(st.get("DownloadPaused")), remaining_mb=st.get("RemainingSizeMB", 0),
+                   speed_limit=st.get("DownloadLimit", 0))
+    except Exception as e:  # noqa: BLE001
+        out["message"] = str(e)
+    if s["download_client"] == "builtin":
+        out["free"] = downloader.disk_free(s["download_dir"])
+    return out
+
+
+@app.post("/api/downloader/{action}")
+async def downloader_pause(action: str):
+    if action not in ("pause", "resume"):
+        raise HTTPException(404)
+    await nzbget.pause(action == "pause")
+    return {"ok": True}
 
 
 @app.post("/api/nzbget/test")
