@@ -28,11 +28,11 @@ You choose the library when you add a title. The profile decides which releases 
 
 ### Recommended: from GitHub (normal Unraid updates)
 
-Every change pushed to this repository is tested and built automatically into the image `ghcr.io/OWNER/REPO:latest`. Unraid installs and updates it like any other app.
+Every change pushed to this repository is tested and built automatically into the image `ghcr.io/nitronine/omniarr:latest`. Unraid installs and updates it like any other app.
 
 1. In the Unraid web UI, open the **Docker** tab and scroll to the bottom. Under **Template Repositories**, add:
    ```
-   https://github.com/OWNER/REPO
+   https://github.com/NitroNine/omniarr
    ```
    then click **Save**.
 2. Click **Add Container**, open the **Template** dropdown, and pick **omniarr** (listed under this repository).
@@ -45,7 +45,7 @@ Every change pushed to this repository is tested and built automatically into th
 
 **Already installed with the install script?** Switch over without losing anything:
 1. On the **Docker** tab, click the omniarr icon, then **Edit**.
-2. Change **Repository** to `ghcr.io/OWNER/REPO:latest` and click **Apply**.
+2. Change **Repository** to `ghcr.io/nitronine/omniarr:latest` and click **Apply**.
 
 Your settings, library and accounts stay in `/mnt/user/appdata/omniarr`. You can delete the `omniarr-src` folder afterwards.
 

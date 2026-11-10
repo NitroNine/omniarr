@@ -34,13 +34,10 @@ Tests fake TMDB/TheTVDB/indexers/NZBGet; none of the external services have been
 for real yet, and the Docker image has never been built (the web sandbox couldn't).
 
 ## Where things were left (open items)
-1. **GitHub distribution, not done yet.** Plan: the owner creates an empty public repo,
-   then run `python scripts/set_github_repo.py owner/repo` (fills the Unraid template,
-   icon and README URLs), commit, `git remote add origin …`, `git push -u origin main`.
-   `.github/workflows/docker.yml` then tests and publishes `ghcr.io/<owner>/<repo>:latest`
-   (amd64 + arm64). Check the first Actions run and that the GHCR package is public.
-2. Commits are authored as "Omniarr <noreply@anthropic.com>"; the owner may want their
-   own name/email used (ask before rewriting history).
+1. **GitHub:** public repo `NitroNine/omniarr`; pushes to `main` test and publish
+   `ghcr.io/nitronine/omniarr:latest` (amd64 + arm64) via `.github/workflows/docker.yml`.
+2. Commits are authored as NitroNine (GitHub noreply email); history was rewritten once
+   before the first push.
 3. On Unraid: add the repo under Docker → Template Repositories, Add Container → omniarr.
    If it was installed earlier with `install-unraid.sh`, switch by editing the container's
    Repository to the GHCR image (data in /mnt/user/appdata/omniarr is kept).
