@@ -337,6 +337,47 @@ async def lookup_movie(term: str):
     return res
 
 
+# --------------------------------------------- discover (streaming services) --
+@app.get("/api/providers")
+async def providers():
+    return {"region": db.setting("streaming_region") or "US", "providers": await metadata.watch_providers()}
+
+
+@app.get("/api/providers/{pid}/{kind}")
+async def provider_titles(pid: int, kind: str, page: int = 1, sort: str = "popular", originals: bool = False):
+    if kind not in ("movie", "tv"):
+        raise HTTPException(400)
+    prov = next((p for p in await metadata.watch_providers() if p["id"] == pid), None)
+    data = await metadata.discover(kind, pid, page, sort, prov["name"] if (originals and prov) else None)
+    if kind == "movie":
+        have = {r["tmdb_id"]: r["id"] for r in db.q("SELECT id, tmdb_id FROM movies")}
+    else:
+        have = {r["tmdb_id"]: r["id"] for r in db.q("SELECT id, tmdb_id FROM series WHERE tmdb_id IS NOT NULL")}
+    for r in data["results"]:
+        r["library_id"] = have.get(r["tmdb_id"])
+    data["provider"] = prov
+    return data
+
+
+class AddSeriesTmdb(BaseModel):
+    tmdb_id: int
+    tier: str = "hd"
+    monitor: str = "all"
+    search: bool = True
+
+
+@app.post("/api/series/from-tmdb")
+async def add_series_from_tmdb(body: AddSeriesTmdb):
+    """TMDB lists TV by its own id; Omniarr uses TheTVDB for TV, so translate first."""
+    tvdb_id = await metadata.tvdb_id_for_tmdb_tv(body.tmdb_id)
+    if not tvdb_id:
+        raise ValueError("TheTVDB doesn't know this show yet, so it can't be added.")
+    s = await add_series(AddSeries(tvdb_id=tvdb_id, tier=body.tier, monitor=body.monitor, search=body.search))
+    if not s.get("tmdb_id"):
+        db.update("series", s["id"], {"tmdb_id": body.tmdb_id})
+    return s
+
+
 # ------------------------------------------------------------ collections --
 @app.get("/api/lookup/collection")
 async def lookup_collection(term: str):

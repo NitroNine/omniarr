@@ -79,6 +79,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tvdb_api_key": "",
     "tvdb_pin": "",
     "metadata_language": "en",
+    "streaming_region": "US",  # country for "where to watch" (Discover)
     # NZBGet
     "nzbget_url": "http://nzbget:6789",
     "nzbget_username": "nzbget",

@@ -84,3 +84,12 @@ code { background: var(--chip); padding: 1px 4px; border-radius: 4px; font-size:
   .grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
   .result-row { flex-wrap: wrap; }
 }
+
+.providers { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 12px; }
+.provider { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 8px; text-align: center; cursor: pointer; text-decoration: none; color: var(--text); display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.provider:hover { border-color: var(--accent); }
+.provider img { width: 64px; height: 64px; border-radius: 14px; }
+.provider span { font-size: 12px; line-height: 1.25; }
+.card .add-btn { margin-top: 2px; }
+.prov-head { display: flex; align-items: center; gap: 12px; }
+.prov-head img { width: 44px; height: 44px; border-radius: 10px; }

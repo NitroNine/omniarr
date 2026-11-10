@@ -27,7 +27,7 @@ function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 // ------------------------------------------------------------- router ---
-const routes = { collections: renderCollections, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
+const routes = { discover: renderDiscover, collections: renderCollections, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
 async function route() {
   const [, name = "movies", arg] = location.hash.split("/");
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name || ((name === "movie" || name === "collections") && a.dataset.tab === "movies") || (name === "show" && a.dataset.tab === "series")));
@@ -235,6 +235,73 @@ async function addItem(kind, i, btn) {
   });
 }
 
+// ----------------------------------------------------------- discover ---
+const PINNED = ["netflix", "apple tv", "amazon prime video", "disney plus", "max", "hulu", "paramount plus", "peacock"];
+async function renderDiscover(pid) {
+  if (pid) return renderProvider(+pid);
+  const { region, providers } = await api("/providers");
+  const pinRank = (p) => { const i = PINNED.findIndex((n) => p.name.toLowerCase().replace("+", " plus").startsWith(n)); return i < 0 ? 99 : i; };
+  const sorted = [...providers].sort((a, b) => pinRank(a) - pinRank(b) || a.priority - b.priority);
+  const tile = (p) => `<a class="provider" href="#/discover/${p.id}">${p.logo ? `<img src="${esc(p.logo)}" alt="">` : ""}<span>${esc(p.name)}</span></a>`;
+  view.innerHTML = `<div class="toolbar"><h2 class="grow">Streaming services <span class="muted small">available in ${esc(region)}</span></h2>
+    <input id="pf" placeholder="Find a service…"></div>
+    <div class="providers" id="pg">${sorted.slice(0, 24).map(tile).join("")}</div>
+    <div class="toolbar" style="margin-top:14px"><button id="pmore">Show all ${providers.length} services</button>
+    <span class="small muted">Change the country under Settings → Metadata. Data from TMDB / JustWatch.</span></div>`;
+  $("#pmore").onclick = () => { $("#pg").innerHTML = sorted.map(tile).join(""); $("#pmore").remove(); };
+  $("#pf").addEventListener("input", () => { const f = $("#pf").value.toLowerCase(); $("#pg").innerHTML = sorted.filter((p) => p.name.toLowerCase().includes(f)).map(tile).join(""); });
+}
+const disc = { kind: "movie", sort: "popular", originals: false, page: 1 };
+async function renderProvider(pid) {
+  const { providers } = await api("/providers");
+  const prov = providers.find((p) => p.id === pid) || { name: "Service", kinds: ["movie", "tv"] };
+  if (!prov.kinds.includes(disc.kind)) disc.kind = prov.kinds[0];
+  disc.page = 1;
+  view.innerHTML = `<div class="toolbar"><div class="prov-head grow">${prov.logo ? `<img src="${esc(prov.logo)}" alt="">` : ""}<h2 style="margin:0">${esc(prov.name)}</h2><span class="muted small" id="dcount"></span></div>
+    <a href="#/discover"><button>All services</button></a></div>
+    <div class="toolbar"><div class="tabs2" style="margin:0">${["movie", "tv"].filter((k) => prov.kinds.includes(k)).map((k) => `<button data-k="${k}" class="${disc.kind === k ? "active" : ""}">${k === "movie" ? "Movies" : "TV shows"}</button>`).join("")}</div>
+      <select id="dsort"><option value="popular">Most popular</option><option value="newest">Newest</option><option value="rating">Top rated</option><option value="title">A–Z</option></select>
+      ${prov.originals ? `<label id="dorigw"><input type="checkbox" id="dorig" ${disc.originals ? "checked" : ""}> ${esc(prov.name)} originals only</label>` : ""}
+      <span class="grow"></span>
+      <label>Add to <select id="dtier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select></label>
+      <select id="dmon" title="TV: which episodes to monitor"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option></select>
+      <label class="small"><input type="checkbox" id="dsearch" checked> Search on add</label></div>
+    <div class="grid" id="dg"></div><div class="toolbar" style="justify-content:center;margin-top:16px"><button id="dmore">Load more</button></div>`;
+  $("#dsort").value = disc.sort;
+  const showMon = () => { $("#dmon").style.display = disc.kind === "tv" ? "" : "none"; if ($("#dorigw")) $("#dorigw").style.display = disc.kind === "tv" ? "" : "none"; };
+  showMon();
+  const load = async (reset) => {
+    if (reset) { disc.page = 1; $("#dg").innerHTML = '<p class="muted">Loading…</p>'; }
+    const d = await api(`/providers/${pid}/${disc.kind}?page=${disc.page}&sort=${disc.sort}&originals=${disc.kind === "tv" && disc.originals}`);
+    window._disc = reset ? d.results : [...(window._disc || []), ...d.results];
+    $("#dcount").textContent = `${d.total_results.toLocaleString()} ${disc.kind === "movie" ? "movies" : "shows"}`;
+    $("#dg").innerHTML = window._disc.map((r, i) => `<div class="card" ${r.library_id ? `onclick="location.hash='#/${disc.kind === "movie" ? "movie" : "show"}/${r.library_id}'"` : ""} title="${esc(r.overview)}">${poster(r.poster, r.title)}
+      <div class="meta"><div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
+      <div class="chips"><span class="chip">${r.year || "TBA"}</span>${r.rating ? `<span class="chip">★ ${r.rating.toFixed(1)}</span>` : ""}</div>
+      ${r.library_id ? '<span class="chip ok">In library</span>' : `<button class="small primary add-btn" onclick="event.stopPropagation();discAdd(${i}, this)">+ Add</button>`}</div></div>`).join("") || '<p class="muted">Nothing found.</p>';
+    $("#dmore").style.display = d.page < d.total_pages ? "" : "none";
+  };
+  view.querySelectorAll(".tabs2 button").forEach((b) => (b.onclick = () => { disc.kind = b.dataset.k; view.querySelectorAll(".tabs2 button").forEach((x) => x.classList.toggle("active", x === b)); showMon(); guard(() => load(true)); }));
+  $("#dsort").onchange = () => { disc.sort = $("#dsort").value; guard(() => load(true)); };
+  if ($("#dorig")) $("#dorig").onchange = () => { disc.originals = $("#dorig").checked; guard(() => load(true)); };
+  $("#dmore").onclick = () => { disc.page++; guard(() => load(false)); };
+  await load(true);
+}
+async function discAdd(i, btn) {
+  const r = window._disc[i];
+  btn.disabled = true; btn.textContent = "Adding…";
+  await guard(async () => {
+    const tier = $("#dtier").value, search = $("#dsearch").checked;
+    const item = disc.kind === "movie"
+      ? await api("/movies", { method: "POST", body: { tmdb_id: r.tmdb_id, tier, search } })
+      : await api("/series/from-tmdb", { method: "POST", body: { tmdb_id: r.tmdb_id, tier, monitor: $("#dmon").value, search } });
+    r.library_id = item.id;
+    btn.outerHTML = '<span class="chip ok">Added</span>';
+    toast(`Added ${item.title}`);
+  });
+  if (btn.isConnected) { btn.disabled = false; btn.textContent = "+ Add"; }
+}
+
 // -------------------------------------------------------- collections ---
 async function openCollection(source, id) {
   modal('<p class="muted">Loading collection…</p>');
@@ -325,6 +392,7 @@ const SECTIONS = {
     ["tvdb_api_key", "TheTVDB API key", "password", "thetvdb.com → Dashboard → API keys (v4)."],
     ["tvdb_pin", "TheTVDB subscriber PIN", "password", "Only needed for user-supported keys."],
     ["metadata_language", "Metadata language", "text", "Two-letter code, e.g. en"],
+    ["streaming_region", "Streaming region", "text", "Country for the Streaming tab, e.g. US, GB, CA, AU, DE"],
   ] },
   downloads: { title: "NZBGet", fields: [
     ["nzbget_url", "NZBGet URL", "text", "e.g. http://192.168.1.10:6789"],

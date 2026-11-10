@@ -125,6 +125,99 @@ async def collection(source: str, cid: int) -> dict:
     return {"source": source, "id": cid, **info, "parts": parts}
 
 
+# ------------------------------------------------- streaming services ----
+TMDB_LOGO = "https://image.tmdb.org/t/p/w154"
+# TMDB "network" ids, used for the "originals only" TV filter
+ORIGINALS_NETWORK = {
+    "netflix": 213, "apple tv": 2552, "amazon prime video": 1024, "prime video": 1024, "disney": 2739,
+    "hulu": 453, "max": 3186, "hbo max": 3186, "paramount": 4330, "peacock": 3353,
+}
+_providers_cache: dict = {}
+
+
+def _region() -> str:
+    return (db.setting("streaming_region") or "US").upper()
+
+
+def originals_network(name: str) -> int | None:
+    """'Apple TV+' / 'Disney Plus' / 'Peacock Premium' -> the TMDB network that makes their originals."""
+    import re
+    n = re.sub(r"\s*(\+|\bplus\b|\bpremium\b)\s*$", "", name.lower().strip()).strip()
+    return ORIGINALS_NETWORK.get(n)
+
+
+async def watch_providers() -> list[dict]:
+    """Streaming services available in the configured region (movies + TV merged)."""
+    import asyncio
+    region = _region()
+    hit = _providers_cache.get(region)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    mv, tv = await asyncio.gather(_tmdb("/watch/providers/movie", watch_region=region),
+                                  _tmdb("/watch/providers/tv", watch_region=region))
+    merged: dict[int, dict] = {}
+    for kind, data in (("movie", mv), ("tv", tv)):
+        for p in data.get("results", []):
+            prio = (p.get("display_priorities") or {}).get(region, p.get("display_priority", 999))
+            e = merged.setdefault(p["provider_id"], {
+                "id": p["provider_id"], "name": p["provider_name"], "priority": prio,
+                "logo": TMDB_LOGO + p["logo_path"] if p.get("logo_path") else None, "kinds": []})
+            e["kinds"].append(kind)
+            e["priority"] = min(e["priority"], prio)
+    out = sorted(merged.values(), key=lambda p: (p["priority"], p["name"]))
+    for p in out:
+        p["originals"] = originals_network(p["name"]) is not None
+    _providers_cache[region] = (time.time() + 12 * 3600, out)
+    return out
+
+
+_SORTS = {"popular": "popularity.desc", "newest": None, "rating": "vote_average.desc", "title": None}
+
+
+async def discover(kind: str, provider_id: int, page: int = 1, sort: str = "popular",
+                   originals_of: str | None = None) -> dict:
+    """Movies or TV shows streaming on a service (flat-rate subscription) in the region.
+    originals_of: provider name -> TV limited to that service's own network."""
+    region = _region()
+    params: dict = {"page": page, "watch_region": region, "include_adult": "false"}
+    if kind == "tv" and originals_of and originals_network(originals_of):
+        params["with_networks"] = originals_network(originals_of)
+    else:
+        params.update(with_watch_providers=provider_id, with_watch_monetization_types="flatrate")
+    if sort == "newest":
+        params["sort_by"] = "primary_release_date.desc" if kind == "movie" else "first_air_date.desc"
+        today = time.strftime("%Y-%m-%d")
+        params["primary_release_date.lte" if kind == "movie" else "first_air_date.lte"] = today
+    elif sort == "rating":
+        params.update(sort_by="vote_average.desc", **{"vote_count.gte": 300})
+    elif sort == "title":
+        params["sort_by"] = "title.asc" if kind == "movie" else "name.asc"
+    else:
+        params["sort_by"] = "popularity.desc"
+    data = await _tmdb("/discover/movie" if kind == "movie" else "/discover/tv", **params)
+    results = []
+    for r in data.get("results", []):
+        date = r.get("release_date") if kind == "movie" else r.get("first_air_date")
+        results.append({
+            "tmdb_id": r["id"], "title": r.get("title") or r.get("name"), "year": _year(date),
+            "overview": r.get("overview"), "rating": r.get("vote_average"),
+            "poster": TMDB_IMG + r["poster_path"] if r.get("poster_path") else None,
+        })
+    return {"page": data.get("page", page), "total_pages": min(data.get("total_pages", 1), 500),
+            "total_results": data.get("total_results", 0), "results": results}
+
+
+async def tvdb_id_for_tmdb_tv(tmdb_id: int) -> int | None:
+    ids = await _tmdb(f"/tv/{tmdb_id}/external_ids")
+    if ids.get("tvdb_id"):
+        return int(ids["tvdb_id"])
+    if ids.get("imdb_id"):
+        s = await series_by_remote_id(ids["imdb_id"])
+        if s:
+            return s["tvdb_id"]
+    return None
+
+
 # ---------------------------------------------------------------- TVDB ----
 _tvdb_token: dict = {"token": None, "exp": 0, "key": None}
 

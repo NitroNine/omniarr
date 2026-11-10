@@ -7,6 +7,7 @@ Movies and TV in one self-hosted app, built for Unraid:
 - **Two libraries per media type:** 1080p-and-lower and 4K, each with its own root folder and TRaSH profile. You can move an item between them at any time, and its files move too.
 - **Search:** works with any **Newznab** Usenet indexer (NZBGeek, DrunkenSlug, NZBFinder, …). It does RSS sync, backlog search, season packs and upgrades up to the cutoff.
 - **Collections and universes:** add a whole movie collection (e.g. *The Lord of the Rings Collection*) or a universe (e.g. the MCU, through its TMDB keyword) in one go. New movies announced later are added automatically.
+- **Streaming tab:** browse Netflix, Apple TV+, Prime Video, Disney+, Max, Hulu, Paramount+, Peacock and more. Click a service's logo to see the movies and TV shows it offers, and add them with one click.
 - **Library import:** brings in media that's already in your root folders. Omniarr matches each folder on TMDB/TheTVDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
 - **Quality limits per library:** choose which qualities are allowed (your maximum and minimum), the quality to *upgrade until*, and whether upgrades happen at all.
 - **Downloads:** sent to **NZBGet**. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the right root folder. Failed downloads are blocklisted and searched again.
@@ -64,6 +65,17 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 - **Settings → Profiles → "Test a release name"** shows how a release title is parsed, which TRaSH custom formats match, and its score. Handy for working out why something was or wasn't grabbed.
 - **Interactive search** on any movie, season or episode lists every result with its score and rejection reasons. You can grab any of them by hand.
 - **Activity** shows the queue, history, an event log and the blocklist, plus buttons to run RSS sync or a backlog search now.
+
+## Streaming tab
+
+The **Streaming** tab shows a logo for every streaming service available in your country. The big ones come first; **Show all** reveals the rest, and the search box finds a specific service. The data comes from TMDB's "where to watch" listings, which are supplied by JustWatch.
+
+Click a service to browse what it offers:
+- **Movies / TV shows** tabs, sorted by most popular, newest, top rated or A–Z, with **Load more** to page through everything.
+- **Originals only** (TV): limits the list to the service's own shows, e.g. Apple TV+ or Netflix originals.
+- **Add to:** pick the 1080p or 4K library and, for TV, which episodes to monitor. Then click **+ Add** on any poster. Titles already in your library are marked **In library**, and clicking them opens their page.
+
+Set your country under **Settings → Metadata → Streaming region**: US, GB, CA, AU, DE, etc.
 
 ## Collections and universes
 
@@ -151,6 +163,7 @@ app/
   search.py        indexer search, RSS sync, grabbing
   importer.py      NZBGet tracking, import, rename, blocklist
   library.py       add/refresh movies & series, root folders, 1080p/4K moves
+  services/metadata.py also covers streaming providers (TMDB watch providers / discover)
   collections_.py  TMDB collections / keyword universes, auto-adding new entries
   scanner.py       library import: scan root folders, match, detect existing files
   services/        TMDB, TheTVDB, Newznab, NZBGet, ffprobe
