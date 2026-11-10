@@ -115,6 +115,11 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 
 **Paths:** follow TRaSH's folder layout. The built-in downloader saves to the **Downloads** path from the container settings (`/downloads`; without one, `/data/usenet`). Keep it on the same share as your media, so moves into the library are instant and the `hardlink` import mode works. Using a separate NZBGet instead? Give it the same `/data` mapping, or set the remote path mapping under **Settings → Downloads**.
 
+**Reverse proxy (Caddy, Nginx, SWAG…):** point it at `http://<unraid-ip>:8790`. Omniarr reads the
+visitor's address from `X-Forwarded-For` (for wrong-password throttling) and makes its login cookie
+HTTPS-only when `X-Forwarded-Proto` is `https`, trusting those headers only from local-network proxies.
+Caddy example: `omniarr.example.duckdns.org { reverse_proxy 192.168.1.10:8790 }`.
+
 ### First-run setup (web UI at `http://<unraid-ip>:8790`)
 
 1. **Settings → Profiles → "Sync TRaSH Guides now"** (afterwards it re-syncs automatically).

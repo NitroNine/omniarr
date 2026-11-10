@@ -148,9 +148,41 @@ class LoginIn(BaseModel):
     password: str
 
 
-def _set_session(resp: JSONResponse, token: str) -> JSONResponse:
+def _from_local_proxy(request: Request) -> bool:
+    """True when the connection comes from this machine or the home network, e.g. Caddy or
+    another reverse proxy on the server. Only then are its X-Forwarded-* headers believed."""
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(request.client.host if request.client else "")
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback
+
+
+def client_ip(request: Request) -> str:
+    """The visitor's address. Behind a reverse proxy (Caddy, Nginx…) it's the address the proxy
+    adds last to X-Forwarded-For; otherwise the address connecting to us."""
+    direct = request.client.host if request.client else "?"
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd and _from_local_proxy(request):
+        last = fwd.split(",")[-1].strip()
+        if last:
+            return last
+    return direct
+
+
+def _is_https(request: Request) -> bool:
+    if os.environ.get("OMNIARR_SECURE_COOKIES", "").lower() in ("1", "true", "yes"):
+        return True
+    if request.url.scheme == "https":
+        return True
+    return _from_local_proxy(request) and request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
+
+
+def _set_session(resp: JSONResponse, token: str, request: Request) -> JSONResponse:
+    # HTTPS-only cookie when reached over HTTPS (e.g. through Caddy); plain http on the LAN keeps working
     resp.set_cookie(auth.SESSION_COOKIE, token, max_age=auth.SESSION_DAYS * 86400, httponly=True, samesite="lax",
-                    secure=os.environ.get("OMNIARR_SECURE_COOKIES", "").lower() in ("1", "true", "yes"))
+                    secure=_is_https(request))
     return resp
 
 
@@ -161,19 +193,19 @@ def auth_status(request: Request):
 
 
 @app.post("/api/auth/setup")
-def auth_setup(body: LoginIn):
+def auth_setup(body: LoginIn, request: Request):
     """First run only: create the admin account."""
     if auth.user_count() > 0:
         raise PermissionError("Setup is already done")
     auth.create_user(body.username, body.password, role="admin")
     token, user = auth.login(body.username, body.password, "setup")
-    return _set_session(JSONResponse({"user": user}), token)
+    return _set_session(JSONResponse({"user": user}), token, request)
 
 
 @app.post("/api/auth/login")
 def auth_login(body: LoginIn, request: Request):
-    token, user = auth.login(body.username, body.password, request.client.host if request.client else "?")
-    return _set_session(JSONResponse({"user": user}), token)
+    token, user = auth.login(body.username, body.password, client_ip(request))
+    return _set_session(JSONResponse({"user": user}), token, request)
 
 
 @app.post("/api/auth/logout")

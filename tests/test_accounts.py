@@ -228,3 +228,35 @@ def test_indexer_categories(client, monkeypatch):
     iid = client.post("/api/indexers", json={"name": "G", "url": "https://g", "apikey": "storedkey1"}).json()["id"]
     client.post("/api/indexers/caps", json={"id": iid, "url": "https://g", "apikey": ""})
     assert seen["args"] == ("https://g", "storedkey1")  # edit form: saved key used
+
+
+def test_behind_reverse_proxy(env):
+    """Through Caddy: the throttle counts the real visitor, and the cookie is HTTPS-only."""
+    auth._failures.clear()
+    auth.create_user("boss", "longenough1", role="admin")
+    c = TestClient(app)  # the test client connects from "testclient"; pretend it's Caddy on the LAN
+    from app import main
+    import types
+    orig = main._from_local_proxy
+    main._from_local_proxy = lambda request: True
+    try:
+        via = {"X-Forwarded-For": "203.0.113.9", "X-Forwarded-Proto": "https"}
+        for _ in range(10):
+            c.post("/api/auth/login", json={"username": "boss", "password": "nope"}, headers=via)
+        assert c.post("/api/auth/login", json={"username": "boss", "password": "longenough1"},
+                      headers=via).status_code == 403  # that visitor is throttled…
+        other = {"X-Forwarded-For": "198.51.100.7", "X-Forwarded-Proto": "https"}
+        r = c.post("/api/auth/login", json={"username": "boss", "password": "longenough1"}, headers=other)
+        assert r.status_code == 200  # …someone else coming through the same proxy isn't
+        assert "secure" in r.headers["set-cookie"].lower()
+        plain = TestClient(app).post("/api/auth/login", json={"username": "boss", "password": "longenough1"},
+                                     headers={"X-Forwarded-For": "198.51.100.8"})
+        assert "secure" not in plain.headers["set-cookie"].lower()  # http on the LAN keeps working
+    finally:
+        main._from_local_proxy = orig
+        auth._failures.clear()
+    # a direct internet client can't fake its address
+    fake = types.SimpleNamespace(client=types.SimpleNamespace(host="8.8.8.8"), headers={"x-forwarded-for": "1.2.3.4"})
+    assert main.client_ip(fake) == "8.8.8.8"
+    lan = types.SimpleNamespace(client=types.SimpleNamespace(host="172.17.0.1"), headers={"x-forwarded-for": "1.2.3.4, 5.6.7.8"})
+    assert main.client_ip(lan) == "5.6.7.8"
