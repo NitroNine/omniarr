@@ -61,6 +61,12 @@ async def search_movies(term: str) -> list[dict]:
     } for m in data.get("results", [])[:20]]
 
 
+async def movie_by_imdb(imdb_id: str) -> dict | None:
+    data = await _tmdb(f"/find/{imdb_id}", external_source="imdb_id")
+    res = data.get("movie_results") or []
+    return await movie_details(res[0]["id"]) if res else None
+
+
 async def movie_details(tmdb_id: int) -> dict:
     m = await _tmdb(f"/movie/{tmdb_id}", append_to_response="external_ids")
     return {
@@ -126,6 +132,15 @@ async def search_series(term: str) -> list[dict]:
             "status": s.get("status"), "network": s.get("network"),
         })
     return out
+
+
+async def series_by_remote_id(remote_id: str) -> dict | None:
+    """Look a show up by IMDb (tt...) or TMDB id."""
+    data = await _tvdb(f"/search/remoteid/{remote_id}")
+    for hit in data.get("data") or []:
+        if hit.get("series"):
+            return await series_details(int(hit["series"]["id"]))
+    return None
 
 
 async def series_details(tvdb_id: int) -> dict:

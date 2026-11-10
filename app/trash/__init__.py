@@ -238,7 +238,7 @@ def _spec_matches(spec: dict, rel: ParsedRelease, kind: str, cache: dict, indexe
     impl = spec["implementation"]
     val = spec.get("fields", {}).get("value")
     if impl in ("ReleaseTitleSpecification", "ReleaseGroupSpecification"):
-        key = id(spec)
+        key = val  # cache by pattern text (object ids get reused after a TRaSH re-sync)
         rx = cache.get(key)
         if rx is None:
             try:

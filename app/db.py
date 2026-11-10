@@ -105,6 +105,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "rss_interval_minutes": 15,
     "series_refresh_hours": 12,
     "upgrades_enabled": True,
+    # Per-library overrides of the TRaSH profile, keyed movies_hd / movies_uhd / tv_hd / tv_uhd:
+    # {"allowed": [quality item names] | null, "cutoff": item name | "", "upgrades": bool,
+    #  "cutoff_score": int | null}
+    "quality_overrides": {},
 }
 
 
@@ -186,6 +190,12 @@ def get_settings() -> dict[str, Any]:
         env = os.environ.get("OMNIARR_" + k.upper())
         if env is not None and env != "":
             d = DEFAULT_SETTINGS[k]
+            if isinstance(d, dict):
+                try:
+                    s[k] = json.loads(env)
+                except json.JSONDecodeError:
+                    pass
+                continue
             s[k] = int(env) if isinstance(d, int) and not isinstance(d, bool) else (
                 env.lower() in ("1", "true", "yes") if isinstance(d, bool) else env)
     return s

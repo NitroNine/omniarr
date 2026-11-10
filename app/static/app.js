@@ -27,7 +27,7 @@ function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 // ------------------------------------------------------------- router ---
-const routes = { movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
+const routes = { import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
 async function route() {
   const [, name = "movies", arg] = location.hash.split("/");
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name || (name === "movie" && a.dataset.tab === "movies") || (name === "show" && a.dataset.tab === "series")));
@@ -80,6 +80,7 @@ async function renderMovie(id) {
       <button class="primary" id="as">Automatic search</button><button id="is">Interactive search</button>
       <select id="tier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
       <label><input type="checkbox" id="mon" ${m.monitored ? "checked" : ""}> Monitored</label>
+      <button id="rs">Rescan folder</button>
       <button class="danger" id="del">Delete</button></div>
     <h3>History</h3>${historyTable(m.history)}</div></div>`;
   $("#tier").value = m.tier;
@@ -87,6 +88,7 @@ async function renderMovie(id) {
   $("#mon").onchange = () => guard(() => api("/movies/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
   $("#as").onclick = () => guard(async () => { $("#as").disabled = true; const r = await api(`/movies/${id}/search`, { method: "POST" }); toast(r.some((x) => x.accepted) ? "Release grabbed" : `No acceptable release (${r.length} found)`); route(); });
   $("#is").onclick = () => interactive("movie", id, `/movies/${id}/search?interactive=true`);
+  $("#rs").onclick = () => rescan(`/movies/${id}/rescan`);
   $("#del").onclick = () => guard(async () => { if (!confirm("Remove this movie?")) return; const files = confirm("Also delete its files from disk?"); await api(`/movies/${id}?delete_files=${files}`, { method: "DELETE" }); location.hash = "#/movies"; });
 }
 
@@ -150,6 +152,7 @@ async function renderShow(id) {
       <select id="tier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
       <select id="stype"><option value="standard">Standard</option><option value="daily">Daily</option><option value="anime">Anime</option></select>
       <label><input type="checkbox" id="mon" ${s.monitored ? "checked" : ""}> Monitored</label>
+      <button id="rs">Rescan folder</button>
       <button class="danger" id="del">Delete</button></div></div></div>
     ${Object.keys(seasons).sort((a, b) => b - a).map((sn) => {
       const eps = seasons[sn]; const have = eps.filter((e) => e.file_path).length;
@@ -168,8 +171,13 @@ async function renderShow(id) {
   $("#stype").onchange = () => guard(() => api("/series/" + id, { method: "PUT", body: { series_type: $("#stype").value } }));
   $("#mon").onchange = () => guard(() => api("/series/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
   $("#as").onclick = () => guard(async () => { $("#as").disabled = true; const r = await api(`/series/${id}/search`, { method: "POST" }); toast(`${r.filter((x) => x.accepted).length} acceptable releases found`); route(); });
+  $("#rs").onclick = () => rescan(`/series/${id}/rescan`);
   $("#rf").onclick = () => guard(async () => { await api(`/series/${id}/refresh`, { method: "POST" }); toast("Refreshed"); route(); });
   $("#del").onclick = () => guard(async () => { if (!confirm("Remove this series?")) return; const files = confirm("Also delete its files from disk?"); await api(`/series/${id}?delete_files=${files}`, { method: "DELETE" }); location.hash = "#/series"; });
+}
+async function rescan(path) {
+  const rename = confirm("Also rename the files to your TRaSH naming scheme?\n\nOK = rescan and rename, Cancel = rescan only");
+  await guard(async () => { const r = await api(`${path}?rename=${rename}`, { method: "POST" }); toast(`Found ${r.files} file(s)`); route(); });
 }
 async function seasonSearch(id, sn) { toast("Searching season " + sn + "…"); await guard(async () => { const r = await api(`/series/${id}/search?season=${sn}`, { method: "POST" }); toast(`${r.filter((x) => x.accepted).length} acceptable releases`); route(); }); }
 async function epSearch(id, eid, btn) { btn.disabled = true; await guard(async () => { const r = await api(`/series/${id}/search?episode_id=${eid}`, { method: "POST" }); toast(r.some((x) => x.accepted) ? "Release grabbed" : "Nothing acceptable found"); route(); }); }
@@ -272,7 +280,7 @@ const SECTIONS = {
 };
 async function renderSettings(sub = "general") {
   const s = await api("/settings");
-  const tabs = { general: "Metadata", downloads: "NZBGet", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", naming: "Naming (TRaSH)", schedule: "Schedule" };
+  const tabs = { general: "Metadata", downloads: "NZBGet", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", naming: "Naming (TRaSH)", schedule: "Schedule" };
   view.innerHTML = `<h2>Settings</h2><div class="tabs2">${Object.entries(tabs).map(([k, v]) => `<button class="${k === sub ? "active" : ""}" onclick="location.hash='#/settings/${k}'">${v}</button>`).join("")}</div><div id="set" class="panel"></div>`;
   const el = $("#set");
   if (SECTIONS[sub]) {
@@ -287,6 +295,7 @@ async function renderSettings(sub = "general") {
     if ($("#test")) $("#test").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect(el) }); const r = await api("/nzbget/test", { method: "POST" }); toast(r.message, !r.ok); });
   } else if (sub === "indexers") await renderIndexers(el);
   else if (sub === "profiles") await renderProfiles(el, s);
+  else if (sub === "limits") await renderLimits(el);
   else if (sub === "naming") await renderNaming(el, s);
 }
 function collect(el) {
@@ -346,6 +355,134 @@ async function renderProfiles(el, s) {
     $("#rto").innerHTML = `<p>${esc(r.profile)}: <b>${esc(r.quality)}</b> ${r.allowed ? '<span class="chip ok">allowed</span>' : '<span class="chip bad">not allowed</span>'} score <b>${r.score}</b> — ${r.custom_formats.map(esc).join(", ") || "no custom formats"}
       <br><span class="small muted">group ${esc(r.parsed.group)} · year ${esc(r.parsed.year)} · S${esc(r.parsed.season)} E${esc(r.parsed.episodes.join(","))}</span></p>`;
   });
+}
+
+// ------------------------------------------------------- quality limits ---
+const LIBS = { movies_hd: "Movies — 1080p library", movies_uhd: "Movies — 4K library", tv_hd: "TV — 1080p library", tv_uhd: "TV — 4K library" };
+async function renderLimits(el) {
+  const all = await api("/quality-limits");
+  el.innerHTML = `<p class="muted">Fine-tune each library's TRaSH profile. Omniarr always grabs the best <b>allowed</b> quality that's available right now
+    (e.g. a WEB-DL), then keeps upgrading until it reaches the <b>Upgrade until</b> quality (e.g. Bluray-1080p).
+    Qualities are listed best first; untick anything you never want, which sets your maximum and minimum.</p>
+    <div class="tabs2" id="libtabs">${Object.entries(LIBS).map(([k, v], i) => `<button data-lib="${k}" class="${i ? "" : "active"}">${v}</button>`).join("")}</div><div id="lib"></div>`;
+  const draw = (key) => {
+    el.querySelectorAll("#libtabs button").forEach((b) => b.classList.toggle("active", b.dataset.lib === key));
+    const L = all[key];
+    if (L.error) { $("#lib").innerHTML = `<p class="rej">${esc(L.error)}</p>`; return; }
+    const ov = L.override, eff = L.effective;
+    $("#lib").innerHTML = `<p>Based on TRaSH profile <b>${esc(L.profile)}</b> (TRaSH default: upgrade until <b>${esc(L.trash.cutoff)}</b>, score cutoff ${L.trash.cutoff_score}).
+      ${Object.keys(ov).length ? '<span class="chip warn">customised</span>' : '<span class="chip">TRaSH defaults</span>'}</p>
+    <div class="form">
+      <label>Allowed qualities</label><div id="ql">${L.qualities.map((q) => `<div><label style="color:var(--text)"><input type="checkbox" value="${esc(q.name)}" ${q.allowed ? "checked" : ""}> ${esc(q.name)}</label>
+        ${q.items.length ? `<span class="small muted">(${q.items.map(esc).join(", ")})</span>` : ""}${q.trash_allowed ? ' <span class="chip">TRaSH</span>' : ""}</div>`).join("")}</div>
+      <label>Upgrade until</label><select id="cut"></select>
+      <div class="help">Once a file reaches this quality, quality upgrades stop.</div>
+      <label>Upgrades</label><label style="color:var(--text)"><input type="checkbox" id="upg" ${eff.upgrades ? "checked" : ""}> Replace files with better releases</label>
+      <label>Custom-format score cutoff</label><input type="number" id="cs" value="${ov.cutoff_score ?? ""}" placeholder="${L.trash.cutoff_score} (TRaSH default)">
+      <div class="help">After reaching the quality above, keep upgrading to releases with a higher TRaSH score until this score. Set <b>0</b> to stop as soon as the quality is reached.</div>
+      <span></span><div class="toolbar"><button class="primary" id="qs">Save</button><button id="qr">Reset to TRaSH defaults</button></div></div>`;
+    const fillCut = () => {
+      const allowed = [...$("#ql").querySelectorAll("input:checked")].map((i) => i.value);
+      const cur = $("#cut").value || eff.cutoff;
+      $("#cut").innerHTML = allowed.map((n) => `<option ${n === cur ? "selected" : ""}>${esc(n)}</option>`).join("");
+    };
+    $("#ql").addEventListener("change", fillCut); fillCut();
+    $("#qs").onclick = () => guard(async () => {
+      const allowed = [...$("#ql").querySelectorAll("input:checked")].map((i) => i.value);
+      all[key] = await api("/quality-limits/" + key, { method: "PUT", body: { allowed, cutoff: $("#cut").value, upgrades: $("#upg").checked, cutoff_score: $("#cs").value } });
+      toast("Saved"); draw(key);
+    });
+    $("#qr").onclick = () => guard(async () => { all[key] = await api("/quality-limits/" + key, { method: "PUT", body: { reset: true } }); toast("Reset"); draw(key); });
+  };
+  el.querySelectorAll("#libtabs button").forEach((b) => (b.onclick = () => draw(b.dataset.lib)));
+  draw("movies_hd");
+}
+
+// ------------------------------------------------------- library import ---
+async function renderImport() {
+  view.innerHTML = `<h2>Import existing media</h2>
+  <p class="muted">Scans your 1080p and 4K root folders for movies or shows that aren't in Omniarr yet, matches them on TMDB / TheTVDB
+    (IDs like <code>{tmdb-603}</code> or <code>[tvdbid-81189]</code> in folder names are used first), and adds them with the files already there.
+    Files you already have are scored with TRaSH, so upgrades work from day one.</p>
+  <div class="toolbar"><select id="ik"><option value="movie">Movies</option><option value="tv">TV shows</option></select><button class="primary" id="scan">Scan root folders</button><span class="grow"></span><span id="ist" class="muted small"></span></div>
+  <div id="ires"></div>`;
+  $("#scan").onclick = () => guard(scanImport);
+  pollImport();
+}
+async function scanImport() {
+  const kind = $("#ik").value;
+  $("#ires").innerHTML = '<p class="muted">Scanning folders…</p>';
+  const items = await api("/import/scan?kind=" + kind);
+  window._imp = items;
+  if (!items.length) { $("#ires").innerHTML = '<p class="muted">Nothing new found in the root folders. Check Settings → Root folders.</p>'; return; }
+  $("#ires").innerHTML = `<div class="panel"><div class="toolbar">
+      <label><input type="checkbox" id="iren"> Rename files to TRaSH naming</label>
+      ${kind === "tv" ? `<label>Monitor <select id="imon"><option value="all">All episodes</option><option value="existing">Only episodes I have</option><option value="future">Future episodes</option><option value="none">None</option></select></label>`
+        : `<label>Monitor <select id="imon"><option value="all">Yes</option><option value="none">No</option></select></label>`}
+      <label><input type="checkbox" id="isearch"> Search for missing &amp; upgrades now</label>
+      <span class="grow"></span><button class="primary" id="igo">Import selected</button></div>
+    <p class="small muted" id="imatch">Matching 0/${items.length}…</p></div>
+    <div class="table-wrap"><table><tr><th><input type="checkbox" id="iall" checked></th><th>Folder</th><th>Library</th><th>Files</th><th>Match</th></tr>
+    ${items.map((c, i) => `<tr id="ir${i}"><td><input type="checkbox" class="isel" data-i="${i}" checked></td>
+      <td>${esc(c.folder)}${c.loose ? ' <span class="chip warn">loose file</span>' : ""}</td><td>${tierChip(c.tier)}</td>
+      <td class="small">${c.files} · ${size(c.size)}</td><td class="im">…</td></tr>`).join("")}</table></div>`;
+  $("#iall").onchange = () => document.querySelectorAll(".isel").forEach((x) => (x.checked = $("#iall").checked));
+  $("#igo").onclick = () => guard(startImport);
+  for (let i = 0; i < items.length; i += 10) {
+    const chunk = await api("/import/match", { method: "POST", body: { items: items.slice(i, i + 10) } });
+    chunk.forEach((c, j) => { items[i + j] = c; drawMatch(i + j); });
+    if ($("#imatch")) $("#imatch").textContent = `Matched ${Math.min(i + 10, items.length)}/${items.length}`;
+  }
+  if ($("#imatch")) $("#imatch").textContent = "Matching done. Check anything marked “guess” before importing.";
+}
+function drawMatch(i) {
+  const c = window._imp[i], row = $("#ir" + i);
+  if (!row) return;
+  const m = c.match;
+  const conf = { id: "ok", exact: "ok", guess: "warn" }[c.confidence] || "bad";
+  row.querySelector(".im").innerHTML = m ? `${esc(m.title)} <span class="muted">(${m.year || "?"})</span> <span class="chip ${conf}">${c.confidence === "id" ? "ID match" : c.confidence}</span>
+    ${m.in_library ? '<span class="chip bad">already in library</span>' : ""} <button class="small" onclick="fixMatch(${i})">Change</button>`
+    : `<span class="chip bad">No match</span>${c.error ? ` <span class="rej">${esc(c.error)}</span>` : ""} <button class="small" onclick="fixMatch(${i})">Search</button>`;
+  if (!m || m.in_library) row.querySelector(".isel").checked = false;
+}
+async function fixMatch(i) {
+  const c = window._imp[i];
+  const term = prompt("Search for:", c.match ? c.match.title : c.title);
+  if (!term) return;
+  const res = await guard(() => api(`/lookup/${c.kind === "movie" ? "movie" : "series"}?term=${encodeURIComponent(term)}`));
+  if (!res) return;
+  window._fix = res;
+  modal(`<div class="toolbar"><h2 class="grow">Pick a match for “${esc(c.folder)}”</h2><button onclick="closeModal()">Close</button></div>
+    ${res.map((r, j) => `<div class="result-row">${r.poster ? `<img src="${esc(r.poster)}" alt="">` : ""}<div class="grow"><b>${esc(r.title)}</b> <span class="muted">${r.year || ""}</span><p>${esc(r.overview)}</p></div>
+    <button class="primary" onclick="pickMatch(${i}, ${j})">Use</button></div>`).join("") || '<p class="muted">No results.</p>'}`);
+}
+function pickMatch(i, j) {
+  const r = window._fix[j], c = window._imp[i];
+  c.match = { tmdb_id: r.tmdb_id, tvdb_id: r.tvdb_id, title: r.title, year: r.year, poster: r.poster, in_library: r.in_library };
+  c.confidence = "exact";
+  closeModal(); drawMatch(i);
+  $("#ir" + i).querySelector(".isel").checked = !r.in_library;
+}
+async function startImport() {
+  const sel = [...document.querySelectorAll(".isel:checked")].map((x) => window._imp[+x.dataset.i]).filter((c) => c.match);
+  if (!sel.length) throw new Error("Select at least one matched item");
+  const opts = { rename: $("#iren").checked, monitor: $("#imon").value, search: $("#isearch").checked };
+  const items = sel.map((c) => ({ kind: c.kind, tier: c.tier, folder: c.folder, loose: c.loose, id: c.kind === "movie" ? c.match.tmdb_id : c.match.tvdb_id, ...opts }));
+  await api("/import", { method: "POST", body: { items } });
+  toast(`Importing ${items.length} item(s)…`);
+  pollImport();
+}
+async function pollImport() {
+  const st = await api("/import/status").catch(() => null);
+  const el = $("#ist");
+  if (!st || !el) return;
+  if (st.running) {
+    el.textContent = `Importing ${st.done}/${st.total}${st.current ? " — " + st.current : ""}`;
+    setTimeout(pollImport, 1500);
+  } else if (st.total) {
+    el.textContent = `Last import: ${st.imported}/${st.total} imported${st.errors.length ? `, ${st.errors.length} failed (see Activity → Events)` : ""}`;
+    if (st.done === st.total && window._imp) { window._imp = null; setTimeout(() => guard(scanImport), 300); }
+  }
 }
 
 async function renderNaming(el, s) {

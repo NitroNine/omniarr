@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, decision, importer, library, search, trash
+from . import db, decision, importer, library, scanner, search, trash
 from .services import metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
@@ -162,6 +162,101 @@ def trash_profile_detail(kind: str, tier: str):
             "qualities": [{"name": i["name"], "allowed": i.get("allowed")} for i in p.items],
             "formats": sorted(({"name": st.cfs[app_][t].name, "score": s} for t, s in p.format_scores.items()),
                               key=lambda x: -x["score"])}
+
+
+# --------------------------------------------------------- quality limits --
+@app.get("/api/quality-limits")
+def get_quality_limits():
+    """Per library: the TRaSH defaults plus the user's overrides."""
+    ov = db.setting("quality_overrides") or {}
+    out = {}
+    for kind in ("movie", "tv"):
+        for tier in library.TIERS:
+            key = decision.library_key(kind, tier)
+            try:
+                base = decision.profile_for(kind, tier, apply_overrides=False)
+                eff = decision.profile_for(kind, tier)
+            except KeyError as e:
+                out[key] = {"error": str(e.args[0])}
+                continue
+            out[key] = {
+                "profile": base.name,
+                "qualities": [{"name": it["name"], "items": it.get("items", []),
+                               "trash_allowed": bool(it.get("allowed")),
+                               "allowed": bool(eff_it.get("allowed"))}
+                              for it, eff_it in zip(base.items, eff.items)],
+                "trash": {"cutoff": base.cutoff, "cutoff_score": base.cutoff_format_score,
+                          "upgrades": base.upgrade_allowed, "min_upgrade_score": base.min_upgrade_format_score},
+                "effective": {"cutoff": eff.cutoff, "cutoff_score": eff.cutoff_format_score,
+                              "upgrades": eff.upgrade_allowed},
+                "override": ov.get(key) or {},
+            }
+    return out
+
+
+@app.put("/api/quality-limits/{key}")
+def put_quality_limits(key: str, body: dict):
+    if key not in {decision.library_key(k, t) for k in ("movie", "tv") for t in library.TIERS}:
+        raise HTTPException(404)
+    ov = dict(db.setting("quality_overrides") or {})
+    if body.get("reset"):
+        ov.pop(key, None)
+    else:
+        clean = {}
+        if isinstance(body.get("allowed"), list):
+            if not body["allowed"]:
+                raise ValueError("Allow at least one quality")
+            clean["allowed"] = [str(x) for x in body["allowed"]]
+        if body.get("cutoff"):
+            if "allowed" in clean and body["cutoff"] not in clean["allowed"]:
+                raise ValueError("The 'upgrade until' quality must be one of the allowed qualities")
+            clean["cutoff"] = str(body["cutoff"])
+        if "upgrades" in body:
+            clean["upgrades"] = bool(body["upgrades"])
+        if body.get("cutoff_score") not in (None, ""):
+            clean["cutoff_score"] = int(body["cutoff_score"])
+        ov[key] = clean
+    db.save_settings({"quality_overrides": ov})
+    return get_quality_limits()[key]
+
+
+# --------------------------------------------------------- library import --
+@app.get("/api/import/scan")
+def import_scan(kind: str = "movie"):
+    if kind not in ("movie", "tv"):
+        raise HTTPException(400)
+    return scanner.scan(kind)
+
+
+@app.post("/api/import/match")
+async def import_match(body: dict):
+    return await scanner.match_many(body.get("items", [])[:50])
+
+
+@app.post("/api/import")
+async def import_start(body: dict):
+    if scanner.JOB["running"]:
+        raise ValueError("An import is already running")
+    items = [i for i in body.get("items", []) if i.get("id")]
+    if not items:
+        raise ValueError("Nothing selected")
+    asyncio.create_task(scanner.run_import(items))
+    return {"started": len(items)}
+
+
+@app.get("/api/import/status")
+def import_status():
+    return scanner.JOB
+
+
+@app.post("/api/movies/{mid}/rescan")
+async def rescan_movie(mid: int, rename: bool = False):
+    return await scanner.rescan_movie(mid, rename=rename)
+
+
+@app.post("/api/series/{sid}/rescan")
+async def rescan_series(sid: int, rename: bool = False):
+    return await scanner.rescan_series(sid, rename=rename)
 
 
 # -------------------------------------------------------------- indexers --

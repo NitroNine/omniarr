@@ -46,7 +46,8 @@ def series_dir(series: dict) -> str:
 
 
 # ----------------------------------------------------------------- movies --
-async def add_movie(tmdb_id: int, tier: str, monitored: bool = True) -> dict:
+async def add_movie(tmdb_id: int, tier: str, monitored: bool = True, folder: str | None = None) -> dict:
+    """`folder` keeps an existing folder name (library import) instead of TRaSH naming."""
     if tier not in TIERS:
         raise ValueError("tier must be 'hd' or 'uhd'")
     existing = db.one("SELECT * FROM movies WHERE tmdb_id=?", (tmdb_id,))
@@ -54,7 +55,7 @@ async def add_movie(tmdb_id: int, tier: str, monitored: bool = True) -> dict:
         raise ValueError(f"{existing['title']} is already in your library")
     m = await metadata.movie_details(tmdb_id)
     m.update(tier=tier, monitored=int(monitored))
-    m["folder"] = movie_folder_name(m)
+    m["folder"] = folder or movie_folder_name(m)
     m["id"] = db.insert("movies", m)
     db.log(f"Added movie {m['title']} ({m.get('year')}) [{tier.upper()}]")
     return m
@@ -81,7 +82,7 @@ def movie_available(m: dict) -> bool:
 
 
 # ----------------------------------------------------------------- series --
-async def add_series(tvdb_id: int, tier: str, monitor: str = "all") -> dict:
+async def add_series(tvdb_id: int, tier: str, monitor: str = "all", folder: str | None = None) -> dict:
     """monitor: all | future | missing | none | latest"""
     if tier not in TIERS:
         raise ValueError("tier must be 'hd' or 'uhd'")
@@ -90,7 +91,7 @@ async def add_series(tvdb_id: int, tier: str, monitor: str = "all") -> dict:
         raise ValueError(f"{existing['title']} is already in your library")
     s = await metadata.series_details(tvdb_id)
     s.update(tier=tier, monitored=int(monitor != "none"))
-    s["folder"] = series_folder_name(s)
+    s["folder"] = folder or series_folder_name(s)
     s["id"] = db.insert("series", s)
     await refresh_series(s["id"], initial_monitor=monitor)
     db.log(f"Added series {s['title']} [{tier.upper()}]")

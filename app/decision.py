@@ -41,10 +41,37 @@ class Decision:
         }
 
 
-def profile_for(kind: str, tier: str) -> trash.Profile:
+def library_key(kind: str, tier: str) -> str:
+    return f"{'movies' if kind == 'movie' else 'tv'}_{tier}"
+
+
+def profile_for(kind: str, tier: str, apply_overrides: bool = True) -> trash.Profile:
+    """The TRaSH profile for a library, with the user's quality limits applied:
+    which qualities are allowed (floor/ceiling), the upgrade-until cutoff,
+    whether upgrades happen at all, and the custom-format score cutoff."""
     s = db.get_settings()
-    key = s[f"profile_{'movies' if kind == 'movie' else 'tv'}_{tier}"]
-    return trash.ensure_loaded().build_profile(kind, key, s.get("trash_score_set") or "default")
+    key = s[f"profile_{library_key(kind, tier)}"]
+    p = trash.ensure_loaded().build_profile(kind, key, s.get("trash_score_set") or "default")
+    ov = (s.get("quality_overrides") or {}).get(library_key(kind, tier)) or {}
+    if not apply_overrides or not ov:
+        return p
+    import copy
+    p.items = copy.deepcopy(p.items)
+    if ov.get("allowed"):
+        allowed = set(ov["allowed"])
+        for it in p.items:
+            it["allowed"] = it["name"] in allowed
+    if ov.get("cutoff"):
+        p.cutoff = ov["cutoff"]
+    allowed_items = [it for it in p.items if it.get("allowed")]
+    if allowed_items and not any(it["name"] == p.cutoff and it.get("allowed") for it in p.items) \
+            and not any(p.cutoff in it.get("items", []) and it.get("allowed") for it in p.items):
+        p.cutoff = allowed_items[0]["name"]  # cutoff must be an allowed quality: use the best allowed
+    if ov.get("upgrades") is False:
+        p.upgrade_allowed = False
+    if ov.get("cutoff_score") not in (None, ""):
+        p.cutoff_format_score = int(ov["cutoff_score"])
+    return p
 
 
 def _blocklisted(rel: Release) -> bool:

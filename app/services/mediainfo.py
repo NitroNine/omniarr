@@ -34,6 +34,10 @@ async def probe(path: str) -> dict:
             info["video_codec"] = "x264" if "x264" in enc else "h264"
         elif codec:
             info["video_codec"] = codec.upper() if codec in ("av1", "vc1") else codec
+        w, h = int(video.get("width") or 0), int(video.get("height") or 0)
+        if w or h:
+            info["resolution"] = (2160 if w >= 3200 or h >= 2000 else 1080 if w >= 1800 or h >= 1000
+                                  else 720 if w >= 1200 or h >= 700 else 576 if h >= 540 else 480)
         pix = video.get("pix_fmt", "")
         info["bit_depth"] = 10 if "10" in pix else 12 if "12" in pix else 8
         transfer = video.get("color_transfer", "")

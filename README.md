@@ -6,6 +6,8 @@ Movies and TV in one self-hosted app, built for Unraid:
 - **Quality, custom formats, scores, size limits and naming** are all imported from **[TRaSH Guides](https://trash-guides.info)**. Omniarr pulls TRaSH's JSON straight from GitHub and re-syncs it daily.
 - **Two libraries per media type:** 1080p-and-lower and 4K, each with its own root folder and TRaSH profile. You can move an item between them at any time, and its files move too.
 - **Search:** works with any **Newznab** Usenet indexer (NZBGeek, DrunkenSlug, NZBFinder, …). It does RSS sync, backlog search, season packs and upgrades up to the cutoff.
+- **Library import:** brings in media that's already in your root folders. Omniarr matches each folder on TMDB/TheTVDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
+- **Quality limits per library:** choose which qualities are allowed (your maximum and minimum), the quality to *upgrade until*, and whether upgrades happen at all.
 - **Downloads:** sent to **NZBGet**. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the right root folder. Failed downloads are blocklisted and searched again.
 
 ## How the 1080p / 4K split works
@@ -62,13 +64,48 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 - **Interactive search** on any movie, season or episode lists every result with its score and rejection reasons. You can grab any of them by hand.
 - **Activity** shows the queue, history, an event log and the blocklist, plus buttons to run RSS sync or a backlog search now.
 
+## Importing media you already have
+
+Go to **Import**, choose Movies or TV shows, and click **Scan root folders**. Omniarr lists every folder in your 1080p and 4K roots that isn't in the library yet, plus loose movie files sitting directly in a root. Each one is matched:
+
+1. **IDs in the folder name** win: `{tmdb-603}`, `[tmdbid-603]`, `{tvdb-81189}`, `[tvdbid-81189]`, `{imdb-tt0133093}`. These are marked "ID match".
+2. Otherwise Omniarr searches by **title + year** read from the folder name (e.g. `The Matrix (1999)` or `The.Matrix.1999.1080p.BluRay-GRP`). Matches are marked "exact" or "guess". Use **Change** to fix any guess before importing.
+
+Then choose the import options:
+- **Rename files to TRaSH naming:** off by default, so your files stay exactly where they are.
+- **Monitor** (TV shows): *All episodes*, *Only episodes I have*, *Future episodes*, or *None*.
+- **Search for missing & upgrades now.**
+
+Folder names are always kept. A loose movie file gets its own TRaSH-named folder.
+
+Quality is read from the file name, falling back to the folder name, and then to ffprobe for the resolution. Every file is scored with the library's TRaSH custom formats.
+
+Each movie and show page also has **Rescan folder** (optionally renaming the files) for changes you've made on disk.
+
+## Quality limits and upgrades
+
+**Settings → Quality limits** fine-tunes each of the four libraries on top of its TRaSH profile:
+
+- **Allowed qualities:** listed best first. Untick anything you never want; this sets your maximum and minimum.
+- **Upgrade until:** the cutoff quality.
+- **Upgrades:** turn them off to keep the first file Omniarr grabs.
+- **Custom-format score cutoff:** once the cutoff quality is reached, Omniarr keeps upgrading to higher-scoring TRaSH releases until this score. TRaSH's default is 10000, which means "keep improving". Set it to **0** to stop as soon as the quality is reached.
+
+Example: allow *Bluray-1080p* and *WEB 1080p*, set **Upgrade until** to *Bluray-1080p*, and set the score cutoff to 0.
+1. If only a WEB-DL exists, Omniarr grabs it right away.
+2. RSS sync and the backlog search keep looking.
+3. When a 1080p Bluray appears, it replaces the WEB-DL.
+4. After that, nothing more is downloaded for that title.
+
+**Reset to TRaSH defaults** removes your changes.
+
 ## How releases are chosen
 
 1. Parse the release title: resolution, source, remux/disc, season/episode, year and group.
 2. Reject it if the title or year doesn't match, the quality isn't allowed in the profile, it's blocklisted, the custom-format score is below the profile minimum, or its size is outside TRaSH's MB-per-minute limits.
 3. Score the remaining releases with the TRaSH custom formats in the profile. That includes the default CF groups for that profile (e.g. *Unwanted Formats*: BR-DISK, LQ, x265 HD, …). Matching follows Radarr/Sonarr's rules, uses TRaSH's .NET-style regexes, and uses the score set you picked.
 4. Rank by quality position in the profile, then score, then revision, then size.
-5. If a file already exists, only accept a real upgrade, and stop once the quality cutoff and `cutoffFormatScore` are both met.
+5. If a file already exists, only accept a real upgrade, and stop once both the cutoff quality and the score cutoff are met. Your **Quality limits** settings override TRaSH's values here.
 
 ## Development
 
@@ -92,6 +129,7 @@ app/
   search.py        indexer search, RSS sync, grabbing
   importer.py      NZBGet tracking, import, rename, blocklist
   library.py       add/refresh movies & series, root folders, 1080p/4K moves
+  scanner.py       library import: scan root folders, match, detect existing files
   services/        TMDB, TheTVDB, Newznab, NZBGet, ffprobe
   static/          web UI (no build step)
 tests/             unit + end-to-end tests (fake indexer / NZBGet)
@@ -101,5 +139,5 @@ unraid/omniarr.xml Unraid template
 ## Known limitations
 
 - Usenet + NZBGet only (no torrents, no SABnzbd yet).
-- It doesn't import files you already have. A library scan for existing media would be the next feature to add.
+- Library import doesn't watch the disk. Use **Rescan folder** (or import again) after changing files by hand.
 - TRaSH `IndexerFlagSpecification` custom formats (freeleech, etc.) never match, since they're torrent-oriented. Language CFs are inferred from release titles.
