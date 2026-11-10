@@ -111,8 +111,11 @@ function fmtDate(d) {
   return isNaN(x) ? esc(d) : x.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 function money(n) { return n ? "$" + (n >= 1e9 ? (n / 1e9).toFixed(2) + "B" : n >= 1e6 ? Math.round(n / 1e6) + "M" : n.toLocaleString()) : ""; }
-const LANGS = new Intl.DisplayNames ? new Intl.DisplayNames([navigator.language || "en"], { type: "language" }) : null;
-function langName(c) { try { return c && LANGS ? LANGS.of(c) : c || ""; } catch { return c || ""; } }
+// language code -> name; never allowed to break the page (some browsers reject DisplayNames)
+function langName(c) {
+  if (!c) return "";
+  try { return new Intl.DisplayNames(["en"], { type: "language" }).of(c) || c; } catch { return c; }
+}
 function people(list) { return (list || []).map((p) => esc(p.name)).join(", "); }
 // chips under the title: rating, age rating, runtime, genres, outside links
 function infoChips(i) {
