@@ -245,7 +245,7 @@ def requests_cancel(rid: int, request: Request):
 
 
 # -------------------------------------------------------------- settings --
-SECRET_KEYS = {"tmdb_api_key", "tvdb_api_key", "tvdb_pin", "nzbget_password"}
+SECRET_KEYS = {"tmdb_api_key", "nzbget_password"}
 
 
 @app.get("/api/settings")

@@ -1,4 +1,4 @@
-"""Library management: adding movies/series, refreshing episode lists (TMDB or TheTVDB),
+"""Library management: adding movies/series, refreshing episode lists (TMDB),
 root-folder resolution by quality tier, and folder naming."""
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""TV without a (paid) TheTVDB key: TMDB provides shows and episodes."""
+"""TV comes from TMDB: shows, episodes and the TheTVDB/IMDb ids indexers need."""
 import asyncio
 import sqlite3
 
@@ -43,18 +43,16 @@ def _fake_tmdb(monkeypatch):
     CALLS.clear()
 
 
-def test_tmdb_is_default_without_tvdb_key(env, monkeypatch):
-    db.save_settings({"tvdb_api_key": ""})
-    assert metadata.tv_source() == "tmdb"
-    db.save_settings({"tvdb_api_key": "paid-key"})
-    assert metadata.tv_source() == "tvdb"
-    db.save_settings({"tv_metadata_source": "tmdb"})
-    assert metadata.tv_source() == "tmdb"  # can be forced even with a key
+def test_old_tvdb_settings_are_removed(tmp_path):
+    path = str(tmp_path / "o.db")
+    db.reset_for_tests(path)
+    db.ex("INSERT OR REPLACE INTO settings (key, value) VALUES ('tvdb_api_key', 'old'), ('tv_metadata_source', 'tvdb')")
+    db.reset_for_tests(path)
+    assert db.q("SELECT key FROM settings WHERE key IN ('tvdb_api_key', 'tv_metadata_source')") == []
 
 
 def test_add_show_from_tmdb(env, monkeypatch):
     _fake_tmdb(monkeypatch)
-    db.save_settings({"tvdb_api_key": ""})
     [r] = asyncio.run(metadata.search_series("game of thrones"))
     assert r["tmdb_id"] == 1399 and r["title"] == "Game of Thrones" and r["year"] == 2011
     s = asyncio.run(library.add_series(None, "uhd", tmdb_id=1399))
@@ -79,7 +77,6 @@ def test_add_show_from_tmdb(env, monkeypatch):
 
 def test_show_without_tvdb_id_and_indexer_fallback(env, monkeypatch):
     _fake_tmdb(monkeypatch)
-    db.save_settings({"tvdb_api_key": ""})
     s = asyncio.run(library.add_series(None, "hd", tmdb_id=999))
     row = db.one("SELECT * FROM series WHERE id=?", (s["id"],))
     assert row["tvdb_id"] is None and row["tmdb_id"] == 999
@@ -100,25 +97,8 @@ def test_show_without_tvdb_id_and_indexer_fallback(env, monkeypatch):
     assert queries[0] == {"tvdbid": 121361}
 
 
-def test_tvdb_key_uses_tvdb(env, monkeypatch):
-    db.save_settings({"tvdb_api_key": "paid-key"})
-    called = {}
-
-    async def tvdb_details(tvdb_id):
-        called["tvdb"] = tvdb_id
-        return {"tvdb_id": tvdb_id, "tmdb_id": None, "title": "X", "source": "tvdb"}
-
-    async def tvdb_for_tmdb(tmdb_id):
-        return 121361
-    monkeypatch.setattr(metadata, "_tvdb_series_details", tvdb_details)
-    monkeypatch.setattr(metadata, "tvdb_id_for_tmdb_tv", tvdb_for_tmdb)
-    d = asyncio.run(metadata.series_details(tmdb_id=1399))
-    assert called["tvdb"] == 121361 and d["tmdb_id"] == 1399
-
-
 def test_request_tv_without_tvdb(client, monkeypatch):
     _fake_tmdb(monkeypatch)
-    db.save_settings({"tvdb_api_key": ""})
     from app import auth
     from fastapi.testclient import TestClient
 

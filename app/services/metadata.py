@@ -1,4 +1,4 @@
-"""Metadata providers: The Movie Database (movies) and TheTVDB v4 (TV)."""
+"""Metadata provider: The Movie Database (TMDB) for movies and TV."""
 from __future__ import annotations
 
 import time
@@ -9,10 +9,6 @@ from .. import db
 
 TMDB = "https://api.themoviedb.org/3"
 TMDB_IMG = "https://image.tmdb.org/t/p/w342"
-TVDB = "https://api4.thetvdb.com/v4"
-
-_LANG3 = {"en": "eng", "fr": "fra", "de": "deu", "es": "spa", "it": "ita", "nl": "nld",
-          "pt": "por", "sv": "swe", "da": "dan", "no": "nor", "fi": "fin", "ja": "jpn"}
 
 
 class MetadataError(Exception):
@@ -218,130 +214,9 @@ async def tvdb_id_for_tmdb_tv(tmdb_id: int) -> int | None:
     return None
 
 
-# ---------------------------------------------------------------- TVDB ----
-_tvdb_token: dict = {"token": None, "exp": 0, "key": None}
-
-
-async def _tvdb_login(client: httpx.AsyncClient) -> str:
-    key = db.setting("tvdb_api_key")
-    if not key:
-        raise MetadataError("TheTVDB API key is not set (Settings → Metadata).")
-    if _tvdb_token["token"] and _tvdb_token["exp"] > time.time() and _tvdb_token["key"] == key:
-        return _tvdb_token["token"]
-    body = {"apikey": key}
-    if db.setting("tvdb_pin"):
-        body["pin"] = db.setting("tvdb_pin")
-    r = await client.post(f"{TVDB}/login", json=body)
-    if r.status_code == 401:
-        raise MetadataError("TheTVDB rejected the API key / PIN.")
-    r.raise_for_status()
-    _tvdb_token.update(token=r.json()["data"]["token"], exp=time.time() + 25 * 86400, key=key)
-    return _tvdb_token["token"]
-
-
-async def _tvdb(path: str, **params) -> dict:
-    async with httpx.AsyncClient(timeout=30) as c:
-        token = await _tvdb_login(c)
-        r = await c.get(TVDB + path, params=params, headers={"Authorization": f"Bearer {token}"})
-        if r.status_code == 401:
-            _tvdb_token["token"] = None
-            token = await _tvdb_login(c)
-            r = await c.get(TVDB + path, params=params, headers={"Authorization": f"Bearer {token}"})
-    r.raise_for_status()
-    return r.json()
-
-
-def _lang3() -> str:
-    lang = db.setting("metadata_language") or "en"
-    return _LANG3.get(lang, lang if len(lang) == 3 else "eng")
-
-
-async def _tvdb_search_series(term: str) -> list[dict]:
-    data = await _tvdb("/search", query=term, type="series", limit=20)
-    lang = _lang3()
-    out = []
-    for s in data.get("data", []):
-        title = (s.get("translations") or {}).get(lang) or s.get("name")
-        overview = (s.get("overviews") or {}).get(lang) or s.get("overview")
-        out.append({
-            "tvdb_id": int(s.get("tvdb_id") or s["id"].split("-")[-1]), "title": title,
-            "year": int(s["year"]) if str(s.get("year", "")).isdigit() else None,
-            "overview": overview, "poster": s.get("image_url") or s.get("thumbnail"),
-            "status": s.get("status"), "network": s.get("network"), "tmdb_id": None,
-        })
-    return out
-
-
-async def _tvdb_by_remote_id(remote_id: str) -> int | None:
-    data = await _tvdb(f"/search/remoteid/{remote_id}")
-    for hit in data.get("data") or []:
-        if hit.get("series"):
-            return int(hit["series"]["id"])
-    return None
-
-
-async def _tvdb_series_details(tvdb_id: int) -> dict:
-    d = (await _tvdb(f"/series/{tvdb_id}/extended", meta="translations", short="true"))["data"]
-    lang = _lang3()
-    name, overview = d.get("name"), d.get("overview")
-    for t in (d.get("translations") or {}).get("nameTranslations", []) or []:
-        if t.get("language") == lang and t.get("name"):
-            name = t["name"]
-    for t in (d.get("translations") or {}).get("overviewTranslations", []) or []:
-        if t.get("language") == lang and t.get("overview"):
-            overview = t["overview"]
-    imdb = tmdb = None
-    for rid in d.get("remoteIds") or []:
-        src = (rid.get("sourceName") or "").lower()
-        if src == "imdb":
-            imdb = rid.get("id")
-        elif "themoviedb" in src or src == "tmdb":
-            tmdb = int(rid["id"]) if str(rid.get("id", "")).isdigit() else None
-    genres = [g.get("name", "").lower() for g in d.get("genres") or []]
-    series_type = "anime" if "anime" in genres and d.get("originalLanguage") == "jpn" else "standard"
-    return {
-        "tvdb_id": d["id"], "title": name, "year": int(d["year"]) if str(d.get("year", "")).isdigit() else None,
-        "overview": overview, "poster": d.get("image"), "imdb_id": imdb, "tmdb_id": tmdb,
-        "runtime": d.get("averageRuntime") or 0, "status": (d.get("status") or {}).get("name"),
-        "series_type": series_type, "source": "tvdb",
-    }
-
-
-async def _tvdb_series_episodes(tvdb_id: int) -> list[dict]:
-    lang = _lang3()
-    page, eps = 0, []
-    while True:
-        try:
-            data = (await _tvdb(f"/series/{tvdb_id}/episodes/default/{lang}", page=page))
-        except httpx.HTTPStatusError:
-            data = (await _tvdb(f"/series/{tvdb_id}/episodes/default", page=page))
-        for e in data["data"].get("episodes", []):
-            if e.get("seasonNumber") is None or e.get("number") is None:
-                continue
-            eps.append({
-                "tvdb_id": e["id"], "season": e["seasonNumber"], "episode": e["number"],
-                "absolute": e.get("absoluteNumber"), "title": e.get("name"),
-                "air_date": e.get("aired"), "overview": e.get("overview"),
-            })
-        if not (data.get("links") or {}).get("next"):
-            break
-        page += 1
-    return eps
-
-
-# ------------------------------------------------- TV: TMDB + dispatcher ----
-# TV metadata comes from TMDB by default (free key). If a TheTVDB key is set,
-# TheTVDB is used instead: its season/episode numbering matches release names
-# best (anime, some reordered shows). Every show keeps both ids when known.
-
-def tv_source() -> str:
-    pref = (db.setting("tv_metadata_source") or "auto").lower()
-    if pref == "tmdb":
-        return "tmdb"
-    if pref == "tvdb" or db.setting("tvdb_api_key"):
-        return "tvdb" if db.setting("tvdb_api_key") else "tmdb"
-    return "tmdb"
-
+# ------------------------------------------------- TV: TMDB ----
+# Each show also stores its TheTVDB and IMDb ids (from TMDB's external ids):
+# indexers search by them and folder names use {tvdb-…}.
 
 def _tmdb_tv_summary(r: dict) -> dict:
     return {"tmdb_id": r["id"], "tvdb_id": None, "title": r.get("name"), "year": _year(r.get("first_air_date")),
@@ -402,8 +277,6 @@ async def search_series(term: str) -> list[dict]:
         return [await series_details(tvdb_id=int(t[5:]))]
     if t.startswith("tmdb:") and t[5:].isdigit():
         return [await series_details(tmdb_id=int(t[5:]))]
-    if tv_source() == "tvdb":
-        return await _tvdb_search_series(term)
     year = None
     parts = term.rsplit(" ", 1)
     if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 4:
@@ -414,15 +287,6 @@ async def search_series(term: str) -> list[dict]:
 
 async def series_details(tvdb_id: int | None = None, tmdb_id: int | None = None) -> dict:
     """Show details with both ids filled in where known."""
-    if tv_source() == "tvdb":
-        if not tvdb_id and tmdb_id:
-            tvdb_id = await tvdb_id_for_tmdb_tv(tmdb_id)
-        if tvdb_id:
-            d = await _tvdb_series_details(int(tvdb_id))
-            if not d.get("tmdb_id") and tmdb_id:
-                d["tmdb_id"] = tmdb_id
-            return d
-        # not on TheTVDB: fall through to TMDB
     if not tmdb_id and tvdb_id:
         tmdb_id = await _tmdb_find(str(tvdb_id), "tvdb_id")
         if not tmdb_id:
@@ -439,8 +303,6 @@ async def series_episodes(series: dict | int) -> list[dict]:
     """Episodes for a series row/details dict (an int is treated as a TheTVDB id)."""
     if isinstance(series, int):
         series = {"tvdb_id": series}
-    if tv_source() == "tvdb" and series.get("tvdb_id"):
-        return await _tvdb_series_episodes(int(series["tvdb_id"]))
     tmdb_id = series.get("tmdb_id")
     if not tmdb_id and series.get("tvdb_id"):
         tmdb_id = await _tmdb_find(str(series["tvdb_id"]), "tvdb_id")
@@ -451,8 +313,5 @@ async def series_episodes(series: dict | int) -> list[dict]:
 
 async def series_by_remote_id(imdb_id: str) -> dict | None:
     """Look a show up by its IMDb id (tt...)."""
-    if tv_source() == "tvdb":
-        tvdb = await _tvdb_by_remote_id(imdb_id)
-        return await series_details(tvdb_id=tvdb) if tvdb else None
     tmdb = await _tmdb_find(imdb_id, "imdb_id")
     return await series_details(tmdb_id=tmdb) if tmdb else None

@@ -93,9 +93,6 @@ CREATE TABLE IF NOT EXISTS events (
 DEFAULT_SETTINGS: dict[str, Any] = {
     # metadata
     "tmdb_api_key": "",
-    "tvdb_api_key": "",
-    "tv_metadata_source": "auto",  # auto = TheTVDB if a key is set, otherwise TMDB
-    "tvdb_pin": "",
     "metadata_language": "en",
     "streaming_region": "US",  # country for "where to watch" (Discover)
     # NZBGet
@@ -161,6 +158,8 @@ MIGRATIONS = [
 
 
 def _migrate(c: sqlite3.Connection) -> None:
+    # TheTVDB support was removed: TV comes from TMDB only
+    c.execute("DELETE FROM settings WHERE key IN ('tvdb_api_key', 'tvdb_pin', 'tv_metadata_source')")
     # v1 required a TheTVDB id for every show; TV can now come from TMDB alone
     cols = {r["name"]: r for r in c.execute("PRAGMA table_info(series)")}
     if cols.get("tvdb_id") is not None and cols["tvdb_id"]["notnull"]:

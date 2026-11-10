@@ -411,10 +411,7 @@ async function unblock(id) { await guard(async () => { await api("/blocklist/" +
 // ----------------------------------------------------------- settings ---
 const SECTIONS = {
   general: { title: "Metadata", fields: [
-    ["tmdb_api_key", "TMDB API key (required, free)", "password", "themoviedb.org → Settings → API. v3 key or v4 read token."],
-    ["tv_metadata_source", "TV information from", ["auto", "tmdb", "tvdb"], "auto = TMDB, or TheTVDB when you've entered a TheTVDB key below. TMDB is free and works for nearly everything; TheTVDB numbers episodes the way release names do, which matters mostly for anime."],
-    ["tvdb_api_key", "TheTVDB API key (optional)", "password", "Paid TheTVDB subscription only. Leave empty to use TMDB for TV."],
-    ["tvdb_pin", "TheTVDB subscriber PIN (optional)", "password", "Only if your TheTVDB key needs one."],
+    ["tmdb_api_key", "TMDB API key (required, free)", "password", "themoviedb.org → Settings → API. v3 key or v4 read token. Used for both movies and TV."],
     ["metadata_language", "Metadata language", "text", "Two-letter code, e.g. en"],
     ["streaming_region", "Streaming region", "text", "Country for the Streaming tab, e.g. US, GB, CA, AU, DE"],
   ] },
@@ -560,7 +557,7 @@ async function renderLimits(el) {
 // ------------------------------------------------------- library import ---
 async function renderImport() {
   view.innerHTML = `<h2>Import existing media</h2>
-  <p class="muted">Scans your 1080p and 4K root folders for movies or shows that aren't in Omniarr yet, matches them on TMDB (or TheTVDB if you have a key)
+  <p class="muted">Scans your 1080p and 4K root folders for movies or shows that aren't in Omniarr yet, matches them on TMDB
     (IDs like <code>{tmdb-603}</code>, <code>{tvdb-81189}</code> or <code>[imdbid-tt0903747]</code> in folder names are used first), and adds them with the files already there.
     Files you already have are scored with TRaSH, so upgrades work from day one.</p>
   <div class="toolbar"><select id="ik"><option value="movie">Movies</option><option value="tv">TV shows</option></select><button class="primary" id="scan">Scan root folders</button><span class="grow"></span><span id="ist" class="muted small"></span></div>

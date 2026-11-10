@@ -1,6 +1,6 @@
 """Library import: bring media that already sits in the root folders into Omniarr.
 
-Flow: scan root folders -> match each folder to TMDB / TheTVDB (IDs in the
+Flow: scan root folders -> match each folder to TMDB (IDs in the
 folder name win, then title + year search) -> import: create the movie/series
 using the existing folder, then detect the files already there (quality,
 TRaSH custom-format score), optionally renaming them to TRaSH naming.

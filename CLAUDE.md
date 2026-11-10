@@ -5,8 +5,8 @@ FastAPI, SQLite, vanilla-JS UI (no build step). Started in a Claude Code web ses
 moved to local; this file carries the context over.
 
 ## What it does
-- Movies + TV from **TMDB** (one free key). **TheTVDB is optional** (paid keys only now);
-  setting `tv_metadata_source` = auto/tmdb/tvdb. Shows store both `tvdb_id` and `tmdb_id`.
+- Movies + TV from **TMDB** only (TheTVDB support was removed 2026-11-10; shows still store
+  `tvdb_id` from TMDB's external ids for indexer searches and `{tvdb-…}` folder names).
 - **TRaSH Guides** synced from GitHub (`app/trash/`): quality profiles, custom formats
   (.NET regexes via the `regex` module), scores, size limits, naming formats.
 - **1080p vs 4K libraries** ("tier" hd/uhd) for movies and TV, each with its own root folder
@@ -30,7 +30,7 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
 .venv/bin/pytest -q                       # 32 tests, all passing at hand-over
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
-Tests fake TMDB/TheTVDB/indexers/NZBGet; none of the external services have been exercised
+Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised
 for real yet, and the Docker image has never been built (the web sandbox couldn't).
 
 ## Where things were left (open items)
