@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, decision, importer, library, scanner, search, trash
+from . import collections_, db, decision, importer, library, scanner, search, trash
 from .services import metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
@@ -62,6 +62,7 @@ async def scheduler():
             ("downloads", 30, importer.process_downloads),
             ("trash", 3600, _trash_auto),
             ("series_refresh", 3600, _refresh_all_series),
+            ("collections", 3600, collections_.refresh_due),
             ("rss", int(s["rss_interval_minutes"]) * 60, search.rss_sync),
             ("missing", int(s["search_interval_minutes"]) * 60, search.missing_search),
         ]
@@ -324,7 +325,72 @@ async def lookup_movie(term: str):
     have = {r["tmdb_id"] for r in db.q("SELECT tmdb_id FROM movies")}
     for r in res:
         r["in_library"] = r["tmdb_id"] in have
+
+    # say which of the top results belong to a collection, so the UI can offer "add whole collection"
+    async def coll(r):
+        try:
+            d = await metadata.movie_details(r["tmdb_id"])
+            r["collection"] = {"id": d["collection_id"], "name": d["collection_name"]} if d.get("collection_id") else None
+        except Exception:  # noqa: BLE001
+            r["collection"] = None
+    await asyncio.gather(*(coll(r) for r in res[:10]))
     return res
+
+
+# ------------------------------------------------------------ collections --
+@app.get("/api/lookup/collection")
+async def lookup_collection(term: str):
+    res = await metadata.search_collections(term)
+    saved = {(c["source"], c["tmdb_id"]) for c in db.q("SELECT source, tmdb_id FROM collections")}
+    for r in res:
+        r["saved"] = (r["source"], r["id"]) in saved
+    return res
+
+
+@app.get("/api/collection/{source}/{cid}")
+async def collection_details(source: str, cid: int):
+    return await collections_.details(source, cid)
+
+
+class AddCollection(BaseModel):
+    source: str = "collection"
+    tmdb_id: int
+    tier: str = "hd"
+    tmdb_ids: list[int] | None = None
+    monitor: bool = True
+    search: bool = True
+
+
+@app.post("/api/collections")
+async def add_collection(body: AddCollection):
+    return await collections_.add(body.source, body.tmdb_id, body.tier, body.tmdb_ids, body.monitor, body.search)
+
+
+@app.get("/api/collections")
+def list_collections():
+    return collections_.list_all()
+
+
+@app.put("/api/collections/{cid}")
+def edit_collection(cid: int, body: dict):
+    data = {}
+    if "monitored" in body:
+        data["monitored"] = int(bool(body["monitored"]))
+    if body.get("tier") in library.TIERS:
+        data["tier"] = body["tier"]  # applies to movies added from now on
+    db.update("collections", cid, data)
+    return {"ok": True}
+
+
+@app.post("/api/collections/{cid}/refresh")
+async def refresh_collection(cid: int):
+    return {"added": await collections_.refresh(cid)}
+
+
+@app.delete("/api/collections/{cid}")
+def delete_collection(cid: int):
+    db.ex("DELETE FROM collections WHERE id=?", (cid,))  # movies stay in the library
+    return {"ok": True}
 
 
 class AddMovie(BaseModel):

@@ -27,10 +27,10 @@ function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 // ------------------------------------------------------------- router ---
-const routes = { import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
+const routes = { collections: renderCollections, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
 async function route() {
   const [, name = "movies", arg] = location.hash.split("/");
-  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name || (name === "movie" && a.dataset.tab === "movies") || (name === "show" && a.dataset.tab === "series")));
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name || ((name === "movie" || name === "collections") && a.dataset.tab === "movies") || (name === "show" && a.dataset.tab === "series")));
   view.innerHTML = '<p class="muted">Loading…</p>';
   await guard(() => (routes[name] || renderMovies)(arg));
 }
@@ -52,6 +52,7 @@ async function renderMovies() {
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Movies <span class="muted small">(${movies.length})</span></h2>
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
     <select id="statf"><option value="">Any status</option><option value="missing">Missing</option><option value="have">Downloaded</option></select>
+    <a href="#/collections"><button>Collections</button></a>
     <a href="#/add"><button class="primary">Add movie</button></a></div><div class="grid" id="g"></div>`;
   const draw = () => {
     const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, st = $("#statf").value;
@@ -72,7 +73,8 @@ async function renderMovie(id) {
     <h2>${esc(m.title)} <span class="muted">(${m.year || "?"})</span></h2>
     <div class="chips">${tierChip(m.tier)}${m.runtime ? `<span class="chip">${m.runtime} min</span>` : ""}
       <a class="chip" target="_blank" rel="noopener" href="https://www.themoviedb.org/movie/${m.tmdb_id}">TMDB</a>
-      ${m.imdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.imdb.com/title/${esc(m.imdb_id)}">IMDb</a>` : ""}</div>
+      ${m.imdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.imdb.com/title/${esc(m.imdb_id)}">IMDb</a>` : ""}
+      ${m.collection_id ? `<a class="chip" href="javascript:void(0)" onclick="openCollection('collection', ${m.collection_id})">Part of ${esc(m.collection_name)} →</a>` : ""}</div>
     <p>${esc(m.overview)}</p>
     <p class="small muted">Folder: <code>${esc(m.path)}</code></p>
     <p class="small">${m.file_path ? `File: <code>${esc(m.file_path)}</code> <span class="chip ok">${esc(m.file_quality)}</span> <span class="chip">score ${m.file_score}</span> ${size(m.file_size)}` : '<span class="chip bad">No file</span>'}</p>
@@ -191,7 +193,7 @@ async function monSeason(id, sn, on) {
 // ---------------------------------------------------------------- add ---
 async function renderAdd() {
   view.innerHTML = `<h2>Add to library</h2>
-  <div class="toolbar"><select id="kind"><option value="movie">Movie (TMDB)</option><option value="series">TV series (TheTVDB)</option></select>
+  <div class="toolbar"><select id="kind"><option value="movie">Movie (TMDB)</option><option value="series">TV series (TheTVDB)</option><option value="collection">Movie collection / universe (TMDB)</option></select>
   <input id="term" class="grow" placeholder="Title, optionally with year — or tmdb:603 / tvdb:81189" autofocus><button class="primary" id="go">Search</button></div>
   <div id="results" class="panel" style="padding:0"></div>`;
   const go = () => guard(async () => {
@@ -200,8 +202,15 @@ async function renderAdd() {
     $("#results").innerHTML = '<p class="muted" style="padding:12px">Searching…</p>';
     const res = await api(`/lookup/${kind}?term=${encodeURIComponent(term)}`);
     window._lookup = res;
+    if (kind === "collection") {
+      $("#results").innerHTML = res.map((r) => `<div class="result-row">${r.poster ? `<img src="${esc(r.poster)}" alt="">` : ""}
+        <div class="grow"><b>${esc(r.name)}</b> <span class="chip">${r.source === "keyword" ? "Universe (keyword)" : "Collection"}</span>${r.saved ? ' <span class="chip ok">Added</span>' : ""}<p>${esc(r.overview)}</p></div>
+        <div class="add-ctrls"><button class="primary" onclick="openCollection('${r.source}', ${r.id})">View &amp; add</button></div></div>`).join("") || '<p class="muted" style="padding:12px">No collections found. Tip: universes like the MCU are TMDB keywords, so try "marvel cinematic universe".</p>';
+      return;
+    }
     $("#results").innerHTML = res.map((r, i) => `<div class="result-row">${r.poster ? `<img src="${esc(r.poster)}" alt="">` : ""}
-      <div class="grow"><b>${esc(r.title)}</b> <span class="muted">${r.year || ""}</span>${r.status ? ` <span class="chip">${esc(r.status)}</span>` : ""}<p>${esc(r.overview)}</p></div>
+      <div class="grow"><b>${esc(r.title)}</b> <span class="muted">${r.year || ""}</span>${r.status ? ` <span class="chip">${esc(r.status)}</span>` : ""}<p>${esc(r.overview)}</p>
+        ${r.collection ? `<button class="small" onclick="openCollection('collection', ${r.collection.id})">Part of ${esc(r.collection.name)} — add whole collection…</button>` : ""}</div>
       <div class="add-ctrls">${r.in_library ? '<span class="chip ok">In library</span>' : `
         <select id="t${i}"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
         ${kind === "series" ? `<select id="m${i}"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option><option value="none">None</option></select>` : ""}
@@ -225,6 +234,63 @@ async function addItem(kind, i, btn) {
     btn.textContent = "Added";
   });
 }
+
+// -------------------------------------------------------- collections ---
+async function openCollection(source, id) {
+  modal('<p class="muted">Loading collection…</p>');
+  const c = await guard(() => api(`/collection/${source}/${id}`));
+  if (!c) return closeModal();
+  const today = new Date().toISOString().slice(0, 10);
+  const saved = c.saved;
+  const excluded = new Set(saved ? JSON.parse(saved.excluded || "[]") : []);
+  $("#modal .modal-body").innerHTML = `<div class="toolbar"><h2 class="grow">${esc(c.name)} <span class="muted small">${c.parts.length} movies</span></h2><button onclick="closeModal()">Close</button></div>
+    ${c.overview ? `<p class="muted">${esc(c.overview)}</p>` : ""}
+    <div class="panel"><div class="toolbar">
+      <label>Library <select id="ctier"><option value="hd">1080p</option><option value="uhd">4K</option></select></label>
+      <label><input type="checkbox" id="cmon" ${!saved || saved.monitored ? "checked" : ""}> Add future movies in this collection automatically</label>
+      <label><input type="checkbox" id="csearch" checked> Search now</label>
+      <span class="grow"></span><button class="small" id="call">Select all</button><button class="small" id="cnone">Select none</button>
+      <button class="primary" id="cadd">Add selected</button></div></div>
+    <div class="table-wrap"><table><tr><th></th><th></th><th>Movie</th><th>Released</th><th></th></tr>
+    ${c.parts.map((p) => `<tr><td><input type="checkbox" class="cpick" value="${p.tmdb_id}" ${p.in_library ? "checked disabled" : excluded.has(p.tmdb_id) ? "" : "checked"}></td>
+      <td>${p.poster ? `<img src="${esc(p.poster)}" alt="" style="width:40px;border-radius:3px">` : ""}</td>
+      <td><b>${esc(p.title)}</b> <span class="muted">${p.year || ""}</span></td>
+      <td class="small">${esc(p.release_date || "TBA")}${!p.release_date || p.release_date > today ? ' <span class="chip warn">upcoming</span>' : ""}</td>
+      <td>${p.in_library ? `${tierChip(p.tier)} <span class="chip ${p.has_file ? "ok" : ""}">${p.has_file ? "Downloaded" : "In library"}</span>` : ""}</td></tr>`).join("")}</table></div>
+    <p class="small muted">Unticked movies are remembered and won't be added automatically later. Upcoming movies are added now and searched for once they're released.</p>`;
+  if (saved) $("#ctier").value = saved.tier;
+  const boxes = () => [...document.querySelectorAll(".cpick:not(:disabled)")];
+  $("#call").onclick = () => boxes().forEach((b) => (b.checked = true));
+  $("#cnone").onclick = () => boxes().forEach((b) => (b.checked = false));
+  $("#cadd").onclick = () => guard(async () => {
+    $("#cadd").disabled = true; $("#cadd").textContent = "Adding…";
+    const ids = [...document.querySelectorAll(".cpick:checked")].map((b) => +b.value);
+    const r = await api("/collections", { method: "POST", body: { source, tmdb_id: id, tier: $("#ctier").value, tmdb_ids: ids, monitor: $("#cmon").checked, search: $("#csearch").checked } });
+    toast(`${r.name}: added ${r.added} movie(s)`);
+    closeModal(); if (location.hash.startsWith("#/collections")) route();
+  });
+}
+async function renderCollections() {
+  const rows = await api("/collections");
+  view.innerHTML = `<div class="toolbar"><h2 class="grow">Collections <span class="muted small">(${rows.length})</span></h2>
+    <a href="#/add"><button class="primary">Add collection</button></a></div>
+    ${rows.length ? `<div class="table-wrap"><table><tr><th></th><th>Collection</th><th>Have</th><th>Library</th><th>Auto-add new</th><th></th></tr>
+    ${rows.map((c) => { const have = c.movies.filter((m) => m.file_path).length; return `<tr>
+      <td>${c.poster ? `<img src="${esc(c.poster)}" alt="" style="width:46px;border-radius:4px">` : ""}</td>
+      <td><b>${esc(c.name)}</b> <span class="chip">${c.source === "keyword" ? "Universe" : "Collection"}</span>
+        <div class="small muted">${c.movies.map((m) => `<a href="#/movie/${m.id}" style="color:inherit">${esc(m.title)}</a>`).join(" · ")}</div></td>
+      <td><span class="chip ${have && have >= c.total ? "ok" : ""}">${have}/${c.total}</span></td>
+      <td><select onchange="editColl(${c.id}, {tier: this.value})"><option value="hd" ${c.tier === "hd" ? "selected" : ""}>1080p</option><option value="uhd" ${c.tier === "uhd" ? "selected" : ""}>4K</option></select></td>
+      <td><input type="checkbox" ${c.monitored ? "checked" : ""} onchange="editColl(${c.id}, {monitored: this.checked})"></td>
+      <td><button class="small" onclick="openCollection('${c.source}', ${c.tmdb_id})">View</button>
+        <button class="small" onclick="refreshColl(${c.id})">Check for new</button>
+        <button class="small danger" onclick="delColl(${c.id})">Remove</button></td></tr>`; }).join("")}</table></div>
+    <p class="small muted">"Library" decides where newly found movies go; movies already added stay where they are. Removing a collection keeps its movies.</p>`
+    : '<p class="muted">No collections yet. On the Add page, search for a movie that is part of a collection, or switch the search to "Movie collection / universe".</p>'}`;
+}
+async function editColl(id, body) { await guard(() => api("/collections/" + id, { method: "PUT", body })); }
+async function refreshColl(id) { await guard(async () => { const r = await api(`/collections/${id}/refresh`, { method: "POST" }); toast(r.added ? `Added ${r.added} new movie(s)` : "Nothing new"); route(); }); }
+async function delColl(id) { if (confirm("Stop tracking this collection? Its movies stay in your library.")) await guard(async () => { await api("/collections/" + id, { method: "DELETE" }); route(); }); }
 
 // ----------------------------------------------------------- activity ---
 async function renderActivity(sub = "queue") {

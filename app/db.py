@@ -60,6 +60,14 @@ CREATE TABLE IF NOT EXISTS blocklist (
   added TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS collections (
+  id INTEGER PRIMARY KEY, source TEXT NOT NULL DEFAULT 'collection', tmdb_id INTEGER NOT NULL,
+  name TEXT NOT NULL, overview TEXT, poster TEXT, tier TEXT NOT NULL DEFAULT 'hd',
+  monitored INTEGER DEFAULT 1, search_on_add INTEGER DEFAULT 1, excluded TEXT DEFAULT '[]',
+  members TEXT DEFAULT '[]',
+  added TEXT DEFAULT CURRENT_TIMESTAMP, last_refresh TEXT, UNIQUE(source, tmdb_id)
+);
+
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY, level TEXT, message TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -122,7 +130,22 @@ def connect() -> sqlite3.Connection:
             _conn.execute("PRAGMA journal_mode=WAL")
             _conn.execute("PRAGMA foreign_keys=ON")
             _conn.executescript(SCHEMA)
+            _migrate(_conn)
         return _conn
+
+
+# columns added after the first release: (table, column, definition)
+MIGRATIONS = [
+    ("movies", "collection_id", "INTEGER"),
+    ("movies", "collection_name", "TEXT"),
+]
+
+
+def _migrate(c: sqlite3.Connection) -> None:
+    for table, col, decl in MIGRATIONS:
+        cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+        if col not in cols:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
 def reset_for_tests(path: str) -> None:

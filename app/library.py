@@ -67,7 +67,7 @@ async def refresh_movie(movie_id: int) -> None:
         return
     d = await metadata.movie_details(m["tmdb_id"])
     db.update("movies", movie_id, {k: d[k] for k in ("imdb_id", "title", "original_title", "year", "overview",
-                                                       "poster", "runtime", "release_date")})
+                                                       "poster", "runtime", "release_date", "collection_id", "collection_name")})
 
 
 def movie_available(m: dict) -> bool:

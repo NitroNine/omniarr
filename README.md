@@ -6,6 +6,7 @@ Movies and TV in one self-hosted app, built for Unraid:
 - **Quality, custom formats, scores, size limits and naming** are all imported from **[TRaSH Guides](https://trash-guides.info)**. Omniarr pulls TRaSH's JSON straight from GitHub and re-syncs it daily.
 - **Two libraries per media type:** 1080p-and-lower and 4K, each with its own root folder and TRaSH profile. You can move an item between them at any time, and its files move too.
 - **Search:** works with any **Newznab** Usenet indexer (NZBGeek, DrunkenSlug, NZBFinder, …). It does RSS sync, backlog search, season packs and upgrades up to the cutoff.
+- **Collections and universes:** add a whole movie collection (e.g. *The Lord of the Rings Collection*) or a universe (e.g. the MCU, through its TMDB keyword) in one go. New movies announced later are added automatically.
 - **Library import:** brings in media that's already in your root folders. Omniarr matches each folder on TMDB/TheTVDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
 - **Quality limits per library:** choose which qualities are allowed (your maximum and minimum), the quality to *upgrade until*, and whether upgrades happen at all.
 - **Downloads:** sent to **NZBGet**. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the right root folder. Failed downloads are blocklisted and searched again.
@@ -63,6 +64,27 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 - **Settings → Profiles → "Test a release name"** shows how a release title is parsed, which TRaSH custom formats match, and its score. Handy for working out why something was or wasn't grabbed.
 - **Interactive search** on any movie, season or episode lists every result with its score and rejection reasons. You can grab any of them by hand.
 - **Activity** shows the queue, history, an event log and the blocklist, plus buttons to run RSS sync or a backlog search now.
+
+## Collections and universes
+
+There are three ways to add a collection:
+- **From a movie search:** when you search for a movie that's part of a TMDB collection, its result shows **"Part of … — add whole collection"**.
+- **Search collections directly:** on **Add**, set the search type to **Movie collection / universe**. This finds TMDB collections and TMDB keywords. Universes like the MCU aren't TMDB collections, so search for their keyword instead, e.g. "marvel cinematic universe".
+- **From a movie's page:** movies in the library show a **Part of …** link.
+
+The collection window lists every movie with its release date:
+- Tick the movies you want and choose the **1080p** or **4K** library.
+- Optionally tick **Add future movies automatically** and **Search now**.
+- Movies already in your library are marked as such.
+- Upcoming movies are added straight away and searched for once they're released.
+
+**Movies → Collections** shows each collection's progress (e.g. 2/3 downloaded). From there you can:
+- change which library newly found movies go to,
+- turn automatic adding on or off,
+- check for new movies now (this also happens daily),
+- stop tracking a collection. Its movies stay in your library.
+
+Movies you untick are remembered and never added automatically later.
 
 ## Importing media you already have
 
@@ -129,6 +151,7 @@ app/
   search.py        indexer search, RSS sync, grabbing
   importer.py      NZBGet tracking, import, rename, blocklist
   library.py       add/refresh movies & series, root folders, 1080p/4K moves
+  collections_.py  TMDB collections / keyword universes, auto-adding new entries
   scanner.py       library import: scan root folders, match, detect existing files
   services/        TMDB, TheTVDB, Newznab, NZBGet, ffprobe
   static/          web UI (no build step)

@@ -69,13 +69,60 @@ async def movie_by_imdb(imdb_id: str) -> dict | None:
 
 async def movie_details(tmdb_id: int) -> dict:
     m = await _tmdb(f"/movie/{tmdb_id}", append_to_response="external_ids")
+    coll = m.get("belongs_to_collection") or {}
     return {
+        "collection_id": coll.get("id"), "collection_name": coll.get("name"),
         "tmdb_id": m["id"], "imdb_id": m.get("imdb_id") or m.get("external_ids", {}).get("imdb_id"),
         "title": m["title"], "original_title": m.get("original_title"),
         "year": _year(m.get("release_date")), "overview": m.get("overview"),
         "poster": TMDB_IMG + m["poster_path"] if m.get("poster_path") else None,
         "runtime": m.get("runtime") or 0, "release_date": m.get("release_date"),
     }
+
+
+def _movie_summary(m: dict) -> dict:
+    return {
+        "tmdb_id": m["id"], "title": m.get("title"), "year": _year(m.get("release_date")),
+        "release_date": m.get("release_date") or None, "overview": m.get("overview"),
+        "poster": TMDB_IMG + m["poster_path"] if m.get("poster_path") else None,
+    }
+
+
+async def search_collections(term: str) -> list[dict]:
+    """TMDB collections ("The Lord of the Rings Collection") and keywords that
+    act as universes ("marvel cinematic universe (mcu)")."""
+    import asyncio
+    cols, kws = await asyncio.gather(_tmdb("/search/collection", query=term), _tmdb("/search/keyword", query=term))
+    out = [{"source": "collection", "id": c["id"], "name": c["name"], "overview": c.get("overview"),
+            "poster": TMDB_IMG + c["poster_path"] if c.get("poster_path") else None}
+           for c in cols.get("results", [])[:15]]
+    out += [{"source": "keyword", "id": k["id"], "name": k["name"], "overview": "TMDB keyword — every movie tagged with it",
+             "poster": None} for k in kws.get("results", [])[:10]]
+    return out
+
+
+async def collection(source: str, cid: int) -> dict:
+    """Name, overview and member movies (oldest first) of a collection or keyword universe."""
+    if source == "collection":
+        c = await _tmdb(f"/collection/{cid}")
+        parts = [_movie_summary(m) for m in c.get("parts", [])]
+        info = {"name": c.get("name"), "overview": c.get("overview"),
+                "poster": TMDB_IMG + c["poster_path"] if c.get("poster_path") else None}
+    elif source == "keyword":
+        k = await _tmdb(f"/keyword/{cid}")
+        parts, page = [], 1
+        while page <= 10:
+            d = await _tmdb("/discover/movie", with_keywords=cid, sort_by="primary_release_date.asc",
+                            include_adult="false", page=page)
+            parts += [_movie_summary(m) for m in d.get("results", [])]
+            if page >= d.get("total_pages", 1):
+                break
+            page += 1
+        info = {"name": k.get("name"), "overview": "Every movie TMDB tags with this keyword.", "poster": None}
+    else:
+        raise ValueError("source must be 'collection' or 'keyword'")
+    parts.sort(key=lambda m: (m["release_date"] is None, m["release_date"] or ""))
+    return {"source": source, "id": cid, **info, "parts": parts}
 
 
 # ---------------------------------------------------------------- TVDB ----
