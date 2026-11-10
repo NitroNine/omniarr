@@ -17,7 +17,9 @@ def _fake_tmdb(monkeypatch):
         if path == "/watch/providers/tv":
             return {"results": [
                 {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/n.png", "display_priorities": {"US": 0}},
-                {"provider_id": 531, "provider_name": "Paramount Plus", "logo_path": "/p.png", "display_priorities": {"US": 6}}]}
+                {"provider_id": 531, "provider_name": "Paramount Plus", "logo_path": "/p.png", "display_priorities": {"US": 6}},
+                {"provider_id": 1796, "provider_name": "Netflix Standard with Ads", "logo_path": "/na.png", "display_priorities": {"US": 7}},
+                {"provider_id": 73, "provider_name": "Tubi TV", "logo_path": "/t.png", "display_priorities": {"US": 8}}]}
         if path == "/discover/movie":
             return {"page": 1, "total_pages": 3, "total_results": 55, "results": [
                 {"id": 100, "title": "Glass Onion", "release_date": "2022-11-23", "poster_path": "/g.jpg", "vote_average": 7.1},
@@ -79,3 +81,13 @@ def test_api_marks_library_and_adds_tv(client, monkeypatch):
     assert (s["tvdb_id"], s["tmdb_id"], s["tier"]) == (305288, 66732, "uhd")
     tv = client.get("/api/providers/8/tv").json()
     assert tv["results"][0]["library_id"] == s["id"]
+
+
+def test_ad_supported_services_hidden(env, monkeypatch):
+    _fake_tmdb(monkeypatch)
+    names = [p["name"] for p in asyncio.run(metadata.watch_providers())]
+    assert "Netflix Standard with Ads" not in names and "Tubi TV" not in names and "Netflix" in names
+    assert not metadata.has_ads("Paramount Plus") and not metadata.has_ads("Shudder")  # 'ads' only as a word
+    db.save_settings({"streaming_hide_ads": False})
+    names = [p["name"] for p in asyncio.run(metadata.watch_providers())]
+    assert "Netflix Standard with Ads" in names and "Tubi TV" in names

@@ -477,6 +477,7 @@ const SECTIONS = {
     ["tmdb_api_key", "TMDB API key (required, free)", "password", "themoviedb.org → Settings → API. v3 key or v4 read token. Used for both movies and TV."],
     ["metadata_language", "Metadata language", "text", "Two-letter code, e.g. en"],
     ["streaming_region", "Streaming region", "text", "Country for the Streaming tab, e.g. US, GB, CA, AU, DE"],
+    ["streaming_hide_ads", "Hide services with ads", "checkbox", "Leaves ad-supported plans (e.g. \"Netflix Standard with Ads\") and free ad-supported services (Tubi, Pluto TV, …) off the Streaming tab."],
   ] },
   downloads: { title: "NZBGet", fields: [
     ["nzbget_url", "NZBGet URL", "text", "e.g. http://192.168.1.10:6789"],
