@@ -6,7 +6,7 @@
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Overview>Movies + TV in one app. TMDB / TheTVDB metadata, TRaSH Guides quality profiles, custom formats and naming, Newznab indexers and NZBGet. Separate 1080p and 4K root folders.</Overview>
+  <Overview>Movies + TV in one app. TMDB metadata (one free key), TRaSH Guides quality profiles, custom formats and naming, Newznab indexers and NZBGet. Separate 1080p and 4K root folders.</Overview>
   <Category>Downloaders: MediaApp:Video</Category>
   <WebUI>http://[IP]:[PORT:8790]/</WebUI>
   <Config Name="WebUI Port" Target="8790" Default="8790" Mode="tcp" Description="Web interface" Type="Port" Display="always" Required="true" Mask="false">8790</Config>
@@ -18,5 +18,5 @@
   <Config Name="Web UI username" Target="OMNIARR_USERNAME" Default="admin" Description="Name of the admin account created from the password below (first start only)" Type="Variable" Display="advanced" Required="false" Mask="false">admin</Config>
   <Config Name="Web UI password" Target="OMNIARR_PASSWORD" Default="" Description="Optional: creates the admin account on first start. Leave empty to create it in the web UI instead" Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="TMDB API key" Target="OMNIARR_TMDB_API_KEY" Default="" Description="Optional - can also be set in the web UI" Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="TheTVDB API key" Target="OMNIARR_TVDB_API_KEY" Default="" Description="Optional - can also be set in the web UI" Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="TheTVDB API key" Target="OMNIARR_TVDB_API_KEY" Default="" Description="Optional, paid TheTVDB subscription only. Leave empty to use TMDB for TV" Type="Variable" Display="advanced" Required="false" Mask="true"/>
 </Container>

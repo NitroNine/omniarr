@@ -11,7 +11,8 @@ def _fake_meta(monkeypatch):
                 "overview": "", "poster": None, "runtime": 100, "release_date": "2020-01-01",
                 "collection_id": None, "collection_name": None}
 
-    async def series(tvdb):
+    async def series(tvdb_id=None, tmdb_id=None):
+        tvdb = tvdb_id
         return {"tvdb_id": tvdb, "title": f"Show {tvdb}", "year": 2019, "overview": "", "poster": None,
                 "imdb_id": None, "tmdb_id": None, "runtime": 30, "status": "Ended", "series_type": "standard"}
 

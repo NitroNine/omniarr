@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
@@ -117,12 +118,17 @@ async def search_episodes(series: dict, season: int, episode: int | None = None)
         if episode is not None:
             p["ep"] = episode
         res: list[Release] = []
-        try:
-            res = await _query(ix, {**p, "tvdbid": series["tvdb_id"]})
-        except (httpx.HTTPError, RuntimeError):
-            res = []
+        # best id first: TheTVDB (all newznab indexers), then IMDb, then plain title search
+        for key, val in (("tvdbid", series.get("tvdb_id")),
+                         ("imdbid", (series.get("imdb_id") or "").removeprefix("tt") or None)):
+            if res or not val:
+                continue
+            try:
+                res = await _query(ix, {**p, key: val})
+            except (httpx.HTTPError, RuntimeError):
+                res = []
         if not res:
-            res = await _query(ix, {**p, "q": series["title"]})
+            res = await _query(ix, {**p, "q": re.sub(r"\s*\((19|20)\d{2}\)$", "", series["title"])})
         return res
     return await _fan_out(one)
 

@@ -64,10 +64,10 @@ def test_api_marks_library_and_adds_tv(client, monkeypatch):
     assert d["provider"]["name"] == "Netflix" and d["total_results"] == 55
     assert d["results"][0]["library_id"] and d["results"][1]["library_id"] is None
 
-    async def details(tvdb_id):
-        assert tvdb_id == 305288
+    async def details(tvdb_id=None, tmdb_id=None):
+        assert tmdb_id == 66732  # added straight from the TMDB id, no TheTVDB lookup needed
         return {"tvdb_id": 305288, "title": "Stranger Things", "year": 2016, "overview": "", "poster": None,
-                "imdb_id": "tt4574334", "tmdb_id": None, "runtime": 50, "status": "Ended", "series_type": "standard"}
+                "imdb_id": "tt4574334", "tmdb_id": 66732, "runtime": 50, "status": "Ended", "series_type": "standard"}
 
     async def episodes(_):
         return []

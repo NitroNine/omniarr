@@ -2,14 +2,14 @@
 
 Movies and TV in one self-hosted app, built for Unraid:
 
-- **Metadata:** movies come from **The Movie Database (TMDB)** and TV shows from **TheTVDB (v4 API)**.
+- **Metadata:** movies and TV come from **The Movie Database (TMDB)**, which needs one free API key. If you pay for a **TheTVDB** subscription, you can add its key and Omniarr will use TheTVDB for TV instead (see [TV metadata](#tv-metadata-tmdb-or-thetvdb)).
 - **Quality, custom formats, scores, size limits and naming** are all imported from **[TRaSH Guides](https://trash-guides.info)**. Omniarr pulls TRaSH's JSON straight from GitHub and re-syncs it daily.
 - **Two libraries per media type:** 1080p-and-lower and 4K, each with its own root folder and TRaSH profile. You can move an item between them at any time, and its files move too.
 - **Search:** works with any **Newznab** Usenet indexer (NZBGeek, DrunkenSlug, NZBFinder, …). It does RSS sync, backlog search, season packs and upgrades up to the cutoff.
 - **Collections and universes:** add a whole movie collection (e.g. *The Lord of the Rings Collection*) or a universe (e.g. the MCU, through its TMDB keyword) in one go. New movies announced later are added automatically.
 - **User accounts and requests:** family and friends get their own logins and can request movies, shows and collections. An admin approves each request, or turns on auto-approve for users they trust.
 - **Streaming tab:** browse Netflix, Apple TV+, Prime Video, Disney+, Max, Hulu, Paramount+, Peacock and more. Click a service's logo to see the movies and TV shows it offers, and add them with one click.
-- **Library import:** brings in media that's already in your root folders. Omniarr matches each folder on TMDB/TheTVDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
+- **Library import:** brings in media that's already in your root folders. Omniarr matches each folder on TMDB (or TheTVDB) and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
 - **Quality limits per library:** choose which qualities are allowed (your maximum and minimum), the quality to *upgrade until*, and whether upgrades happen at all.
 - **Downloads:** sent to **NZBGet**. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the right root folder. Failed downloads are blocklisted and searched again.
 
@@ -78,11 +78,11 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 ### 3. First-run setup (web UI at `http://<unraid-ip>:8790`)
 
 1. **Settings → Profiles → "Sync TRaSH Guides now"** (afterwards it re-syncs automatically).
-2. **Settings → Metadata:** enter your TMDB API key (v3 key or v4 read token) and your TheTVDB v4 API key (plus a PIN if your key needs one).
+2. **Settings → Metadata:** enter your free TMDB API key (v3 key or v4 read token). Get one at themoviedb.org → Settings → API.
 3. **Settings → NZBGet:** URL, username and password, then **Test**. Create the `movies` and `tv` categories in NZBGet, or change the names here.
 4. **Settings → Indexers:** add each Usenet indexer (URL + API key). It's tested as soon as you add it.
 5. **Settings → Root folders:** check the four paths.
-6. **Add:** search TMDB or TheTVDB, pick **1080p** or **4K**, and click Add.
+6. **Add:** search for a movie or show, pick **1080p** or **4K**, and click Add.
 
 ## Light and dark mode
 
@@ -93,6 +93,15 @@ Use the switch in the top-right corner: **Auto** follows your device's setting, 
 - **Settings → Profiles → "Test a release name"** shows how a release title is parsed, which TRaSH custom formats match, and its score. Handy for working out why something was or wasn't grabbed.
 - **Interactive search** on any movie, season or episode lists every result with its score and rejection reasons. You can grab any of them by hand.
 - **Activity** shows the queue, history, an event log and the blocklist, plus buttons to run RSS sync or a backlog search now.
+
+## TV metadata: TMDB or TheTVDB
+
+Sonarr and Radarr don't ask for keys because their projects run their own metadata servers. Omniarr talks to the sources directly:
+
+- **TMDB (default, free):** one key covers movies, TV, collections and the Streaming tab. TMDB also stores each show's TheTVDB and IMDb numbers. Omniarr uses those for indexer searches (TheTVDB number → IMDb number → show title) and for folder names like `{tvdb-81189}`.
+- **TheTVDB (optional, paid):** enter a key under **Settings → Metadata** and **TV information from: auto** switches TV to TheTVDB. Its season and episode numbers match how Usenet releases are named. That mostly matters for anime (absolute numbering) and the occasional show TMDB orders differently.
+
+You can switch between the two at any time; existing shows keep working, because both IDs are stored. Databases from earlier versions are upgraded automatically.
 
 ## Users and requests
 
@@ -224,7 +233,7 @@ app/
   requests_.py     user requests, approval / auto-approval
   collections_.py  TMDB collections / keyword universes, auto-adding new entries
   scanner.py       library import: scan root folders, match, detect existing files
-  services/        TMDB, TheTVDB, Newznab, NZBGet, ffprobe
+  services/        TMDB, TheTVDB (optional), Newznab, NZBGet, ffprobe
   static/          web UI (no build step)
 tests/             unit + end-to-end tests (fake indexer / NZBGet)
 unraid/omniarr.xml Unraid template

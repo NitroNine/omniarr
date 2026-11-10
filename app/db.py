@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS movies (
 );
 
 CREATE TABLE IF NOT EXISTS series (
-  id INTEGER PRIMARY KEY, tvdb_id INTEGER UNIQUE NOT NULL, imdb_id TEXT, tmdb_id INTEGER,
+  id INTEGER PRIMARY KEY, tvdb_id INTEGER UNIQUE, imdb_id TEXT, tmdb_id INTEGER UNIQUE,
   title TEXT NOT NULL, year INTEGER, overview TEXT, poster TEXT, runtime INTEGER,
   status TEXT, series_type TEXT DEFAULT 'standard', tier TEXT NOT NULL DEFAULT 'hd',
   monitored INTEGER DEFAULT 1, folder TEXT, added TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -94,6 +94,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # metadata
     "tmdb_api_key": "",
     "tvdb_api_key": "",
+    "tv_metadata_source": "auto",  # auto = TheTVDB if a key is set, otherwise TMDB
     "tvdb_pin": "",
     "metadata_language": "en",
     "streaming_region": "US",  # country for "where to watch" (Discover)
@@ -160,6 +161,23 @@ MIGRATIONS = [
 
 
 def _migrate(c: sqlite3.Connection) -> None:
+    # v1 required a TheTVDB id for every show; TV can now come from TMDB alone
+    cols = {r["name"]: r for r in c.execute("PRAGMA table_info(series)")}
+    if cols.get("tvdb_id") is not None and cols["tvdb_id"]["notnull"]:
+        c.execute("PRAGMA foreign_keys=OFF")
+        c.execute("BEGIN")
+        old = [r["name"] for r in cols.values()]
+        sql = c.execute("SELECT sql FROM sqlite_master WHERE name='series'").fetchone()["sql"]
+        new_sql = (sql.replace("tvdb_id INTEGER UNIQUE NOT NULL", "tvdb_id INTEGER UNIQUE")
+                      .replace("tmdb_id INTEGER,", "tmdb_id INTEGER UNIQUE,", 1)
+                      .replace("CREATE TABLE series", "CREATE TABLE series_new", 1)
+                      .replace("CREATE TABLE IF NOT EXISTS series", "CREATE TABLE series_new", 1))
+        c.execute(new_sql)
+        c.execute(f"INSERT INTO series_new ({','.join(old)}) SELECT {','.join(old)} FROM series")
+        c.execute("DROP TABLE series")
+        c.execute("ALTER TABLE series_new RENAME TO series")
+        c.execute("COMMIT")
+        c.execute("PRAGMA foreign_keys=ON")
     for table, col, decl in MIGRATIONS:
         cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
         if col not in cols:

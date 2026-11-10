@@ -81,7 +81,7 @@ for _ in $(seq 1 30); do
     echo
     echo "Next: open it, create your admin account, then go to Settings and"
     echo "  1. Profiles      -> Sync TRaSH Guides now"
-    echo "  2. Metadata      -> TMDB + TheTVDB API keys"
+    echo "  2. Metadata      -> your free TMDB API key (themoviedb.org -> Settings -> API)"
     echo "  3. NZBGet        -> URL / login, then Test"
     echo "  4. Indexers      -> add your Usenet indexers"
     echo "  5. Root folders  -> check the paths (inside the container, $DATA_SHARE is /data)"

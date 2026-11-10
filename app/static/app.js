@@ -52,7 +52,7 @@ async function checkBanner() {
   settingsCache = s;
   const msgs = [];
   if (st && !st.trash_loaded) msgs.push('TRaSH Guides data not downloaded yet — <a href="#/settings">Settings → Profiles</a> → "Sync TRaSH Guides now".');
-  if (s && (!s.tmdb_api_key || !s.tvdb_api_key)) msgs.push('Add your TMDB and TheTVDB API keys in <a href="#/settings">Settings</a>.');
+  if (s && !s.tmdb_api_key) msgs.push('Add your free TMDB API key in <a href="#/settings">Settings → Metadata</a> — it powers movies, TV and the Streaming tab.');
   $("#banner").innerHTML = msgs.join(" ");
 }
 
@@ -158,9 +158,10 @@ async function renderShow(id) {
   view.innerHTML = `<div class="detail">${s.poster ? `<img src="${esc(s.poster)}" alt="">` : ""}<div class="info">
     <h2>${esc(s.title)} <span class="muted">(${s.year || "?"})</span></h2>
     <div class="chips">${tierChip(s.tier)}${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}<span class="chip">${esc(s.series_type)}</span>
-      <a class="chip" target="_blank" rel="noopener" href="https://thetvdb.com/dereferrer/series/${s.tvdb_id}">TheTVDB</a></div>
+      ${s.tmdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.themoviedb.org/tv/${s.tmdb_id}">TMDB</a>` : ""}
+      ${s.tvdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://thetvdb.com/dereferrer/series/${s.tvdb_id}">TheTVDB</a>` : ""}</div>
     <p>${esc(s.overview)}</p>${isAdmin() ? `<p class="small muted">Folder: <code>${esc(s.path)}</code></p>` : ""}
-    <div class="toolbar admin-only"><button class="primary" id="as">Search all missing</button><button id="rf">Refresh from TheTVDB</button>
+    <div class="toolbar admin-only"><button class="primary" id="as">Search all missing</button><button id="rf">Refresh episode list</button>
       <select id="tier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
       <select id="stype"><option value="standard">Standard</option><option value="daily">Daily</option><option value="anime">Anime</option></select>
       <label><input type="checkbox" id="mon" ${s.monitored ? "checked" : ""}> Monitored</label>
@@ -203,8 +204,8 @@ async function monSeason(id, sn, on) {
 // ---------------------------------------------------------------- add ---
 async function renderAdd() {
   view.innerHTML = `<h2>Add to library</h2>
-  <div class="toolbar"><select id="kind"><option value="movie">Movie (TMDB)</option><option value="series">TV series (TheTVDB)</option><option value="collection">Movie collection / universe (TMDB)</option></select>
-  <input id="term" class="grow" placeholder="Title, optionally with year — or tmdb:603 / tvdb:81189" autofocus><button class="primary" id="go">Search</button></div>
+  <div class="toolbar"><select id="kind"><option value="movie">Movie (TMDB)</option><option value="series">TV series</option><option value="collection">Movie collection / universe (TMDB)</option></select>
+  <input id="term" class="grow" placeholder="Title, optionally with year — or tmdb:603 / tvdb:81189 (TV: tmdb:1399)" autofocus><button class="primary" id="go">Search</button></div>
   <div id="results" class="panel" style="padding:0"></div>`;
   const go = () => guard(async () => {
     const kind = $("#kind").value, term = $("#term").value.trim();
@@ -240,7 +241,7 @@ async function addOrRequest(kind, body) {
     return { id: ok ? r.item_id : null, requested: !ok, title: r.title };
   }
   if (kind === "movie") return api("/movies", { method: "POST", body });
-  if (kind === "tv") return api(body.tmdb_id && !body.tvdb_id ? "/series/from-tmdb" : "/series", { method: "POST", body });
+  if (kind === "tv") return api("/series", { method: "POST", body });
   return api("/collections", { method: "POST", body });
 }
 const addLabel = () => (isAdmin() ? "Add" : "Request");
@@ -251,7 +252,7 @@ async function addItem(kind, i, btn) {
     btn.textContent = isAdmin() ? "Adding…" : "Requesting…";
     const res = kind === "movie"
       ? await addOrRequest("movie", { tmdb_id: r.tmdb_id, tier: $("#t" + i).value, search: $("#s" + i).checked })
-      : await addOrRequest("tv", { tvdb_id: r.tvdb_id, tier: $("#t" + i).value, monitor: $("#m" + i).value, search: $("#s" + i).checked });
+      : await addOrRequest("tv", { tvdb_id: r.tvdb_id || undefined, tmdb_id: r.tmdb_id || undefined, tier: $("#t" + i).value, monitor: $("#m" + i).value, search: $("#s" + i).checked });
     if (isAdmin()) toast(`Added ${res.title}`);
     btn.textContent = res.requested ? "Requested" : "Added";
   });
@@ -410,9 +411,10 @@ async function unblock(id) { await guard(async () => { await api("/blocklist/" +
 // ----------------------------------------------------------- settings ---
 const SECTIONS = {
   general: { title: "Metadata", fields: [
-    ["tmdb_api_key", "TMDB API key", "password", "themoviedb.org → Settings → API. v3 key or v4 read token."],
-    ["tvdb_api_key", "TheTVDB API key", "password", "thetvdb.com → Dashboard → API keys (v4)."],
-    ["tvdb_pin", "TheTVDB subscriber PIN", "password", "Only needed for user-supported keys."],
+    ["tmdb_api_key", "TMDB API key (required, free)", "password", "themoviedb.org → Settings → API. v3 key or v4 read token."],
+    ["tv_metadata_source", "TV information from", ["auto", "tmdb", "tvdb"], "auto = TMDB, or TheTVDB when you've entered a TheTVDB key below. TMDB is free and works for nearly everything; TheTVDB numbers episodes the way release names do, which matters mostly for anime."],
+    ["tvdb_api_key", "TheTVDB API key (optional)", "password", "Paid TheTVDB subscription only. Leave empty to use TMDB for TV."],
+    ["tvdb_pin", "TheTVDB subscriber PIN (optional)", "password", "Only if your TheTVDB key needs one."],
     ["metadata_language", "Metadata language", "text", "Two-letter code, e.g. en"],
     ["streaming_region", "Streaming region", "text", "Country for the Streaming tab, e.g. US, GB, CA, AU, DE"],
   ] },
@@ -558,8 +560,8 @@ async function renderLimits(el) {
 // ------------------------------------------------------- library import ---
 async function renderImport() {
   view.innerHTML = `<h2>Import existing media</h2>
-  <p class="muted">Scans your 1080p and 4K root folders for movies or shows that aren't in Omniarr yet, matches them on TMDB / TheTVDB
-    (IDs like <code>{tmdb-603}</code> or <code>[tvdbid-81189]</code> in folder names are used first), and adds them with the files already there.
+  <p class="muted">Scans your 1080p and 4K root folders for movies or shows that aren't in Omniarr yet, matches them on TMDB (or TheTVDB if you have a key)
+    (IDs like <code>{tmdb-603}</code>, <code>{tvdb-81189}</code> or <code>[imdbid-tt0903747]</code> in folder names are used first), and adds them with the files already there.
     Files you already have are scored with TRaSH, so upgrades work from day one.</p>
   <div class="toolbar"><select id="ik"><option value="movie">Movies</option><option value="tv">TV shows</option></select><button class="primary" id="scan">Scan root folders</button><span class="grow"></span><span id="ist" class="muted small"></span></div>
   <div id="ires"></div>`;
@@ -624,7 +626,7 @@ async function startImport() {
   const sel = [...document.querySelectorAll(".isel:checked")].map((x) => window._imp[+x.dataset.i]).filter((c) => c.match);
   if (!sel.length) throw new Error("Select at least one matched item");
   const opts = { rename: $("#iren").checked, monitor: $("#imon").value, search: $("#isearch").checked };
-  const items = sel.map((c) => ({ kind: c.kind, tier: c.tier, folder: c.folder, loose: c.loose, id: c.kind === "movie" ? c.match.tmdb_id : c.match.tvdb_id, ...opts }));
+  const items = sel.map((c) => ({ kind: c.kind, tier: c.tier, folder: c.folder, loose: c.loose, id: c.kind === "movie" ? c.match.tmdb_id : null, tvdb_id: c.kind === "tv" ? c.match.tvdb_id : null, tmdb_id: c.kind === "tv" ? c.match.tmdb_id : null, ...opts }));
   await api("/import", { method: "POST", body: { items } });
   toast(`Importing ${items.length} item(s)…`);
   pollImport();

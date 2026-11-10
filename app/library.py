@@ -1,4 +1,4 @@
-"""Library management: adding movies/series, refreshing TVDB episode lists,
+"""Library management: adding movies/series, refreshing episode lists (TMDB or TheTVDB),
 root-folder resolution by quality tier, and folder naming."""
 from __future__ import annotations
 
@@ -82,15 +82,23 @@ def movie_available(m: dict) -> bool:
 
 
 # ----------------------------------------------------------------- series --
-async def add_series(tvdb_id: int, tier: str, monitor: str = "all", folder: str | None = None) -> dict:
-    """monitor: all | future | missing | none | latest"""
+async def add_series(tvdb_id: int | None, tier: str, monitor: str = "all", folder: str | None = None,
+                     tmdb_id: int | None = None) -> dict:
+    """monitor: all | future | missing | none | latest. Give a TheTVDB id, a TMDB id, or both."""
     if tier not in TIERS:
         raise ValueError("tier must be 'hd' or 'uhd'")
-    existing = db.one("SELECT * FROM series WHERE tvdb_id=?", (tvdb_id,))
+    if not tvdb_id and not tmdb_id:
+        raise ValueError("A TheTVDB or TMDB id is needed")
+    existing = _find_series(tvdb_id, tmdb_id)
     if existing:
         raise ValueError(f"{existing['title']} is already in your library")
-    s = await metadata.series_details(tvdb_id)
-    s.update(tier=tier, monitored=int(monitor != "none"))
+    s = await metadata.series_details(tvdb_id=tvdb_id, tmdb_id=tmdb_id)
+    existing = _find_series(s.get("tvdb_id"), s.get("tmdb_id"))
+    if existing:
+        raise ValueError(f"{existing['title']} is already in your library")
+    s = {k: s.get(k) for k in ("tvdb_id", "tmdb_id", "imdb_id", "title", "year", "overview", "poster", "runtime",
+                               "status", "series_type")}
+    s.update(tier=tier, monitored=int(monitor != "none"), series_type=s.get("series_type") or "standard")
     s["folder"] = folder or series_folder_name(s)
     s["id"] = db.insert("series", s)
     await refresh_series(s["id"], initial_monitor=monitor)
@@ -98,18 +106,32 @@ async def add_series(tvdb_id: int, tier: str, monitor: str = "all", folder: str 
     return s
 
 
+def _find_series(tvdb_id: int | None, tmdb_id: int | None) -> dict | None:
+    if tvdb_id:
+        row = db.one("SELECT * FROM series WHERE tvdb_id=?", (tvdb_id,))
+        if row:
+            return row
+    if tmdb_id:
+        return db.one("SELECT * FROM series WHERE tmdb_id=?", (tmdb_id,))
+    return None
+
+
 async def refresh_series(series_id: int, initial_monitor: str | None = None) -> None:
     s = db.one("SELECT * FROM series WHERE id=?", (series_id,))
     if not s:
         return
     try:
-        d = await metadata.series_details(s["tvdb_id"])
-        db.update("series", series_id, {k: d[k] for k in ("title", "year", "overview", "poster", "imdb_id",
-                                                          "tmdb_id", "runtime", "status")})
+        d = await metadata.series_details(tvdb_id=s["tvdb_id"], tmdb_id=s["tmdb_id"])
+        upd = {k: d.get(k) for k in ("title", "year", "overview", "poster", "imdb_id", "runtime", "status")}
+        for k in ("tvdb_id", "tmdb_id"):  # fill in ids we learn, never blank out known ones
+            if d.get(k) and not s[k] and not _find_series(d[k] if k == "tvdb_id" else None,
+                                                           d[k] if k == "tmdb_id" else None):
+                upd[k] = d[k]
+        db.update("series", series_id, upd)
     except Exception as e:  # noqa: BLE001
         db.log(f"Refreshing {s['title']} failed: {e}", "warn")
         return
-    eps = await metadata.series_episodes(s["tvdb_id"])
+    eps = await metadata.series_episodes({**s, **d})
     today = date.today().isoformat()
     latest_season = max((e["season"] for e in eps), default=0)
     with db.tx() as c:

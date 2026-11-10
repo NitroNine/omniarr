@@ -84,7 +84,7 @@ def test_movie_library_import(env, monkeypatch):
 
 
 def test_series_library_import(env, monkeypatch):
-    async def details(_id):
+    async def details(tvdb_id=None, tmdb_id=None):
         return {"tvdb_id": 403245, "title": "The Bear", "year": 2022, "overview": "", "poster": None,
                 "imdb_id": None, "tmdb_id": None, "runtime": 30, "status": "Continuing", "series_type": "standard"}
 

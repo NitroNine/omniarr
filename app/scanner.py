@@ -119,8 +119,8 @@ async def match(c: dict) -> dict:
                 m = {k: m.get(k) for k in ("tmdb_id", "title", "year", "poster")}
                 m["in_library"] = bool(db.one("SELECT 1 FROM movies WHERE tmdb_id=?", (m["tmdb_id"],)))
         else:
-            if c.get("tvdb_id"):
-                m, conf = await metadata.series_details(c["tvdb_id"]), "id"
+            if c.get("tvdb_id") or c.get("tmdb_id"):
+                m, conf = await metadata.series_details(tvdb_id=c.get("tvdb_id"), tmdb_id=c.get("tmdb_id")), "id"
             elif c.get("imdb_id"):
                 m = await metadata.series_by_remote_id(c["imdb_id"])
                 conf = "id" if m else "none"
@@ -128,8 +128,8 @@ async def match(c: dict) -> dict:
                 res = await metadata.search_series(c["title"])
                 m, conf = await _best(res, c["title"], c.get("year"))
             if m:
-                m = {k: m.get(k) for k in ("tvdb_id", "title", "year", "poster")}
-                m["in_library"] = bool(db.one("SELECT 1 FROM series WHERE tvdb_id=?", (m["tvdb_id"],)))
+                m = {k: m.get(k) for k in ("tvdb_id", "tmdb_id", "title", "year", "poster")}
+                m["in_library"] = bool(library._find_series(m.get("tvdb_id"), m.get("tmdb_id")))
     except Exception as e:  # noqa: BLE001
         return {**c, "match": None, "confidence": "none", "error": str(e)}
     return {**c, "match": m, "confidence": conf if m else "none"}
@@ -265,7 +265,7 @@ JOB: dict = {"running": False, "total": 0, "done": 0, "imported": 0, "errors": [
 
 
 async def import_one(item: dict) -> dict:
-    """item: kind, tier, folder, loose, id (tmdb/tvdb), monitor, search, rename."""
+    """item: kind, tier, folder, loose, id (movie: tmdb) / tvdb_id + tmdb_id (tv), monitor, search, rename."""
     kind, tier, folder = item["kind"], item["tier"], item["folder"]
     rename = bool(item.get("rename"))
     if kind == "movie":
@@ -288,7 +288,9 @@ async def import_one(item: dict) -> dict:
         db.log(f"Library import: {m['title']} ({res.get('quality') or 'no file'})")
         return m
     monitor = item.get("monitor", "all")
-    s = await library.add_series(int(item["id"]), tier, "all" if monitor == "existing" else monitor, folder=folder)
+    tvdb_id = item.get("tvdb_id") or (None if item.get("tmdb_id") else item.get("id"))
+    s = await library.add_series(int(tvdb_id) if tvdb_id else None, tier, "all" if monitor == "existing" else monitor,
+                                 folder=folder, tmdb_id=item.get("tmdb_id"))
     res = await rescan_series(s["id"], rename=rename)
     if monitor == "existing":
         db.ex("UPDATE episodes SET monitored = (file_path IS NOT NULL) WHERE series_id=?", (s["id"],))

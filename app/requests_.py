@@ -16,29 +16,27 @@ def ensure_schema() -> None:
     db.connect()
 
 
-async def _describe(kind: str, target_id: int, source: str | None, tmdb_tv: bool) -> tuple[int, dict]:
+async def _describe(kind: str, target_id: int, source: str | None) -> tuple[int, str | None, dict]:
     """Validate the target with the metadata provider and get a title/poster to show the admin.
     Returns the (possibly translated) target id and its description."""
     if kind == "movie":
         m = await metadata.movie_details(target_id)
-        return target_id, {"title": m["title"], "year": m.get("year"), "poster": m.get("poster")}
+        return target_id, None, {"title": m["title"], "year": m.get("year"), "poster": m.get("poster")}
     if kind == "tv":
-        if tmdb_tv:
-            tvdb = await metadata.tvdb_id_for_tmdb_tv(target_id)
-            if not tvdb:
-                raise ValueError("TheTVDB doesn't know this show yet, so it can't be requested.")
-            target_id = tvdb
-        s = await metadata.series_details(target_id)
-        return target_id, {"title": s["title"], "year": s.get("year"), "poster": s.get("poster")}
+        # source says which id target_id is: 'tmdb' or 'tvdb'. Prefer TMDB ids (always available).
+        s = await metadata.series_details(**({"tmdb_id": target_id} if source == "tmdb" else {"tvdb_id": target_id}))
+        info = {"title": s["title"], "year": s.get("year"), "poster": s.get("poster")}
+        return (s["tmdb_id"], "tmdb", info) if s.get("tmdb_id") else (s["tvdb_id"], "tvdb", info)
     c = await metadata.collection(source or "collection", target_id)
-    return target_id, {"title": c["name"], "year": None, "poster": c.get("poster")}
+    return target_id, source, {"title": c["name"], "year": None, "poster": c.get("poster")}
 
 
-def _in_library(kind: str, target_id: int) -> dict | None:
+def _in_library(kind: str, target_id: int, source: str | None = None) -> dict | None:
     if kind == "movie":
         return db.one("SELECT id FROM movies WHERE tmdb_id=?", (target_id,))
     if kind == "tv":
-        return db.one("SELECT id FROM series WHERE tvdb_id=?", (target_id,))
+        col = "tmdb_id" if source == "tmdb" else "tvdb_id"
+        return db.one(f"SELECT id FROM series WHERE {col}=?", (target_id,))
     return None
 
 
@@ -51,15 +49,18 @@ async def create(user: dict, body: dict) -> dict:
         raise ValueError("tier must be 'hd' or 'uhd'")
     if tier == "uhd" and not user["allow_uhd"]:
         raise PermissionError("Your account can't request 4K. Ask an admin to allow it.")
-    tmdb_tv = kind == "tv" and not body.get("tvdb_id") and bool(body.get("tmdb_id"))
-    raw_id = body.get("tvdb_id") if kind == "tv" and body.get("tvdb_id") else body.get("tmdb_id")
+    if kind == "tv":
+        source = "tmdb" if body.get("tmdb_id") else "tvdb"
+        raw_id = body.get("tmdb_id") or body.get("tvdb_id")
+    else:
+        raw_id = body.get("tmdb_id")
+        source = body.get("source") if kind == "collection" else None
+        if kind == "collection" and source not in ("collection", "keyword"):
+            source = "collection"
     if not raw_id:
         raise ValueError("Missing id")
-    source = body.get("source") if kind == "collection" else None
-    if kind == "collection" and source not in ("collection", "keyword"):
-        source = "collection"
-    target_id, info = await _describe(kind, int(raw_id), source, tmdb_tv)
-    if _in_library(kind, target_id):
+    target_id, source, info = await _describe(kind, int(raw_id), source)
+    if _in_library(kind, target_id, source) or (kind == "tv" and body.get("tvdb_id") and _in_library("tv", int(body["tvdb_id"]), "tvdb")):
         raise ValueError(f"{info['title']} is already in the library")
     dup = db.one("SELECT * FROM requests WHERE kind=? AND target_id=? AND IFNULL(source,'')=? AND status='pending'",
                  (kind, target_id, source or ""))
@@ -87,7 +88,10 @@ async def fulfill(req: dict) -> int | None:
         return m["id"]
     if req["kind"] == "tv":
         monitor = opts.get("monitor") if opts.get("monitor") in ("all", "future", "latest") else "all"
-        s = await library.add_series(req["target_id"], req["tier"], monitor)
+        if req["source"] == "tmdb":
+            s = await library.add_series(None, req["tier"], monitor, tmdb_id=req["target_id"])
+        else:  # TheTVDB id (also requests made before TMDB TV support)
+            s = await library.add_series(req["target_id"], req["tier"], monitor)
         if search:
             from . import search as search_mod
             asyncio.create_task(search_mod.search_series(s["id"]))

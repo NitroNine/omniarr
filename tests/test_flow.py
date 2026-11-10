@@ -95,7 +95,7 @@ def test_movie_end_to_end(env, monkeypatch):
 
 
 def test_series_end_to_end(env, monkeypatch):
-    async def details(_id):
+    async def details(tvdb_id=None, tmdb_id=None):
         return {"tvdb_id": 403245, "title": "The Bear", "year": 2022, "overview": "", "poster": None,
                 "imdb_id": "tt14452776", "tmdb_id": 136315, "runtime": 30, "status": "Continuing",
                 "series_type": "standard"}

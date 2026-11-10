@@ -492,14 +492,7 @@ class AddSeriesTmdb(BaseModel):
 
 @app.post("/api/series/from-tmdb")
 async def add_series_from_tmdb(body: AddSeriesTmdb):
-    """TMDB lists TV by its own id; Omniarr uses TheTVDB for TV, so translate first."""
-    tvdb_id = await metadata.tvdb_id_for_tmdb_tv(body.tmdb_id)
-    if not tvdb_id:
-        raise ValueError("TheTVDB doesn't know this show yet, so it can't be added.")
-    s = await add_series(AddSeries(tvdb_id=tvdb_id, tier=body.tier, monitor=body.monitor, search=body.search))
-    if not s.get("tmdb_id"):
-        db.update("series", s["id"], {"tmdb_id": body.tmdb_id})
-    return s
+    return await add_series(AddSeries(tmdb_id=body.tmdb_id, tier=body.tier, monitor=body.monitor, search=body.search))
 
 
 # ------------------------------------------------------------ collections --
@@ -625,14 +618,17 @@ async def search_movie(mid: int, interactive: bool = False):
 @app.get("/api/lookup/series")
 async def lookup_series(term: str):
     res = await metadata.search_series(term)
-    have = {r["tvdb_id"] for r in db.q("SELECT tvdb_id FROM series")}
+    rows = db.q("SELECT tvdb_id, tmdb_id FROM series")
+    have_tvdb = {r["tvdb_id"] for r in rows if r["tvdb_id"]}
+    have_tmdb = {r["tmdb_id"] for r in rows if r["tmdb_id"]}
     for r in res:
-        r["in_library"] = r["tvdb_id"] in have
+        r["in_library"] = (r.get("tvdb_id") in have_tvdb) or (r.get("tmdb_id") in have_tmdb)
     return res
 
 
 class AddSeries(BaseModel):
-    tvdb_id: int
+    tvdb_id: int | None = None
+    tmdb_id: int | None = None
     tier: str = "hd"
     monitor: str = "all"
     search: bool = True
@@ -640,7 +636,7 @@ class AddSeries(BaseModel):
 
 @app.post("/api/series")
 async def add_series(body: AddSeries):
-    s = await library.add_series(body.tvdb_id, body.tier, body.monitor)
+    s = await library.add_series(body.tvdb_id, body.tier, body.monitor, tmdb_id=body.tmdb_id)
     if body.search and body.monitor != "none":
         asyncio.create_task(_job(f"search-series-{s['id']}", lambda: search.search_series(s["id"])))
     return s

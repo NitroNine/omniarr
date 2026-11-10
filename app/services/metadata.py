@@ -256,9 +256,7 @@ def _lang3() -> str:
     return _LANG3.get(lang, lang if len(lang) == 3 else "eng")
 
 
-async def search_series(term: str) -> list[dict]:
-    if term.lower().startswith("tvdb:"):
-        return [await series_details(int(term[5:]))]
+async def _tvdb_search_series(term: str) -> list[dict]:
     data = await _tvdb("/search", query=term, type="series", limit=20)
     lang = _lang3()
     out = []
@@ -269,21 +267,20 @@ async def search_series(term: str) -> list[dict]:
             "tvdb_id": int(s.get("tvdb_id") or s["id"].split("-")[-1]), "title": title,
             "year": int(s["year"]) if str(s.get("year", "")).isdigit() else None,
             "overview": overview, "poster": s.get("image_url") or s.get("thumbnail"),
-            "status": s.get("status"), "network": s.get("network"),
+            "status": s.get("status"), "network": s.get("network"), "tmdb_id": None,
         })
     return out
 
 
-async def series_by_remote_id(remote_id: str) -> dict | None:
-    """Look a show up by IMDb (tt...) or TMDB id."""
+async def _tvdb_by_remote_id(remote_id: str) -> int | None:
     data = await _tvdb(f"/search/remoteid/{remote_id}")
     for hit in data.get("data") or []:
         if hit.get("series"):
-            return await series_details(int(hit["series"]["id"]))
+            return int(hit["series"]["id"])
     return None
 
 
-async def series_details(tvdb_id: int) -> dict:
+async def _tvdb_series_details(tvdb_id: int) -> dict:
     d = (await _tvdb(f"/series/{tvdb_id}/extended", meta="translations", short="true"))["data"]
     lang = _lang3()
     name, overview = d.get("name"), d.get("overview")
@@ -306,11 +303,11 @@ async def series_details(tvdb_id: int) -> dict:
         "tvdb_id": d["id"], "title": name, "year": int(d["year"]) if str(d.get("year", "")).isdigit() else None,
         "overview": overview, "poster": d.get("image"), "imdb_id": imdb, "tmdb_id": tmdb,
         "runtime": d.get("averageRuntime") or 0, "status": (d.get("status") or {}).get("name"),
-        "series_type": series_type,
+        "series_type": series_type, "source": "tvdb",
     }
 
 
-async def series_episodes(tvdb_id: int) -> list[dict]:
+async def _tvdb_series_episodes(tvdb_id: int) -> list[dict]:
     lang = _lang3()
     page, eps = 0, []
     while True:
@@ -330,3 +327,132 @@ async def series_episodes(tvdb_id: int) -> list[dict]:
             break
         page += 1
     return eps
+
+
+# ------------------------------------------------- TV: TMDB + dispatcher ----
+# TV metadata comes from TMDB by default (free key). If a TheTVDB key is set,
+# TheTVDB is used instead: its season/episode numbering matches release names
+# best (anime, some reordered shows). Every show keeps both ids when known.
+
+def tv_source() -> str:
+    pref = (db.setting("tv_metadata_source") or "auto").lower()
+    if pref == "tmdb":
+        return "tmdb"
+    if pref == "tvdb" or db.setting("tvdb_api_key"):
+        return "tvdb" if db.setting("tvdb_api_key") else "tmdb"
+    return "tmdb"
+
+
+def _tmdb_tv_summary(r: dict) -> dict:
+    return {"tmdb_id": r["id"], "tvdb_id": None, "title": r.get("name"), "year": _year(r.get("first_air_date")),
+            "overview": r.get("overview"), "poster": TMDB_IMG + r["poster_path"] if r.get("poster_path") else None,
+            "status": None}
+
+
+async def _tmdb_find(external_id: str, source: str) -> int | None:
+    d = await _tmdb(f"/find/{external_id}", external_source=source)
+    res = d.get("tv_results") or []
+    return res[0]["id"] if res else None
+
+
+async def _tmdb_series_details(tmdb_id: int) -> dict:
+    d = await _tmdb(f"/tv/{tmdb_id}", append_to_response="external_ids")
+    ext = d.get("external_ids") or {}
+    genres = [g.get("name", "").lower() for g in d.get("genres") or []]
+    runtimes = d.get("episode_run_time") or []
+    return {
+        "tmdb_id": d["id"], "tvdb_id": ext.get("tvdb_id") or None, "imdb_id": ext.get("imdb_id") or None,
+        "title": d.get("name"), "year": _year(d.get("first_air_date")), "overview": d.get("overview"),
+        "poster": TMDB_IMG + d["poster_path"] if d.get("poster_path") else None,
+        "runtime": runtimes[0] if runtimes else 0, "status": d.get("status"),
+        "series_type": "anime" if "animation" in genres and d.get("original_language") == "ja" else "standard",
+        "seasons": [s["season_number"] for s in d.get("seasons") or [] if s.get("season_number") is not None],
+        "source": "tmdb",
+    }
+
+
+async def _tmdb_series_episodes(tmdb_id: int, seasons: list[int] | None = None) -> list[dict]:
+    import asyncio
+    if seasons is None:
+        seasons = (await _tmdb_series_details(tmdb_id))["seasons"]
+    sem = asyncio.Semaphore(5)
+
+    async def one(n):
+        async with sem:
+            try:
+                return n, (await _tmdb(f"/tv/{tmdb_id}/season/{n}")).get("episodes", [])
+            except httpx.HTTPStatusError:
+                return n, []
+    eps, absolute = [], 0
+    for n, rows in sorted(await asyncio.gather(*(one(n) for n in seasons))):
+        for e in sorted(rows, key=lambda x: x.get("episode_number") or 0):
+            if e.get("episode_number") is None:
+                continue
+            if n > 0:
+                absolute += 1
+            eps.append({"tvdb_id": None, "season": n, "episode": e["episode_number"],
+                        "absolute": absolute if n > 0 else None, "title": e.get("name"),
+                        "air_date": e.get("air_date") or None, "overview": e.get("overview")})
+    return eps
+
+
+async def search_series(term: str) -> list[dict]:
+    t = term.strip().lower()
+    if t.startswith("tvdb:") and t[5:].isdigit():
+        return [await series_details(tvdb_id=int(t[5:]))]
+    if t.startswith("tmdb:") and t[5:].isdigit():
+        return [await series_details(tmdb_id=int(t[5:]))]
+    if tv_source() == "tvdb":
+        return await _tvdb_search_series(term)
+    year = None
+    parts = term.rsplit(" ", 1)
+    if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 4:
+        term, year = parts[0], parts[1]
+    data = await _tmdb("/search/tv", query=term, **({"first_air_date_year": year} if year else {}))
+    return [_tmdb_tv_summary(r) for r in data.get("results", [])[:20]]
+
+
+async def series_details(tvdb_id: int | None = None, tmdb_id: int | None = None) -> dict:
+    """Show details with both ids filled in where known."""
+    if tv_source() == "tvdb":
+        if not tvdb_id and tmdb_id:
+            tvdb_id = await tvdb_id_for_tmdb_tv(tmdb_id)
+        if tvdb_id:
+            d = await _tvdb_series_details(int(tvdb_id))
+            if not d.get("tmdb_id") and tmdb_id:
+                d["tmdb_id"] = tmdb_id
+            return d
+        # not on TheTVDB: fall through to TMDB
+    if not tmdb_id and tvdb_id:
+        tmdb_id = await _tmdb_find(str(tvdb_id), "tvdb_id")
+        if not tmdb_id:
+            raise MetadataError(f"TMDB doesn't know the show with TheTVDB id {tvdb_id}.")
+    if not tmdb_id:
+        raise MetadataError("No show id given")
+    d = await _tmdb_series_details(int(tmdb_id))
+    if not d["tvdb_id"] and tvdb_id:
+        d["tvdb_id"] = tvdb_id
+    return d
+
+
+async def series_episodes(series: dict | int) -> list[dict]:
+    """Episodes for a series row/details dict (an int is treated as a TheTVDB id)."""
+    if isinstance(series, int):
+        series = {"tvdb_id": series}
+    if tv_source() == "tvdb" and series.get("tvdb_id"):
+        return await _tvdb_series_episodes(int(series["tvdb_id"]))
+    tmdb_id = series.get("tmdb_id")
+    if not tmdb_id and series.get("tvdb_id"):
+        tmdb_id = await _tmdb_find(str(series["tvdb_id"]), "tvdb_id")
+    if not tmdb_id:
+        raise MetadataError("Can't load episodes: the show has no TMDB id")
+    return await _tmdb_series_episodes(int(tmdb_id), series.get("seasons"))
+
+
+async def series_by_remote_id(imdb_id: str) -> dict | None:
+    """Look a show up by its IMDb id (tt...)."""
+    if tv_source() == "tvdb":
+        tvdb = await _tvdb_by_remote_id(imdb_id)
+        return await series_details(tvdb_id=tvdb) if tvdb else None
+    tmdb = await _tmdb_find(imdb_id, "imdb_id")
+    return await series_details(tmdb_id=tmdb) if tmdb else None
