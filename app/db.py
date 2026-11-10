@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS movies (
   release_date TEXT, tier TEXT NOT NULL DEFAULT 'hd', monitored INTEGER DEFAULT 1,
   folder TEXT, file_path TEXT, file_quality TEXT, file_score INTEGER, file_size INTEGER,
   added TEXT DEFAULT CURRENT_TIMESTAMP, last_search TEXT, collection_id INTEGER, collection_name TEXT,
+  digital_release TEXT, physical_release TEXT, last_refresh TEXT,
   UNIQUE(tmdb_id, tier)
 );
 
@@ -155,6 +156,9 @@ def connect() -> sqlite3.Connection:
 MIGRATIONS = [
     ("movies", "collection_id", "INTEGER"),
     ("movies", "collection_name", "TEXT"),
+    ("movies", "digital_release", "TEXT"),
+    ("movies", "physical_release", "TEXT"),
+    ("movies", "last_refresh", "TEXT"),
 ]
 
 

@@ -81,14 +81,14 @@ function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 // ------------------------------------------------------------- router ---
-const routes = { requests: (sub) => renderRequests(sub), discover: renderDiscover, collections: renderCollections, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
+const routes = { title: renderTitle, requests: (sub) => renderRequests(sub), discover: renderDiscover, collections: renderCollections, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
 const ADMIN_PAGES = ["settings", "activity", "import"];
 async function route() {
-  let [, name = "movies", arg] = location.hash.split("/");
+  let [, name = "movies", arg, ...rest] = location.hash.split("/");
   if (!isAdmin() && ADMIN_PAGES.includes(name)) { location.hash = "#/movies"; return; }
-  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name || ((name === "movie" || name === "collections") && a.dataset.tab === "movies") || (name === "show" && a.dataset.tab === "series")));
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name || ((name === "movie" || name === "collections" || (name === "title" && arg === "movie")) && a.dataset.tab === "movies") || ((name === "show" || (name === "title" && arg === "tv")) && a.dataset.tab === "series")));
   view.innerHTML = '<p class="muted">Loading…</p>';
-  await guard(() => (routes[name] || renderMovies)(arg));
+  await guard(() => (routes[name] || renderMovies)(arg, ...rest));
 }
 window.addEventListener("hashchange", () => { if (ME) route(); });
 
@@ -101,6 +101,114 @@ async function checkBanner() {
   if (st && !st.trash_loaded) msgs.push('TRaSH Guides data not downloaded yet — <a href="#/settings">Settings → Profiles</a> → "Sync TRaSH Guides now".');
   if (s && !s.tmdb_api_key) msgs.push('Add your free TMDB API key in <a href="#/settings">Settings → Metadata</a> — it powers movies, TV and the Streaming tab.');
   $("#banner").innerHTML = msgs.join(" ");
+}
+
+// --------------------------------------------------------- title info ---
+const titleHref = (kind, tmdbId) => `#/title/${kind === "movie" ? "movie" : "tv"}/${tmdbId}`;
+function fmtDate(d) {
+  if (!d) return "";
+  const x = new Date(d.slice(0, 10) + "T12:00:00");
+  return isNaN(x) ? esc(d) : x.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+function money(n) { return n ? "$" + (n >= 1e9 ? (n / 1e9).toFixed(2) + "B" : n >= 1e6 ? Math.round(n / 1e6) + "M" : n.toLocaleString()) : ""; }
+const LANGS = new Intl.DisplayNames ? new Intl.DisplayNames([navigator.language || "en"], { type: "language" }) : null;
+function langName(c) { try { return c && LANGS ? LANGS.of(c) : c || ""; } catch { return c || ""; } }
+function people(list) { return (list || []).map((p) => esc(p.name)).join(", "); }
+// chips under the title: rating, age rating, runtime, genres, outside links
+function infoChips(i) {
+  return `<div class="chips">${i.rating ? `<span class="chip" title="${i.votes} votes on TMDB">★ ${i.rating}</span>` : ""}
+    ${(i.dates && i.dates.certification) || i.certification ? `<span class="chip">${esc((i.dates && i.dates.certification) || i.certification)}</span>` : ""}
+    ${i.runtime ? `<span class="chip">${i.runtime} min</span>` : ""}${i.status ? `<span class="chip">${esc(i.status)}</span>` : ""}
+    ${(i.genres || []).map((g) => `<span class="chip">${esc(g)}</span>`).join("")}
+    <a class="chip" target="_blank" rel="noopener" href="https://www.themoviedb.org/${i.kind}/${i.tmdb_id}">TMDB</a>
+    ${i.imdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.imdb.com/title/${esc(i.imdb_id)}">IMDb</a>` : ""}
+    ${i.trailer ? `<a class="chip trailer" target="_blank" rel="noopener" href="${esc(i.trailer)}">▶ Trailer</a>` : ""}</div>`;
+}
+// release dates (movies) or air dates (TV), facts, streaming, cast
+function infoBody(i) {
+  const today = new Date().toISOString().slice(0, 10);
+  const row = (label, d, country, note = "") => d ? `<tr><th>${label}</th><td>${fmtDate(d)}${d > today ? ' <span class="chip warn">upcoming</span>' : ""}
+    ${country && i.dates && country !== i.dates.region ? ` <span class="small muted">(${esc(country)})</span>` : ""}${note}</td></tr>` : "";
+  let dates;
+  if (i.kind === "movie") {
+    const d = i.dates || {};
+    dates = row("In cinemas", d.theatrical || d.premiere, d.theatrical ? d.theatrical_country : d.premiere_country)
+      + row("Digital", d.digital, d.digital_country) + row("Disc (Blu-ray / DVD)", d.physical, d.physical_country)
+      + row("On TV", d.tv, d.tv_country);
+    if (!dates) dates = '<tr><td class="muted">No release dates on TMDB yet.</td></tr>';
+    if (i.available_date) dates += `<tr><th>Searched from</th><td>${fmtDate(i.available_date)} <span class="small muted">${d.digital || d.physical ? "first home release" : "estimate: 90 days after cinemas"}</span></td></tr>`;
+  } else {
+    const ne = i.next_episode;
+    dates = row("First aired", i.first_air) + row(i.status === "Ended" || i.status === "Canceled" ? "Last aired" : "Latest episode", i.last_air)
+      + (ne && ne.air_date ? `<tr><th>Next episode</th><td>${fmtDate(ne.air_date)} <span class="small muted">S${String(ne.season).padStart(2, "0")}E${String(ne.episode).padStart(2, "0")}${ne.name ? " · " + esc(ne.name) : ""}</span></td></tr>` : "")
+      + (i.number_of_seasons ? `<tr><th>Seasons</th><td>${i.number_of_seasons} <span class="small muted">(${i.number_of_episodes} episodes)</span></td></tr>` : "");
+  }
+  const facts = (i.kind === "movie" ? [
+    ["Director", people(i.directors)], ["Writers", (i.writers || []).map((w) => `${esc(w.name)} <span class="muted small">${esc(w.role || "")}</span>`).join(", ")],
+    ["Studio", (i.studios || []).map(esc).join(", ")], ["Language", esc(langName(i.language))],
+    ["Original title", i.original_title && i.original_title !== i.title ? esc(i.original_title) : ""],
+    ["Budget", money(i.budget)], ["Box office", money(i.revenue)],
+    ["Collection", i.collection ? `<a href="javascript:void(0)" onclick="openCollection('collection', ${i.collection.id})">${esc(i.collection.name)} →</a>` : ""],
+  ] : [
+    ["Created by", people(i.creators)], ["Network", (i.networks || []).map(esc).join(", ")], ["Language", esc(langName(i.language))],
+    ["Original title", i.original_title && i.original_title !== i.title ? esc(i.original_title) : ""],
+  ]).filter((f) => f[1]);
+  const stream = (i.streaming || []).length ? `<div class="panel"><h3>Streaming on</h3><div class="stream-logos">${i.streaming.map((s) =>
+    `<a href="#/discover/${s.id}" title="${esc(s.name)}">${s.logo ? `<img src="${esc(s.logo)}" alt="${esc(s.name)}">` : esc(s.name)}</a>`).join("")}</div></div>` : "";
+  const cast = (i.cast || []).length ? `<h3>Cast</h3><div class="cast-row">${i.cast.map((c) => `<a class="person" target="_blank" rel="noopener" href="https://www.themoviedb.org/person/${c.id}">
+    ${c.photo ? `<img loading="lazy" src="${esc(c.photo)}" alt="">` : `<div class="nophoto">${esc((c.name || "?")[0])}</div>`}
+    <b>${esc(c.name)}</b><span class="small muted">${esc(c.role || "")}${c.episodes ? ` · ${c.episodes} ep` : ""}</span></a>`).join("")}</div>` : "";
+  return `<div class="info-grid"><div class="panel"><h3>${i.kind === "movie" ? "Release dates" : "Air dates"}${i.dates && i.dates.region ? ` <span class="small muted">${esc(i.dates.region)}</span>` : ""}</h3><table class="kv">${dates}</table></div>
+    ${facts.length ? `<div class="panel"><h3>Details</h3><table class="kv">${facts.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("")}</table></div>` : ""}
+    ${stream}</div>${cast}`;
+}
+function heroStyle(i) { return i.backdrop ? ` style="--backdrop:url('${esc(i.backdrop)}')"` : ""; }
+
+// a title page for any movie or show, in the library or not
+async function renderTitle(kind, id) {
+  kind = kind === "tv" ? "tv" : "movie";
+  const i = await api(`/info/${kind}/${+id}`);
+  const page = kind === "movie" ? "movie" : "show";
+  const have = i.library.map((v) => v.tier);
+  const missing = ["hd", "uhd"].filter((t) => !have.includes(t) && (t === "hd" || canUhd()));
+  const requested = (i.requested || []).length;
+  view.innerHTML = `<div class="hero"${heroStyle(i)}><div class="detail">${i.poster ? `<img src="${esc(i.poster)}" alt="">` : ""}<div class="info">
+    <h2>${esc(i.title)} <span class="muted">(${i.year || "?"})</span></h2>${i.tagline ? `<p class="tagline">${esc(i.tagline)}</p>` : ""}
+    ${infoChips(i)}<p>${esc(i.overview)}</p>
+    ${have.length ? `<div class="chips versions"><span class="small muted">In your library:</span>${i.library.map((v) => `<a class="chip ${v.tier}" href="#/${page}/${v.id}">${TIER_LABEL[v.tier]} → open</a>`).join("")}</div>` : ""}
+    ${requested ? `<p><span class="chip warn">Requested: ${i.requested.map((x) => TIER_LABEL[x]).join(", ")} — waiting for approval</span></p>` : ""}
+    ${missing.length && !requested ? `<div class="toolbar add-bar">
+      <select id="tt">${tierOptions(true, have)}</select>
+      ${kind === "tv" ? `<select id="tm">${have.length ? '<option value="same">Same episodes as the other version</option>' : ""}<option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option>${isAdmin() ? '<option value="none">None</option>' : ""}</select>` : ""}
+      <label class="small"><input type="checkbox" id="ts" checked> Search now</label>
+      <button class="primary" id="tadd">${addLabel()}${have.length ? " other version" : ""}</button></div>` : ""}
+  </div></div></div>${infoBody(i)}`;
+  if ($("#tadd")) $("#tadd").onclick = () => guard(async () => {
+    $("#tadd").disabled = true;
+    const tier = $("#tt").value, search = $("#ts").checked;
+    const res = kind === "movie"
+      ? await addOrRequest("movie", { tmdb_id: i.tmdb_id, tier, search })
+      : await addOrRequest("tv", { tmdb_id: i.tmdb_id, tier, monitor: $("#tm").value, search });
+    if (isAdmin()) toast(`Added ${res.title}`);
+    if (res.id) location.hash = `#/${page}/${res.id}`; else route();
+  }).finally(() => { if ($("#tadd")) $("#tadd").disabled = false; });
+}
+// library pages: TMDB info underneath (loaded after the page, so a slow TMDB never blocks it)
+async function libraryInfo(kind, tmdbId) {
+  const box = $("#tinfo");
+  if (!box || !tmdbId) return;
+  try {
+    const i = await api(`/info/${kind}/${tmdbId}`);
+    if (!box.isConnected) return;
+    $("#tchips").innerHTML = infoChips(i);
+    if (i.tagline) $("#ttag").innerHTML = `<p class="tagline">${esc(i.tagline)}</p>`;
+    if (i.backdrop) { $(".hero").style.setProperty("--backdrop", `url('${i.backdrop.replace(/'/g, "%27")}')`); $(".hero").classList.add("has-bd"); }
+    box.innerHTML = infoBody(i);
+    if (kind === "movie" && $("#avail") && i.available_date) {
+      const today = new Date().toISOString().slice(0, 10);
+      $("#avail").innerHTML = i.available_date > today ? ` <span class="chip warn">Searching from ${fmtDate(i.available_date)}</span>` : "";
+    }
+  } catch (e) { box.innerHTML = `<p class="small muted">More details unavailable: ${esc(e.message)}</p>`; }
 }
 
 // ------------------------------------------------------------- movies ---
@@ -127,23 +235,24 @@ async function renderMovie(id) {
   const m = await api("/movies/" + id);
   window._item = m;
   const multi = m.versions.length > 1;
-  view.innerHTML = `<div class="detail">${m.poster ? `<img src="${esc(m.poster)}" alt="">` : ""}<div class="info">
-    <h2>${esc(m.title)} <span class="muted">(${m.year || "?"})</span></h2>
-    <div class="chips">${m.runtime ? `<span class="chip">${m.runtime} min</span>` : ""}
+  view.innerHTML = `<div class="hero"><div class="detail">${m.poster ? `<img src="${esc(m.poster)}" alt="">` : ""}<div class="info">
+    <h2>${esc(m.title)} <span class="muted">(${m.year || "?"})</span></h2><div id="ttag"></div>
+    <div class="chips" id="tchips">${m.runtime ? `<span class="chip">${m.runtime} min</span>` : ""}
       <a class="chip" target="_blank" rel="noopener" href="https://www.themoviedb.org/movie/${m.tmdb_id}">TMDB</a>
       ${m.imdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.imdb.com/title/${esc(m.imdb_id)}">IMDb</a>` : ""}
       ${m.collection_id ? `<a class="chip" href="javascript:void(0)" onclick="openCollection('collection', ${m.collection_id})">Part of ${esc(m.collection_name)} →</a>` : ""}</div>
     <p>${esc(m.overview)}</p>
     ${versionBar("movie", m)}
     ${isAdmin() ? `<p class="small muted">Folder: <code>${esc(m.path)}</code></p>` : ""}
-    <p class="small"><b>${TIER_LABEL[m.tier]} version:</b> ${m.file_path ? `${isAdmin() ? `File: <code>${esc(m.file_path)}</code> ` : "Downloaded "}<span class="chip ok">${esc(m.file_quality)}</span> <span class="chip">score ${m.file_score}</span> ${size(m.file_size)}` : '<span class="chip bad">Not downloaded yet</span>'}</p>
+    <p class="small"><b>${TIER_LABEL[m.tier]} version:</b> ${m.file_path ? `${isAdmin() ? `File: <code>${esc(m.file_path)}</code> ` : "Downloaded "}<span class="chip ok">${esc(m.file_quality)}</span> <span class="chip">score ${m.file_score}</span> ${size(m.file_size)}` : '<span class="chip bad">Not downloaded yet</span><span id="avail"></span>'}</p>
     <div class="toolbar admin-only">
       <button class="primary" id="as">Automatic search</button><button id="is">Interactive search</button>
       ${multi ? "" : '<select id="tier" title="Move to the other library"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>'}
       <label><input type="checkbox" id="mon" ${m.monitored ? "checked" : ""}> Monitored</label>
       <button id="rs">Rescan folder</button>
       <button class="danger" id="del">${multi ? `Remove ${TIER_LABEL[m.tier]} version` : "Delete"}</button></div>
-    <div class="admin-only"><h3>History</h3>${historyTable(m.history)}</div></div></div>`;
+    </div></div></div><div id="tinfo"></div>
+    <div class="admin-only"><h3>History</h3>${historyTable(m.history)}</div>`;
   if ($("#tier")) {
     $("#tier").value = m.tier;
     $("#tier").onchange = () => guard(async () => { await api("/movies/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
@@ -153,6 +262,7 @@ async function renderMovie(id) {
   $("#is").onclick = () => interactive("movie", id, `/movies/${id}/search?interactive=true`);
   $("#rs").onclick = () => rescan(`/movies/${id}/rescan`);
   $("#del").onclick = () => guard(() => deleteVersion("movie", m));
+  libraryInfo("movie", m.tmdb_id);
 }
 
 function historyTable(rows) {
@@ -208,9 +318,9 @@ async function renderShow(id) {
   const seasons = {};
   s.episodes.forEach((e) => (seasons[e.season] = seasons[e.season] || []).push(e));
   const today = new Date().toISOString().slice(0, 10);
-  view.innerHTML = `<div class="detail">${s.poster ? `<img src="${esc(s.poster)}" alt="">` : ""}<div class="info">
-    <h2>${esc(s.title)} <span class="muted">(${s.year || "?"})</span></h2>
-    <div class="chips">${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}<span class="chip">${esc(s.series_type)}</span>
+  view.innerHTML = `<div class="hero"><div class="detail">${s.poster ? `<img src="${esc(s.poster)}" alt="">` : ""}<div class="info">
+    <h2>${esc(s.title)} <span class="muted">(${s.year || "?"})</span></h2><div id="ttag"></div>
+    <div class="chips" id="tchips">${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}<span class="chip">${esc(s.series_type)}</span>
       ${s.tmdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.themoviedb.org/tv/${s.tmdb_id}">TMDB</a>` : ""}
       ${s.tvdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://thetvdb.com/dereferrer/series/${s.tvdb_id}">TheTVDB</a>` : ""}</div>
     <p>${esc(s.overview)}</p>${versionBar("tv", s)}${isAdmin() ? `<p class="small muted">Folder: <code>${esc(s.path)}</code></p>` : ""}
@@ -220,7 +330,7 @@ async function renderShow(id) {
       <select id="stype"><option value="standard">Standard</option><option value="daily">Daily</option><option value="anime">Anime</option></select>
       <label><input type="checkbox" id="mon" ${s.monitored ? "checked" : ""}> Monitored</label>
       <button id="rs">Rescan folder</button>
-      <button class="danger" id="del">${multi ? `Remove ${TIER_LABEL[s.tier]} version` : "Delete"}</button></div></div></div>
+      <button class="danger" id="del">${multi ? `Remove ${TIER_LABEL[s.tier]} version` : "Delete"}</button></div></div></div></div>
     ${Object.keys(seasons).sort((a, b) => b - a).map((sn) => {
       const eps = seasons[sn]; const have = eps.filter((e) => e.file_path).length;
       return `<details class="season" ${sn == Math.max(...Object.keys(seasons)) ? "open" : ""}><summary>${sn == 0 ? "Specials" : "Season " + sn} <span class="muted small">${have}/${eps.length}</span>
@@ -244,6 +354,8 @@ async function renderShow(id) {
   $("#rs").onclick = () => rescan(`/series/${id}/rescan`);
   $("#rf").onclick = () => guard(async () => { await api(`/series/${id}/refresh`, { method: "POST" }); toast("Refreshed"); route(); });
   $("#del").onclick = () => guard(() => deleteVersion("tv", s));
+  view.insertAdjacentHTML("beforeend", '<div id="tinfo"></div>');
+  libraryInfo("tv", s.tmdb_id);
 }
 async function rescan(path) {
   const rename = confirm("Also rename the files to your TRaSH naming scheme?\n\nOK = rescan and rename, Cancel = rescan only");
@@ -276,8 +388,9 @@ async function renderAdd() {
         <div class="add-ctrls"><button class="primary" onclick="openCollection('${r.source}', ${r.id})">View &amp; add</button></div></div>`).join("") || '<p class="muted" style="padding:12px">No collections found. Tip: universes like the MCU are TMDB keywords, so try "marvel cinematic universe".</p>';
       return;
     }
-    $("#results").innerHTML = res.map((r, i) => `<div class="result-row">${r.poster ? `<img src="${esc(r.poster)}" alt="">` : ""}
-      <div class="grow"><b>${esc(r.title)}</b> <span class="muted">${r.year || ""}</span>${r.status ? ` <span class="chip">${esc(r.status)}</span>` : ""}<p>${esc(r.overview)}</p>
+    const href = (r) => (r.tmdb_id ? titleHref(kind === "movie" ? "movie" : "tv", r.tmdb_id) : null);
+    $("#results").innerHTML = res.map((r, i) => `<div class="result-row">${r.poster ? (href(r) ? `<a href="${href(r)}"><img src="${esc(r.poster)}" alt=""></a>` : `<img src="${esc(r.poster)}" alt="">`) : ""}
+      <div class="grow">${href(r) ? `<a class="title-link" href="${href(r)}"><b>${esc(r.title)}</b></a>` : `<b>${esc(r.title)}</b>`} <span class="muted">${r.year || ""}</span>${r.status ? ` <span class="chip">${esc(r.status)}</span>` : ""}<p>${esc(r.overview)}</p>
         ${r.collection ? `<button class="small" onclick="openCollection('collection', ${r.collection.id})">Part of ${esc(r.collection.name)} — add whole collection…</button>` : ""}</div>
       <div class="add-ctrls">${r.in_library || (!canUhd() && (r.library_tiers || []).includes("hd")) ? '<span class="chip ok">In library</span>' : `
         ${(r.library_tiers || []).length ? `<span class="chip ok">In library: ${r.library_tiers.map((x) => TIER_LABEL[x]).join(", ")}</span>` : ""}
@@ -356,7 +469,7 @@ async function renderProvider(pid) {
     const d = await api(`/providers/${pid}/${disc.kind}?page=${disc.page}&sort=${disc.sort}&originals=${disc.kind === "tv" && disc.originals}`);
     window._disc = reset ? d.results : [...(window._disc || []), ...d.results];
     $("#dcount").textContent = `${d.total_results.toLocaleString()} ${disc.kind === "movie" ? "movies" : "shows"}`;
-    $("#dg").innerHTML = window._disc.map((r, i) => `<div class="card" ${r.library_id ? `onclick="location.hash='#/${disc.kind === "movie" ? "movie" : "show"}/${r.library_id}'"` : ""} title="${esc(r.overview)}">${poster(r.poster, r.title)}
+    $("#dg").innerHTML = window._disc.map((r, i) => `<div class="card" onclick="location.hash='${titleHref(disc.kind, r.tmdb_id)}'" title="${esc(r.overview)}">${poster(r.poster, r.title)}
       <div class="meta"><div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
       <div class="chips"><span class="chip">${r.year || "TBA"}</span>${r.rating ? `<span class="chip">★ ${r.rating.toFixed(1)}</span>` : ""}</div>
       ${r.library_id ? '<span class="chip ok">In library</span>' : `<button class="small primary add-btn" onclick="event.stopPropagation();discAdd(${i}, this)">+ ${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted">Nothing found.</p>';
@@ -402,7 +515,7 @@ async function openCollection(source, id) {
     <div class="table-wrap"><table><tr><th></th><th></th><th>Movie</th><th>Released</th><th></th></tr>
     ${c.parts.map((p) => `<tr><td><input type="checkbox" class="cpick" value="${p.tmdb_id}" ${p.in_library ? "checked disabled" : excluded.has(p.tmdb_id) ? "" : "checked"}></td>
       <td>${p.poster ? `<img src="${esc(p.poster)}" alt="" style="width:40px;border-radius:3px">` : ""}</td>
-      <td><b>${esc(p.title)}</b> <span class="muted">${p.year || ""}</span></td>
+      <td><a class="title-link" href="${titleHref("movie", p.tmdb_id)}" onclick="closeModal()"><b>${esc(p.title)}</b></a> <span class="muted">${p.year || ""}</span></td>
       <td class="small">${esc(p.release_date || "TBA")}${!p.release_date || p.release_date > today ? ' <span class="chip warn">upcoming</span>' : ""}</td>
       <td>${p.in_library ? `${(p.tiers || [p.tier]).map(tierChip).join("")} <span class="chip ${p.has_file ? "ok" : ""}">${p.has_file ? "Downloaded" : "In library"}</span>` : ""}</td></tr>`).join("")}</table></div>
     <p class="small muted">Unticked movies are remembered and won't be added automatically later. Upcoming movies are added now and searched for once they're released.</p>`;

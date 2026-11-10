@@ -61,6 +61,7 @@ async def scheduler():
             ("trash", 3600, _trash_auto),
             ("series_refresh", 3600, _refresh_all_series),
             ("collections", 3600, collections_.refresh_due),
+            ("movie_refresh", 3600, library.refresh_due_movies),
             ("rss", int(s["rss_interval_minutes"]) * 60, search.rss_sync),
             ("missing", int(s["search_interval_minutes"]) * 60, search.missing_search),
         ]
@@ -493,6 +494,32 @@ async def lookup_movie(term: str):
             r["collection"] = None
     await asyncio.gather(*(coll(r) for r in res[:10]))
     return res
+
+
+# ------------------------------------------------------------ title pages --
+@app.get("/api/info/{kind}/{tmdb_id}")
+async def title_info(kind: str, tmdb_id: int, request: Request):
+    """TMDB details for a title page (cast, release dates, trailer, …) plus its library state."""
+    if kind not in ("movie", "tv"):
+        raise HTTPException(400)
+    info = dict(await (metadata.movie_info(tmdb_id) if kind == "movie" else metadata.tv_info(tmdb_id)))
+    if kind == "movie":
+        rows = db.q("SELECT id, tier FROM movies WHERE tmdb_id=? ORDER BY tier", (tmdb_id,))
+        d = info["dates"]
+        info["available_date"] = library.available_date({"release_date": d.get("theatrical") or d.get("premiere"),
+                                                         "digital_release": d.get("digital"),
+                                                         "physical_release": d.get("physical")})
+        match = ("target_id=?", (tmdb_id,))
+    else:
+        tvdb = info.get("tvdb_id") or -1
+        rows = db.q("SELECT id, tier FROM series WHERE tmdb_id=? OR tvdb_id=? ORDER BY tier", (tmdb_id, tvdb))
+        match = ("((source='tmdb' AND target_id=?) OR (source='tvdb' AND target_id=?))", (tmdb_id, tvdb))
+    info["library"] = rows
+    user = _user(request)
+    info["requested"] = [r["tier"] for r in db.q(
+        f"SELECT tier FROM requests WHERE kind=? AND status='pending' AND {match[0]} AND (? OR user_id=?)",
+        (kind, *match[1], user["role"] == "admin", user["id"]))]
+    return info
 
 
 # --------------------------------------------- discover (streaming services) --

@@ -65,8 +65,9 @@ async def movie_by_imdb(imdb_id: str) -> dict | None:
 
 
 async def movie_details(tmdb_id: int) -> dict:
-    m = await _tmdb(f"/movie/{tmdb_id}", append_to_response="external_ids")
+    m = await _tmdb(f"/movie/{tmdb_id}", append_to_response="external_ids,release_dates")
     coll = m.get("belongs_to_collection") or {}
+    dates = release_dates(m.get("release_dates"))
     return {
         "collection_id": coll.get("id"), "collection_name": coll.get("name"),
         "tmdb_id": m["id"], "imdb_id": m.get("imdb_id") or m.get("external_ids", {}).get("imdb_id"),
@@ -74,7 +75,134 @@ async def movie_details(tmdb_id: int) -> dict:
         "year": _year(m.get("release_date")), "overview": m.get("overview"),
         "poster": TMDB_IMG + m["poster_path"] if m.get("poster_path") else None,
         "runtime": m.get("runtime") or 0, "release_date": m.get("release_date"),
+        "digital_release": dates["digital"], "physical_release": dates["physical"],
     }
+
+
+# TMDB release types: 1 premiere, 2 limited theatrical, 3 theatrical, 4 digital, 5 physical (disc), 6 TV
+_RELEASE_TYPES = {"premiere": (1,), "theatrical": (3, 2), "digital": (4,), "physical": (5,), "tv": (6,)}
+
+
+def release_dates(data: dict | None, region: str | None = None) -> dict:
+    """Earliest date of each release type for the region, else the US, else any country.
+    Also returns which country each date came from and the age rating (certification)."""
+    by_country = {r["iso_3166_1"]: r.get("release_dates") or [] for r in (data or {}).get("results", [])}
+    region = (region or _region()).upper()
+    order = [region] + [c for c in ("US",) if c != region]
+    out: dict = {"region": region, "certification": None}
+    for name, types in _RELEASE_TYPES.items():
+        out[name], out[name + "_country"] = None, None
+        for country in order + sorted(set(by_country) - set(order)):
+            ds = sorted(d["release_date"][:10] for d in by_country.get(country, [])
+                        if d.get("type") in types and d.get("release_date"))
+            if ds:
+                out[name], out[name + "_country"] = ds[0], country
+                break
+    for country in order:
+        cert = next((d.get("certification") for d in by_country.get(country, []) if d.get("certification")), None)
+        if cert:
+            out["certification"] = cert
+            break
+    return out
+
+
+def _person(p: dict, role: str | None = None) -> dict:
+    return {"id": p.get("id"), "name": p.get("name"), "role": role,
+            "photo": TMDB_FACE + p["profile_path"] if p.get("profile_path") else None}
+
+
+def _trailer(videos: dict | None) -> str | None:
+    vids = [v for v in (videos or {}).get("results", []) if v.get("site") == "YouTube" and v.get("key")]
+    vids.sort(key=lambda v: (v.get("type") != "Trailer", not v.get("official"), v.get("published_at") or ""))
+    return f"https://www.youtube.com/watch?v={vids[0]['key']}" if vids else None
+
+
+def _streaming(wp: dict | None) -> list[dict]:
+    reg = ((wp or {}).get("results") or {}).get(_region()) or {}
+    return [{"id": p["provider_id"], "name": p["provider_name"],
+             "logo": TMDB_LOGO + p["logo_path"] if p.get("logo_path") else None}
+            for p in reg.get("flatrate") or [] if not has_ads(p.get("provider_name", ""))
+            or not db.setting("streaming_hide_ads")]
+
+
+_info_cache: dict = {}
+
+
+async def _cached(key: str, fn):
+    hit = _info_cache.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    val = await fn()
+    _info_cache[key] = (time.time() + 6 * 3600, val)
+    if len(_info_cache) > 500:
+        for k in sorted(_info_cache, key=lambda k: _info_cache[k][0])[:100]:
+            _info_cache.pop(k, None)
+    return val
+
+
+async def movie_info(tmdb_id: int) -> dict:
+    """Everything for a movie's title page: facts, cast and crew, release dates, trailer, streaming."""
+    async def fetch():
+        m = await _tmdb(f"/movie/{tmdb_id}",
+                        append_to_response="credits,release_dates,videos,external_ids,watch/providers")
+        crew = (m.get("credits") or {}).get("crew") or []
+        coll = m.get("belongs_to_collection") or {}
+        return {
+            "kind": "movie", "tmdb_id": m["id"], "imdb_id": m.get("imdb_id"), "title": m.get("title"),
+            "original_title": m.get("original_title"), "tagline": m.get("tagline") or None,
+            "overview": m.get("overview"), "year": _year(m.get("release_date")),
+            "poster": TMDB_POSTER + m["poster_path"] if m.get("poster_path") else None,
+            "backdrop": TMDB_BACKDROP + m["backdrop_path"] if m.get("backdrop_path") else None,
+            "genres": [g["name"] for g in m.get("genres") or []], "runtime": m.get("runtime") or None,
+            "rating": round(m["vote_average"], 1) if m.get("vote_count") else None, "votes": m.get("vote_count") or 0,
+            "status": m.get("status"), "language": m.get("original_language"),
+            "budget": m.get("budget") or None, "revenue": m.get("revenue") or None,
+            "studios": [c["name"] for c in m.get("production_companies") or []][:4],
+            "directors": [_person(c) for c in crew if c.get("job") == "Director"],
+            "writers": [_person(c, c.get("job")) for c in crew if c.get("department") == "Writing"][:4],
+            "cast": [_person(c, c.get("character")) for c in ((m.get("credits") or {}).get("cast") or [])[:24]],
+            "dates": release_dates(m.get("release_dates")),
+            "trailer": _trailer(m.get("videos")), "streaming": _streaming(m.get("watch/providers")),
+            "collection": {"id": coll["id"], "name": coll.get("name")} if coll.get("id") else None,
+        }
+    return await _cached(f"movie:{tmdb_id}:{_region()}", fetch)
+
+
+async def tv_info(tmdb_id: int) -> dict:
+    """Everything for a show's title page: facts, creators, cast, seasons, trailer, streaming."""
+    async def fetch():
+        d = await _tmdb(f"/tv/{tmdb_id}",
+                        append_to_response="aggregate_credits,content_ratings,videos,external_ids,watch/providers")
+        ratings = {r["iso_3166_1"]: r.get("rating") for r in (d.get("content_ratings") or {}).get("results", [])}
+        cast = []
+        for c in ((d.get("aggregate_credits") or {}).get("cast") or [])[:24]:
+            roles = c.get("roles") or []
+            cast.append({**_person(c, roles[0].get("character") if roles else None),
+                         "episodes": c.get("total_episode_count")})
+        nxt = d.get("next_episode_to_air") or {}
+        ext = d.get("external_ids") or {}
+        return {
+            "kind": "tv", "tmdb_id": d["id"], "tvdb_id": ext.get("tvdb_id"), "imdb_id": ext.get("imdb_id"),
+            "title": d.get("name"), "original_title": d.get("original_name"), "tagline": d.get("tagline") or None,
+            "overview": d.get("overview"), "year": _year(d.get("first_air_date")),
+            "poster": TMDB_POSTER + d["poster_path"] if d.get("poster_path") else None,
+            "backdrop": TMDB_BACKDROP + d["backdrop_path"] if d.get("backdrop_path") else None,
+            "genres": [g["name"] for g in d.get("genres") or []],
+            "runtime": (d.get("episode_run_time") or [None])[0],
+            "rating": round(d["vote_average"], 1) if d.get("vote_count") else None, "votes": d.get("vote_count") or 0,
+            "status": d.get("status"), "language": d.get("original_language"),
+            "certification": ratings.get(_region()) or ratings.get("US"),
+            "networks": [n["name"] for n in d.get("networks") or []],
+            "creators": [_person(c) for c in d.get("created_by") or []],
+            "first_air": d.get("first_air_date") or None, "last_air": d.get("last_air_date") or None,
+            "next_episode": {"season": nxt.get("season_number"), "episode": nxt.get("episode_number"),
+                             "name": nxt.get("name"), "air_date": nxt.get("air_date")} if nxt else None,
+            "seasons": [{"season": s.get("season_number"), "name": s.get("name"), "episodes": s.get("episode_count"),
+                         "air_date": s.get("air_date")} for s in d.get("seasons") or []],
+            "number_of_seasons": d.get("number_of_seasons"), "number_of_episodes": d.get("number_of_episodes"),
+            "cast": cast, "trailer": _trailer(d.get("videos")), "streaming": _streaming(d.get("watch/providers")),
+        }
+    return await _cached(f"tv:{tmdb_id}:{_region()}", fetch)
 
 
 def _movie_summary(m: dict) -> dict:
@@ -124,6 +252,9 @@ async def collection(source: str, cid: int) -> dict:
 
 # ------------------------------------------------- streaming services ----
 TMDB_LOGO = "https://image.tmdb.org/t/p/w154"
+TMDB_POSTER = "https://image.tmdb.org/t/p/w500"
+TMDB_BACKDROP = "https://image.tmdb.org/t/p/w1280"
+TMDB_FACE = "https://image.tmdb.org/t/p/w185"
 # TMDB "network" ids, used for the "originals only" TV filter
 ORIGINALS_NETWORK = {
     "netflix": 213, "apple tv": 2552, "amazon prime video": 1024, "prime video": 1024, "disney": 2739,

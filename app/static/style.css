@@ -139,3 +139,30 @@ body.logged-out nav, body.logged-out .usermenu { display: none; }
 .folder-list .folder.up { color: var(--muted); }
 .ficon { width: 16px; height: 12px; border-radius: 2px; background: var(--accent); position: relative; flex: none; opacity: .8; }
 .ficon::before { content: ""; position: absolute; left: 0; top: -3px; width: 7px; height: 4px; border-radius: 2px 2px 0 0; background: var(--accent); }
+
+/* title pages */
+.hero { position: relative; margin: -4px 0 16px; padding: 16px; border-radius: 10px; overflow: hidden; }
+.hero[style*="--backdrop"]::before, .hero.has-bd::before { content: ""; position: absolute; inset: 0; background: var(--backdrop) center 20% / cover no-repeat; opacity: .18; pointer-events: none; }
+.hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, var(--bg) 0, transparent 70%); opacity: .5; pointer-events: none; }
+.hero > * { position: relative; z-index: 1; }
+.tagline { font-style: italic; color: var(--muted); margin: -4px 0 8px; }
+.chip.trailer { background: #c4302b; color: #fff; text-decoration: none; }
+a.chip { text-decoration: none; }
+.info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.info-grid .panel { margin-bottom: 0; }
+.info-grid h3, .cast-row + h3 { margin-top: 0; }
+table.kv { background: none; }
+table.kv th { width: 40%; padding-left: 0; font-size: 13px; }
+table.kv td { font-size: 13px; }
+table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: 0; }
+.stream-logos { display: flex; gap: 8px; flex-wrap: wrap; }
+.stream-logos img { width: 44px; height: 44px; border-radius: 8px; display: block; }
+.cast-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 16px; scroll-snap-type: x proximity; }
+.person { flex: 0 0 110px; display: flex; flex-direction: column; gap: 2px; color: inherit; text-decoration: none; scroll-snap-align: start; }
+.person img, .person .nophoto { width: 110px; height: 150px; object-fit: cover; border-radius: 8px; background: var(--chip); }
+.person .nophoto { display: flex; align-items: center; justify-content: center; font-size: 36px; color: var(--muted); }
+.person b { font-size: 13px; line-height: 1.2; }
+.title-link { color: inherit; text-decoration: none; }
+.title-link:hover { text-decoration: underline; }
+.add-bar { margin-top: 10px; }
+@media (max-width: 600px) { .detail img { width: 120px; } .hero { padding: 10px; } }

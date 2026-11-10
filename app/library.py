@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from datetime import date
+from datetime import date, timedelta
 
 from . import db, naming, trash
 from .services import metadata
@@ -121,19 +121,42 @@ async def refresh_movie(movie_id: int) -> None:
     if not m:
         return
     d = await metadata.movie_details(m["tmdb_id"])
-    db.update("movies", movie_id, {k: d[k] for k in ("imdb_id", "title", "original_title", "year", "overview",
-                                                       "poster", "runtime", "release_date", "collection_id", "collection_name")})
+    upd = {k: d[k] for k in ("imdb_id", "title", "original_title", "year", "overview", "poster", "runtime",
+                             "release_date", "collection_id", "collection_name", "digital_release", "physical_release")}
+    for v in versions("movie", m):  # both versions share the title's metadata
+        db.update("movies", v["id"], {**upd, "last_refresh": db.one("SELECT datetime('now') t")["t"]})
+
+
+async def refresh_due_movies(limit: int = 40) -> None:
+    """Keep release dates current for movies still waiting for a file (digital / disc dates get announced late)."""
+    rows = db.q("SELECT MIN(id) id FROM movies WHERE file_path IS NULL AND monitored=1 AND "
+                "(last_refresh IS NULL OR last_refresh < datetime('now','-1 day')) GROUP BY tmdb_id LIMIT ?", (limit,))
+    for r in rows:
+        try:
+            await refresh_movie(r["id"])
+        except Exception as e:  # noqa: BLE001
+            db.log(f"Refreshing movie {r['id']} failed: {e}", "warn")
+
+
+THEATRICAL_TO_HOME_DAYS = 90
+
+
+def available_date(m: dict) -> str | None:
+    """When a movie can be expected on Usenet: its digital or disc release, whichever is first.
+    Without either, 90 days after the cinema release (like Radarr). None = no dates at all."""
+    home = [d for d in (m.get("digital_release"), m.get("physical_release")) if d]
+    if home:
+        return min(home)[:10]
+    rd = m.get("release_date")
+    try:
+        return (date.fromisoformat(rd[:10]) + timedelta(days=THEATRICAL_TO_HOME_DAYS)).isoformat() if rd else None
+    except ValueError:
+        return None
 
 
 def movie_available(m: dict) -> bool:
-    rd = m.get("release_date")
-    if not rd:
-        return True
-    try:
-        # digital/physical usually ~ 3 months after theatrical; search from release on
-        return date.fromisoformat(rd) <= date.today()
-    except ValueError:
-        return True
+    when = available_date(m)
+    return when is None or when <= date.today().isoformat()
 
 
 # ----------------------------------------------------------------- series --
