@@ -1,0 +1,243 @@
+"""Tracks NZBGet downloads and imports finished ones into the library with
+TRaSH naming. Failed downloads are blocklisted and a new search is started."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+
+from . import db, library, naming, trash
+from .parser import parse
+from .services import mediainfo, nzbget
+
+VIDEO_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".ts", ".m2ts", ".wmv", ".mov", ".webm"}
+SUB_EXT = {".srt", ".ass", ".ssa", ".sub", ".idx", ".sup", ".vtt"}
+
+
+def map_path(path: str) -> str:
+    s = db.get_settings()
+    src, dst = s.get("remote_path_from") or "", s.get("remote_path_to") or ""
+    if src and path.startswith(src):
+        return dst.rstrip("/") + "/" + path[len(src):].lstrip("/")
+    return path
+
+
+def _video_files(root: str) -> list[str]:
+    if os.path.isfile(root):
+        return [root]
+    out = []
+    for dp, _dn, fns in os.walk(root):
+        for f in fns:
+            ext = os.path.splitext(f)[1].lower()
+            if ext in VIDEO_EXT and not re.search(r"\bsample\b", f, re.I) and "/sample" not in dp.lower():
+                out.append(os.path.join(dp, f))
+    return out
+
+
+def _transfer(src: str, dst: str) -> None:
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    mode = db.setting("import_mode")
+    if os.path.exists(dst):
+        os.remove(dst)
+    if mode == "hardlink":
+        try:
+            os.link(src, dst)
+            return
+        except OSError:
+            pass  # different filesystem -> fall back to copy
+        shutil.copy2(src, dst)
+    elif mode == "copy":
+        shutil.copy2(src, dst)
+    else:
+        shutil.move(src, dst)
+
+
+def _subtitles_for(video: str) -> list[str]:
+    base = os.path.splitext(os.path.basename(video))[0]
+    d = os.path.dirname(video)
+    out = []
+    for dp, _dn, fns in os.walk(d):
+        for f in fns:
+            if os.path.splitext(f)[1].lower() in SUB_EXT and (f.startswith(base) or len(_video_files(d)) == 1):
+                out.append(os.path.join(dp, f))
+    return out
+
+
+def _sub_suffix(sub: str, video: str) -> str:
+    """Keep language/forced tags: 'movie.en.forced.srt' -> '.en.forced.srt'."""
+    stem = os.path.splitext(os.path.basename(sub))[0]
+    vbase = os.path.splitext(os.path.basename(video))[0]
+    rest = stem[len(vbase):] if stem.startswith(vbase) else stem
+    tags = [p for p in re.split(r"[._ -]", rest) if re.fullmatch(r"[a-z]{2,3}|forced|sdh|cc|default", p, re.I)]
+    return ("." + ".".join(tags) if tags else "") + os.path.splitext(sub)[1].lower()
+
+
+def _remove_old(path: str | None) -> None:
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError as e:
+            db.log(f"Could not remove old file {path}: {e}", "warn")
+
+
+def _rename_cfs(kind: str, cf_names: list[str]) -> list[str]:
+    store = trash.ensure_loaded()
+    app = "radarr" if kind == "movie" else "sonarr"
+    keep = {cf.name for cf in store.cfs[app].values() if cf.include_when_renaming}
+    return [n for n in cf_names if n in keep]
+
+
+async def import_movie(dl: dict, source_dir: str) -> None:
+    movie = db.one("SELECT * FROM movies WHERE id=?", (dl["movie_id"],))
+    files = _video_files(source_dir)
+    if not files:
+        raise RuntimeError(f"No video files found in {source_dir}")
+    video = max(files, key=os.path.getsize)
+    rel = parse(dl["release_title"])
+    mi = await mediainfo.probe(video)
+    fmt = trash.ensure_loaded().naming_format("movie", "file", db.setting("naming_movie_file")) \
+        or "{Movie CleanTitle} {(Release Year)} {[Quality Full]}{-Release Group}"
+    values = {**naming.movie_values(movie),
+              **naming.media_values(rel, dl["quality"], _rename_cfs("movie", json.loads(dl["custom_formats"] or "[]")), mi)}
+    name = naming.safe(naming.render(fmt, values))
+    dest_dir = library.movie_dir(movie)
+    dest = os.path.join(dest_dir, name + os.path.splitext(video)[1].lower())
+    subs = _subtitles_for(video)
+    if movie["file_path"] and movie["file_path"] != dest:
+        _remove_old(movie["file_path"])
+    _transfer(video, dest)
+    for sub in subs:
+        _transfer(sub, os.path.join(dest_dir, name + _sub_suffix(sub, video)))
+    db.update("movies", movie["id"], {"file_path": dest, "file_quality": dl["quality"], "file_score": dl["score"],
+                                      "file_size": os.path.getsize(dest)})
+    db.log(f"Imported {movie['title']} → {dest}")
+
+
+async def import_episodes(dl: dict, source_dir: str) -> None:
+    series = db.one("SELECT * FROM series WHERE id=?", (dl["series_id"],))
+    ep_ids = json.loads(dl["episode_ids"] or "[]")
+    eps = db.q(f"SELECT * FROM episodes WHERE id IN ({','.join('?' * len(ep_ids))})", tuple(ep_ids)) if ep_ids else []
+    files = _video_files(source_dir)
+    if not files:
+        raise RuntimeError(f"No video files found in {source_dir}")
+    all_by_se = {(e["season"], e["episode"]): e
+                 for e in db.q("SELECT * FROM episodes WHERE series_id=?", (series["id"],))}
+    plan: list[tuple[str, list[dict]]] = []
+    if len(files) == 1 and len(eps) >= 1 and not parse(dl["release_title"]).full_season:
+        plan.append((files[0], eps))
+    else:
+        for f in files:
+            p = parse(os.path.basename(f))
+            matched = [all_by_se[(p.season, n)] for n in p.episodes if (p.season, n) in all_by_se] if p.season is not None else []
+            if not matched and p.air_date:
+                matched = [e for e in all_by_se.values() if e["air_date"] == p.air_date]
+            if matched:
+                plan.append((f, matched))
+            else:
+                db.log(f"Skipped unrecognised file {os.path.basename(f)}", "warn")
+    if not plan:
+        raise RuntimeError("Could not match any downloaded file to an episode")
+    rel = parse(dl["release_title"])
+    style = "anime" if series["series_type"] == "anime" else "daily" if rel.air_date else "standard"
+    fmt = trash.ensure_loaded().naming_format("tv", style, db.setting("naming_episode_file")) \
+        or "{Series TitleYear} - S{season:00}E{episode:00} - {Episode CleanTitle} {[Quality Full]}{-Release Group}"
+    cfs = _rename_cfs("tv", json.loads(dl["custom_formats"] or "[]"))
+    imported = 0
+    for video, episodes in plan:
+        mi = await mediainfo.probe(video)
+        values = {**naming.series_values(series), **naming.episode_values(episodes),
+                  **naming.media_values(rel, dl["quality"], cfs, mi)}
+        name = naming.safe(naming.render_episode(fmt, values))
+        dest_dir = os.path.join(library.series_dir(series), library.season_folder_name(episodes[0]["season"]))
+        dest = os.path.join(dest_dir, name + os.path.splitext(video)[1].lower())
+        subs = _subtitles_for(video) if len(plan) == 1 else []
+        for e in episodes:
+            if e["file_path"] and e["file_path"] != dest:
+                _remove_old(e["file_path"])
+        _transfer(video, dest)
+        for sub in subs:
+            _transfer(sub, os.path.join(dest_dir, name + _sub_suffix(sub, video)))
+        size = os.path.getsize(dest)
+        for e in episodes:
+            db.update("episodes", e["id"], {"file_path": dest, "file_quality": dl["quality"],
+                                            "file_score": dl["score"], "file_size": size})
+        imported += 1
+    db.log(f"Imported {imported} file(s) for {series['title']}")
+
+
+async def _cleanup_source(path: str) -> None:
+    if db.setting("import_mode") == "move" and os.path.isdir(path):
+        if not _video_files(path):
+            shutil.rmtree(path, ignore_errors=True)
+
+
+async def process_downloads() -> None:
+    active = db.q("SELECT * FROM downloads WHERE status IN ('queued','downloading','importing')")
+    if not active:
+        return
+    try:
+        queue = await nzbget.queue()
+        hist = await nzbget.history()
+    except nzbget.NZBGetError as e:
+        db.log(str(e), "warn")
+        return
+    for dl in active:
+        nid = dl["nzbget_id"]
+        if nid in queue:
+            g = queue[nid]
+            total = g.get("FileSizeMB") or 0
+            remaining = g.get("RemainingSizeMB") or 0
+            prog = 100 * (1 - remaining / total) if total else 0
+            status = "downloading" if g.get("Status", "").startswith(("DOWNLOADING", "FETCHING")) or prog > 0 else "queued"
+            db.ex("UPDATE downloads SET status=?, progress=?, message=?, updated=datetime('now') WHERE id=?",
+                  (status, round(prog, 1), g.get("Status"), dl["id"]))
+            continue
+        h = hist.get(nid)
+        if not h:
+            continue
+        st = h.get("Status", "")
+        if st.startswith("SUCCESS"):
+            src = map_path(h.get("FinalDir") or h.get("DestDir") or "")
+            db.ex("UPDATE downloads SET status='importing', progress=100, dest_dir=? WHERE id=?", (src, dl["id"]))
+            try:
+                if dl["kind"] == "movie":
+                    await import_movie(dl, src)
+                else:
+                    await import_episodes(dl, src)
+                await _cleanup_source(src)
+                db.ex("UPDATE downloads SET status='imported', message=NULL, updated=datetime('now') WHERE id=?", (dl["id"],))
+            except Exception as e:  # noqa: BLE001
+                db.ex("UPDATE downloads SET status='import_failed', message=?, updated=datetime('now') WHERE id=?",
+                      (str(e), dl["id"]))
+                db.log(f"Import failed for {dl['release_title']}: {e}", "error")
+        elif st.startswith(("FAILURE", "WARNING", "DELETED")):
+            await fail_download(dl, st, research=not st.startswith("DELETED/MANUAL"))
+
+
+async def fail_download(dl: dict, reason: str, research: bool = True) -> None:
+    db.ex("UPDATE downloads SET status='failed', message=?, updated=datetime('now') WHERE id=?", (reason, dl["id"]))
+    db.insert("blocklist", {"release_title": dl["release_title"], "guid": dl["guid"], "reason": reason})
+    db.log(f"Download failed ({reason}): {dl['release_title']} — blocklisted", "warn")
+    if not research:
+        return
+    from . import search
+    try:
+        if dl["kind"] == "movie":
+            await search.search_movie(dl["movie_id"])
+        else:
+            await search.search_series(dl["series_id"])
+    except Exception as e:  # noqa: BLE001
+        db.log(f"Re-search after failure errored: {e}", "warn")
+
+
+async def retry_import(dl_id: int) -> None:
+    dl = db.one("SELECT * FROM downloads WHERE id=?", (dl_id,))
+    if not dl or not dl["dest_dir"]:
+        raise ValueError("Nothing to retry")
+    if dl["kind"] == "movie":
+        await import_movie(dl, dl["dest_dir"])
+    else:
+        await import_episodes(dl, dl["dest_dir"])
+    db.ex("UPDATE downloads SET status='imported', message=NULL WHERE id=?", (dl_id,))
+

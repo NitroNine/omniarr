@@ -1,0 +1,369 @@
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const view = $("#view");
+let settingsCache = null;
+
+async function api(path, opts = {}) {
+  const o = { headers: { "Content-Type": "application/json" }, ...opts };
+  if (o.body && typeof o.body !== "string") o.body = JSON.stringify(o.body);
+  const r = await fetch("/api" + path, o);
+  let data = null;
+  try { data = await r.json(); } catch { /* empty */ }
+  if (!r.ok) throw new Error((data && data.detail) || r.statusText);
+  return data;
+}
+function toast(msg, err = false) {
+  const d = document.createElement("div");
+  d.textContent = msg; if (err) d.className = "err";
+  $("#toast").appendChild(d); setTimeout(() => d.remove(), 5000);
+}
+async function guard(fn) { try { return await fn(); } catch (e) { toast(e.message, true); } }
+function size(b) { if (!b) return ""; const g = b / 1073741824; return g >= 1 ? g.toFixed(2) + " GB" : (b / 1048576).toFixed(0) + " MB"; }
+function tierChip(t) { return t === "uhd" ? '<span class="chip uhd">4K</span>' : '<span class="chip hd">1080p</span>'; }
+function poster(url, title) { return url ? `<img loading="lazy" src="${esc(url)}" alt="">` : `<div class="noposter">${esc(title)}</div>`; }
+function modal(html) { $("#modal .modal-body").innerHTML = html; $("#modal").classList.remove("hidden"); }
+function closeModal() { $("#modal").classList.add("hidden"); }
+$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+
+// ------------------------------------------------------------- router ---
+const routes = { movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
+async function route() {
+  const [, name = "movies", arg] = location.hash.split("/");
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name || (name === "movie" && a.dataset.tab === "movies") || (name === "show" && a.dataset.tab === "series")));
+  view.innerHTML = '<p class="muted">Loading…</p>';
+  await guard(() => (routes[name] || renderMovies)(arg));
+}
+window.addEventListener("hashchange", route);
+
+async function checkBanner() {
+  const st = await api("/status").catch(() => null);
+  const s = await api("/settings").catch(() => null);
+  settingsCache = s;
+  const msgs = [];
+  if (st && !st.trash_loaded) msgs.push('TRaSH Guides data not downloaded yet — <a href="#/settings">Settings → Profiles</a> → "Sync TRaSH Guides now".');
+  if (s && (!s.tmdb_api_key || !s.tvdb_api_key)) msgs.push('Add your TMDB and TheTVDB API keys in <a href="#/settings">Settings</a>.');
+  $("#banner").innerHTML = msgs.join(" ");
+}
+
+// ------------------------------------------------------------- movies ---
+async function renderMovies() {
+  const movies = await api("/movies");
+  view.innerHTML = `<div class="toolbar"><h2 class="grow">Movies <span class="muted small">(${movies.length})</span></h2>
+    <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
+    <select id="statf"><option value="">Any status</option><option value="missing">Missing</option><option value="have">Downloaded</option></select>
+    <a href="#/add"><button class="primary">Add movie</button></a></div><div class="grid" id="g"></div>`;
+  const draw = () => {
+    const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, st = $("#statf").value;
+    $("#g").innerHTML = movies.filter((m) => (!f || m.title.toLowerCase().includes(f)) && (!t || m.tier === t) && (!st || (st === "have") === !!m.file_path))
+      .map((m) => `<div class="card" onclick="location.hash='#/movie/${m.id}'">${poster(m.poster, m.title)}
+        <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
+        <div class="chips">${tierChip(m.tier)}<span class="chip">${m.year || ""}</span>
+        ${m.download ? `<span class="chip warn">${esc(m.download.status)} ${Math.round(m.download.progress)}%</span>` : m.file_path ? `<span class="chip ok">${esc(m.file_quality)}</span>` : m.monitored ? '<span class="chip bad">Missing</span>' : '<span class="chip">Unmonitored</span>'}
+        </div></div></div>`).join("") || '<p class="muted">Nothing here yet.</p>';
+  };
+  ["flt", "tierf", "statf"].forEach((id) => $("#" + id).addEventListener("input", draw));
+  draw();
+}
+
+async function renderMovie(id) {
+  const m = await api("/movies/" + id);
+  view.innerHTML = `<div class="detail">${m.poster ? `<img src="${esc(m.poster)}" alt="">` : ""}<div class="info">
+    <h2>${esc(m.title)} <span class="muted">(${m.year || "?"})</span></h2>
+    <div class="chips">${tierChip(m.tier)}${m.runtime ? `<span class="chip">${m.runtime} min</span>` : ""}
+      <a class="chip" target="_blank" rel="noopener" href="https://www.themoviedb.org/movie/${m.tmdb_id}">TMDB</a>
+      ${m.imdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.imdb.com/title/${esc(m.imdb_id)}">IMDb</a>` : ""}</div>
+    <p>${esc(m.overview)}</p>
+    <p class="small muted">Folder: <code>${esc(m.path)}</code></p>
+    <p class="small">${m.file_path ? `File: <code>${esc(m.file_path)}</code> <span class="chip ok">${esc(m.file_quality)}</span> <span class="chip">score ${m.file_score}</span> ${size(m.file_size)}` : '<span class="chip bad">No file</span>'}</p>
+    <div class="toolbar">
+      <button class="primary" id="as">Automatic search</button><button id="is">Interactive search</button>
+      <select id="tier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
+      <label><input type="checkbox" id="mon" ${m.monitored ? "checked" : ""}> Monitored</label>
+      <button class="danger" id="del">Delete</button></div>
+    <h3>History</h3>${historyTable(m.history)}</div></div>`;
+  $("#tier").value = m.tier;
+  $("#tier").onchange = () => guard(async () => { await api("/movies/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
+  $("#mon").onchange = () => guard(() => api("/movies/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
+  $("#as").onclick = () => guard(async () => { $("#as").disabled = true; const r = await api(`/movies/${id}/search`, { method: "POST" }); toast(r.some((x) => x.accepted) ? "Release grabbed" : `No acceptable release (${r.length} found)`); route(); });
+  $("#is").onclick = () => interactive("movie", id, `/movies/${id}/search?interactive=true`);
+  $("#del").onclick = () => guard(async () => { if (!confirm("Remove this movie?")) return; const files = confirm("Also delete its files from disk?"); await api(`/movies/${id}?delete_files=${files}`, { method: "DELETE" }); location.hash = "#/movies"; });
+}
+
+function historyTable(rows) {
+  if (!rows || !rows.length) return '<p class="muted">Nothing yet.</p>';
+  return `<div class="table-wrap"><table><tr><th>Release</th><th>Quality</th><th>Score</th><th>Status</th><th>Added</th></tr>
+  ${rows.map((d) => `<tr><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td><td>${esc(d.quality)}</td><td>${d.score}</td><td>${statusChip(d)}</td><td class="small muted">${esc(d.added)}</td></tr>`).join("")}</table></div>`;
+}
+function statusChip(d) {
+  const cls = { imported: "ok", failed: "bad", import_failed: "bad", downloading: "warn", queued: "", importing: "warn" }[d.status] ?? "";
+  const pct = d.status === "downloading" ? ` ${Math.round(d.progress)}%` : "";
+  return `<span class="chip ${cls}">${esc(d.status.replace("_", " "))}${pct}</span>`;
+}
+
+async function interactive(kind, itemId, path) {
+  modal('<h2>Interactive search</h2><p class="muted">Searching indexers…</p>');
+  const rows = await guard(() => api(path, { method: "POST" }));
+  if (!rows) return closeModal();
+  window._results = rows;
+  $("#modal .modal-body").innerHTML = `<div class="toolbar"><h2 class="grow">Interactive search <span class="muted small">${rows.length} results</span></h2><button onclick="closeModal()">Close</button></div>
+  <div class="table-wrap"><table><tr><th>Release</th><th>Quality</th><th>Score</th><th>Size</th><th>Age</th><th></th></tr>
+  ${rows.map((r, i) => `<tr><td>${esc(r.title)}<div class="small muted">${esc(r.indexer)}${r.custom_formats.length ? " · " + r.custom_formats.map(esc).join(", ") : ""}</div>
+    ${r.reasons.map((x) => `<div class="rej">${esc(x)}</div>`).join("")}</td>
+    <td>${esc(r.quality)}</td><td>${r.score}</td><td>${size(r.size)}</td><td>${r.age_days ?? ""}d</td>
+    <td><button class="small ${r.accepted ? "primary" : ""}" onclick="grabRow('${kind}', ${itemId}, ${i}, this)">Grab</button></td></tr>`).join("")}</table></div>`;
+}
+async function grabRow(kind, itemId, i, btn) {
+  const r = window._results[i];
+  btn.disabled = true;
+  await guard(async () => { await api("/grab", { method: "POST", body: { kind, item_id: itemId, guid: r.guid, title: r.title, link: r.link, indexer: r.indexer, indexer_id: r.indexer_id, size: r.size, episode_ids: r.episode_ids } }); toast("Sent to NZBGet"); btn.textContent = "Sent"; });
+}
+
+// ------------------------------------------------------------- series ---
+async function renderSeries() {
+  const series = await api("/series");
+  view.innerHTML = `<div class="toolbar"><h2 class="grow">TV <span class="muted small">(${series.length})</span></h2>
+    <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
+    <a href="#/add"><button class="primary">Add series</button></a></div><div class="grid" id="g"></div>`;
+  const draw = () => {
+    const f = $("#flt").value.toLowerCase(), t = $("#tierf").value;
+    $("#g").innerHTML = series.filter((s) => (!f || s.title.toLowerCase().includes(f)) && (!t || s.tier === t))
+      .map((s) => `<div class="card" onclick="location.hash='#/show/${s.id}'">${poster(s.poster, s.title)}
+        <div class="meta"><div class="title" title="${esc(s.title)}">${esc(s.title)}</div>
+        <div class="chips">${tierChip(s.tier)}<span class="chip ${s.have >= s.aired && s.aired ? "ok" : ""}">${s.have}/${s.aired}</span>${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}</div></div></div>`).join("") || '<p class="muted">Nothing here yet.</p>';
+  };
+  ["flt", "tierf"].forEach((id) => $("#" + id).addEventListener("input", draw));
+  draw();
+}
+
+async function renderShow(id) {
+  const s = await api("/series/" + id);
+  const seasons = {};
+  s.episodes.forEach((e) => (seasons[e.season] = seasons[e.season] || []).push(e));
+  const today = new Date().toISOString().slice(0, 10);
+  view.innerHTML = `<div class="detail">${s.poster ? `<img src="${esc(s.poster)}" alt="">` : ""}<div class="info">
+    <h2>${esc(s.title)} <span class="muted">(${s.year || "?"})</span></h2>
+    <div class="chips">${tierChip(s.tier)}${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}<span class="chip">${esc(s.series_type)}</span>
+      <a class="chip" target="_blank" rel="noopener" href="https://thetvdb.com/dereferrer/series/${s.tvdb_id}">TheTVDB</a></div>
+    <p>${esc(s.overview)}</p><p class="small muted">Folder: <code>${esc(s.path)}</code></p>
+    <div class="toolbar"><button class="primary" id="as">Search all missing</button><button id="rf">Refresh from TheTVDB</button>
+      <select id="tier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
+      <select id="stype"><option value="standard">Standard</option><option value="daily">Daily</option><option value="anime">Anime</option></select>
+      <label><input type="checkbox" id="mon" ${s.monitored ? "checked" : ""}> Monitored</label>
+      <button class="danger" id="del">Delete</button></div></div></div>
+    ${Object.keys(seasons).sort((a, b) => b - a).map((sn) => {
+      const eps = seasons[sn]; const have = eps.filter((e) => e.file_path).length;
+      return `<details class="season" ${sn == Math.max(...Object.keys(seasons)) ? "open" : ""}><summary>${sn == 0 ? "Specials" : "Season " + sn} <span class="muted small">${have}/${eps.length}</span>
+        <button class="small" onclick="event.preventDefault();seasonSearch(${id},${sn})">Search season</button>
+        <button class="small" onclick="event.preventDefault();interactive('tv',${id},'/series/${id}/search?season=${sn}&interactive=true')">Interactive</button>
+        <button class="small" onclick="event.preventDefault();monSeason(${id},${sn},true)">Monitor all</button>
+        <button class="small" onclick="event.preventDefault();monSeason(${id},${sn},false)">Unmonitor all</button></summary>
+        <div class="table-wrap"><table><tr><th></th><th>#</th><th>Title</th><th>Air date</th><th>File</th><th></th></tr>
+        ${eps.map((e) => `<tr><td><input type="checkbox" ${e.monitored ? "checked" : ""} onchange="monEp(${e.id}, this.checked)"></td><td>${e.episode}</td><td>${esc(e.title || "TBA")}</td><td class="small">${esc(e.air_date || "")}</td>
+          <td>${e.download ? `<span class="chip warn">${esc(e.download.status)} ${Math.round(e.download.progress)}%</span>` : e.file_path ? `<span class="chip ok" title="${esc(e.file_path)}">${esc(e.file_quality)}</span>` : e.air_date && e.air_date <= today ? (e.monitored ? '<span class="chip bad">Missing</span>' : '<span class="chip">Skipped</span>') : '<span class="chip">Unaired</span>'}</td>
+          <td><button class="small" onclick="epSearch(${id},${e.id},this)">Search</button> <button class="small" onclick="interactive('tv',${id},'/series/${id}/search?episode_id=${e.id}&interactive=true')">…</button></td></tr>`).join("")}</table></div></details>`;
+    }).join("")}`;
+  $("#tier").value = s.tier; $("#stype").value = s.series_type || "standard";
+  $("#tier").onchange = () => guard(async () => { await api("/series/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
+  $("#stype").onchange = () => guard(() => api("/series/" + id, { method: "PUT", body: { series_type: $("#stype").value } }));
+  $("#mon").onchange = () => guard(() => api("/series/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
+  $("#as").onclick = () => guard(async () => { $("#as").disabled = true; const r = await api(`/series/${id}/search`, { method: "POST" }); toast(`${r.filter((x) => x.accepted).length} acceptable releases found`); route(); });
+  $("#rf").onclick = () => guard(async () => { await api(`/series/${id}/refresh`, { method: "POST" }); toast("Refreshed"); route(); });
+  $("#del").onclick = () => guard(async () => { if (!confirm("Remove this series?")) return; const files = confirm("Also delete its files from disk?"); await api(`/series/${id}?delete_files=${files}`, { method: "DELETE" }); location.hash = "#/series"; });
+}
+async function seasonSearch(id, sn) { toast("Searching season " + sn + "…"); await guard(async () => { const r = await api(`/series/${id}/search?season=${sn}`, { method: "POST" }); toast(`${r.filter((x) => x.accepted).length} acceptable releases`); route(); }); }
+async function epSearch(id, eid, btn) { btn.disabled = true; await guard(async () => { const r = await api(`/series/${id}/search?episode_id=${eid}`, { method: "POST" }); toast(r.some((x) => x.accepted) ? "Release grabbed" : "Nothing acceptable found"); route(); }); }
+async function monEp(eid, on) { await guard(() => api("/episodes/monitor", { method: "PUT", body: { ids: [eid], monitored: on } })); }
+async function monSeason(id, sn, on) {
+  const s = await api("/series/" + id);
+  await guard(() => api("/episodes/monitor", { method: "PUT", body: { ids: s.episodes.filter((e) => e.season == sn).map((e) => e.id), monitored: on } }));
+  route();
+}
+
+// ---------------------------------------------------------------- add ---
+async function renderAdd() {
+  view.innerHTML = `<h2>Add to library</h2>
+  <div class="toolbar"><select id="kind"><option value="movie">Movie (TMDB)</option><option value="series">TV series (TheTVDB)</option></select>
+  <input id="term" class="grow" placeholder="Title, optionally with year — or tmdb:603 / tvdb:81189" autofocus><button class="primary" id="go">Search</button></div>
+  <div id="results" class="panel" style="padding:0"></div>`;
+  const go = () => guard(async () => {
+    const kind = $("#kind").value, term = $("#term").value.trim();
+    if (!term) return;
+    $("#results").innerHTML = '<p class="muted" style="padding:12px">Searching…</p>';
+    const res = await api(`/lookup/${kind}?term=${encodeURIComponent(term)}`);
+    window._lookup = res;
+    $("#results").innerHTML = res.map((r, i) => `<div class="result-row">${r.poster ? `<img src="${esc(r.poster)}" alt="">` : ""}
+      <div class="grow"><b>${esc(r.title)}</b> <span class="muted">${r.year || ""}</span>${r.status ? ` <span class="chip">${esc(r.status)}</span>` : ""}<p>${esc(r.overview)}</p></div>
+      <div class="add-ctrls">${r.in_library ? '<span class="chip ok">In library</span>' : `
+        <select id="t${i}"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
+        ${kind === "series" ? `<select id="m${i}"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option><option value="none">None</option></select>` : ""}
+        <label class="small"><input type="checkbox" id="s${i}" checked> Search now</label>
+        <button class="primary" onclick="addItem('${kind}', ${i}, this)">Add</button>`}</div></div>`).join("") || '<p class="muted" style="padding:12px">No results.</p>';
+  });
+  $("#go").onclick = go;
+  $("#term").addEventListener("keydown", (e) => e.key === "Enter" && go());
+}
+async function addItem(kind, i, btn) {
+  const r = window._lookup[i]; btn.disabled = true;
+  await guard(async () => {
+    if (kind === "movie") {
+      const m = await api("/movies", { method: "POST", body: { tmdb_id: r.tmdb_id, tier: $("#t" + i).value, search: $("#s" + i).checked } });
+      toast(`Added ${m.title}`);
+    } else {
+      btn.textContent = "Adding…";
+      const s = await api("/series", { method: "POST", body: { tvdb_id: r.tvdb_id, tier: $("#t" + i).value, monitor: $("#m" + i).value, search: $("#s" + i).checked } });
+      toast(`Added ${s.title}`);
+    }
+    btn.textContent = "Added";
+  });
+}
+
+// ----------------------------------------------------------- activity ---
+async function renderActivity(sub = "queue") {
+  view.innerHTML = `<div class="tabs2">${["queue", "history", "events", "blocklist"].map((t) => `<button class="${t === sub ? "active" : ""}" onclick="location.hash='#/activity/${t}'">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
+    <span class="grow"></span><button onclick="runTask('rss')">Run RSS sync</button><button onclick="runTask('missing')">Search missing</button><button onclick="runTask('downloads')">Check downloads</button></div><div id="act"></div>`;
+  const el = $("#act");
+  if (sub === "queue" || sub === "history") {
+    const rows = (await api("/queue")).filter((d) => (sub === "queue") === ["queued", "downloading", "importing", "import_failed"].includes(d.status));
+    el.innerHTML = rows.length ? `<div class="table-wrap"><table><tr><th>Item</th><th>Release</th><th>Quality</th><th>Score</th><th>Status</th><th></th></tr>
+      ${rows.map((d) => `<tr><td>${esc(d.movie_title || d.series_title || "")}</td><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)} · ${esc(d.added)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td>
+      <td>${esc(d.quality)}</td><td>${d.score}</td><td>${statusChip(d)}${d.status === "downloading" ? `<div class="progress"><div style="width:${d.progress}%"></div></div>` : ""}</td>
+      <td>${d.status === "import_failed" ? `<button class="small" onclick="retryImport(${d.id})">Retry import</button> ` : ""}${sub === "queue" ? `<button class="small danger" onclick="rmDl(${d.id})">Remove</button>` : ""}</td></tr>`).join("")}</table></div>` : '<p class="muted">Empty.</p>';
+    if (sub === "queue") setTimeout(() => { if (location.hash.startsWith("#/activity/queue") || location.hash === "#/activity") renderActivity("queue"); }, 10000);
+  } else if (sub === "events") {
+    const rows = await api("/events");
+    el.innerHTML = `<div class="table-wrap"><table><tr><th>Time</th><th>Level</th><th>Message</th></tr>${rows.map((e) => `<tr><td class="small muted">${esc(e.ts)}</td><td><span class="chip ${e.level === "error" ? "bad" : e.level === "warn" ? "warn" : ""}">${esc(e.level)}</span></td><td>${esc(e.message)}</td></tr>`).join("")}</table></div>`;
+  } else {
+    const rows = await api("/blocklist");
+    el.innerHTML = rows.length ? `<div class="table-wrap"><table><tr><th>Release</th><th>Reason</th><th>Added</th><th></th></tr>${rows.map((b) => `<tr><td>${esc(b.release_title)}</td><td>${esc(b.reason)}</td><td class="small muted">${esc(b.added)}</td><td><button class="small" onclick="unblock(${b.id})">Remove</button></td></tr>`).join("")}</table></div>` : '<p class="muted">Empty.</p>';
+  }
+}
+routes.activity = (sub) => renderActivity(sub || "queue");
+async function runTask(n) { await guard(async () => { await api("/tasks/" + n, { method: "POST" }); toast("Started " + n); }); }
+async function retryImport(id) { await guard(async () => { await api(`/queue/${id}/retry-import`, { method: "POST" }); toast("Imported"); route(); }); }
+async function rmDl(id) { if (!confirm("Remove download?")) return; const bl = confirm("Blocklist this release and search for another?"); await guard(async () => { await api(`/queue/${id}?blocklist=${bl}`, { method: "DELETE" }); route(); }); }
+async function unblock(id) { await guard(async () => { await api("/blocklist/" + id, { method: "DELETE" }); route(); }); }
+
+// ----------------------------------------------------------- settings ---
+const SECTIONS = {
+  general: { title: "Metadata", fields: [
+    ["tmdb_api_key", "TMDB API key", "password", "themoviedb.org → Settings → API. v3 key or v4 read token."],
+    ["tvdb_api_key", "TheTVDB API key", "password", "thetvdb.com → Dashboard → API keys (v4)."],
+    ["tvdb_pin", "TheTVDB subscriber PIN", "password", "Only needed for user-supported keys."],
+    ["metadata_language", "Metadata language", "text", "Two-letter code, e.g. en"],
+  ] },
+  downloads: { title: "NZBGet", fields: [
+    ["nzbget_url", "NZBGet URL", "text", "e.g. http://192.168.1.10:6789"],
+    ["nzbget_username", "Username", "text"], ["nzbget_password", "Password", "password"],
+    ["nzbget_category_movies", "Movie category", "text"], ["nzbget_category_tv", "TV category", "text"],
+    ["remote_path_from", "Remote path (NZBGet)", "text", "If NZBGet sees downloads at a different path, e.g. /downloads/completed"],
+    ["remote_path_to", "Local path (Omniarr)", "text", "…and Omniarr sees them at, e.g. /data/downloads/completed"],
+    ["import_mode", "Import mode", ["move", "hardlink", "copy"], "Hardlink needs downloads and media on the same share (e.g. /mnt/user/data)."],
+  ] },
+  roots: { title: "Root folders", fields: [
+    ["root_movies_hd", "Movies — 1080p and lower", "text"], ["root_movies_uhd", "Movies — 4K", "text"],
+    ["root_tv_hd", "TV — 1080p and lower", "text"], ["root_tv_uhd", "TV — 4K", "text"],
+  ] },
+  schedule: { title: "Schedule", fields: [
+    ["rss_interval_minutes", "RSS sync (minutes)", "number"], ["search_interval_minutes", "Backlog search (minutes)", "number", "Searches up to 10 missing items per run, each at most once a day."],
+    ["series_refresh_hours", "Refresh TV info (hours)", "number"], ["trash_auto_sync_hours", "Re-sync TRaSH Guides (hours)", "number", "0 = never automatically"],
+    ["upgrades_enabled", "Upgrade until cutoff", "checkbox"],
+  ] },
+};
+async function renderSettings(sub = "general") {
+  const s = await api("/settings");
+  const tabs = { general: "Metadata", downloads: "NZBGet", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", naming: "Naming (TRaSH)", schedule: "Schedule" };
+  view.innerHTML = `<h2>Settings</h2><div class="tabs2">${Object.entries(tabs).map(([k, v]) => `<button class="${k === sub ? "active" : ""}" onclick="location.hash='#/settings/${k}'">${v}</button>`).join("")}</div><div id="set" class="panel"></div>`;
+  const el = $("#set");
+  if (SECTIONS[sub]) {
+    el.innerHTML = `<div class="form">${SECTIONS[sub].fields.map(([k, label, type, help]) => {
+      let input;
+      if (Array.isArray(type)) input = `<select data-k="${k}">${type.map((o) => `<option ${s[k] === o ? "selected" : ""}>${o}</option>`).join("")}</select>`;
+      else if (type === "checkbox") input = `<input type="checkbox" data-k="${k}" ${s[k] ? "checked" : ""}>`;
+      else input = `<input type="${type}" data-k="${k}" value="${esc(s[k])}" autocomplete="off">`;
+      return `<label>${label}</label>${input}${help ? `<div class="help">${help}</div>` : ""}`;
+    }).join("")}<span></span><div class="toolbar"><button class="primary" id="save">Save</button>${sub === "downloads" ? '<button id="test">Test NZBGet</button>' : ""}</div></div>`;
+    $("#save").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect(el) }); toast("Saved"); checkBanner(); });
+    if ($("#test")) $("#test").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect(el) }); const r = await api("/nzbget/test", { method: "POST" }); toast(r.message, !r.ok); });
+  } else if (sub === "indexers") await renderIndexers(el);
+  else if (sub === "profiles") await renderProfiles(el, s);
+  else if (sub === "naming") await renderNaming(el, s);
+}
+function collect(el) {
+  const out = {};
+  el.querySelectorAll("[data-k]").forEach((i) => { out[i.dataset.k] = i.type === "checkbox" ? i.checked : i.type === "number" ? Number(i.value) : i.value; });
+  return out;
+}
+async function renderIndexers(el) {
+  const rows = await api("/indexers");
+  el.innerHTML = `<p class="muted">Any Newznab-compatible Usenet indexer. Movies use category 2000 and TV 5000 by default.</p>
+  ${rows.length ? `<div class="table-wrap"><table><tr><th>Name</th><th>URL</th><th>Categories (movie / tv)</th><th>Priority</th><th>Enabled</th><th></th></tr>
+  ${rows.map((r) => `<tr><td>${esc(r.name)}</td><td class="small">${esc(r.url)}</td><td class="small">${esc(r.movie_categories)} / ${esc(r.tv_categories)}</td><td>${r.priority}</td>
+    <td><input type="checkbox" ${r.enabled ? "checked" : ""} onchange="toggleIx(${r.id}, this.checked)"></td>
+    <td><button class="small" onclick="testIx(${r.id})">Test</button> <button class="small danger" onclick="delIx(${r.id})">Delete</button></td></tr>`).join("")}</table></div>` : ""}
+  <h3>Add indexer</h3><div class="form" id="ixf">
+    <label>Name</label><input data-k="name" placeholder="NZBGeek">
+    <label>URL</label><input data-k="url" placeholder="https://api.nzbgeek.info">
+    <label>API key</label><input data-k="apikey" type="password" autocomplete="off">
+    <label>Movie categories</label><input data-k="movie_categories" value="2000">
+    <label>TV categories</label><input data-k="tv_categories" value="5000">
+    <label>Priority</label><input data-k="priority" type="number" value="25"><div class="help">Lower = preferred.</div>
+    <span></span><div><button class="primary" id="addix">Add</button></div></div>`;
+  $("#addix").onclick = () => guard(async () => { const b = collect($("#ixf")); if (!b.name || !b.url || !b.apikey) throw new Error("Name, URL and API key are required"); const r = await api("/indexers", { method: "POST", body: b }); const t = await api(`/indexers/${r.id}/test`, { method: "POST" }); toast(t.ok ? `Added — ${t.message}` : `Added, but test failed: ${t.message}`, !t.ok); route(); });
+}
+async function toggleIx(id, on) { await guard(() => api("/indexers/" + id, { method: "PUT", body: { enabled: on } })); }
+async function testIx(id) { await guard(async () => { const r = await api(`/indexers/${id}/test`, { method: "POST" }); toast(r.ok ? "OK — " + r.message : r.message, !r.ok); }); }
+async function delIx(id) { if (confirm("Delete indexer?")) await guard(async () => { await api("/indexers/" + id, { method: "DELETE" }); route(); }); }
+
+async function renderProfiles(el, s) {
+  const tp = await api("/trash/profiles");
+  const st = await api("/status");
+  const opts = (list, cur) => list.map((p) => `<option value="${esc(p.key)}" ${p.key === cur ? "selected" : ""}>${esc(p.name)} (${esc(p.key)})</option>`).join("");
+  el.innerHTML = `<p>Quality profiles, custom formats, scores and size limits are imported straight from <a href="https://trash-guides.info" target="_blank" rel="noopener">TRaSH Guides</a>.
+    Last sync: <b>${esc(st.trash_synced || "never")}</b> <button id="sync" class="primary">Sync TRaSH Guides now</button></p>
+  ${tp.loaded ? `<div class="form">
+    <label>Movies — 1080p library</label><select data-k="profile_movies_hd">${opts(tp.movie, s.profile_movies_hd)}</select>
+    <label>Movies — 4K library</label><select data-k="profile_movies_uhd">${opts(tp.movie, s.profile_movies_uhd)}</select>
+    <label>TV — 1080p library</label><select data-k="profile_tv_hd">${opts(tp.tv, s.profile_tv_hd)}</select>
+    <label>TV — 4K library</label><select data-k="profile_tv_uhd">${opts(tp.tv, s.profile_tv_uhd)}</select>
+    <label>Score set</label><input data-k="trash_score_set" value="${esc(s.trash_score_set)}"><div class="help">TRaSH score column: default, sqp-1-1080p, french, german, anime…</div>
+    <span></span><div><button class="primary" id="save">Save</button></div></div>
+    <h3>Preview</h3><div class="toolbar"><select id="pv"><option value="movie/hd">Movies 1080p</option><option value="movie/uhd">Movies 4K</option><option value="tv/hd">TV 1080p</option><option value="tv/uhd">TV 4K</option></select></div><div id="pvo"></div>
+    <h3>Test a release name</h3><div class="toolbar"><input id="rt" class="grow" placeholder="Movie.Name.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR10.H.265-FLUX"><button id="rtb">Score it</button></div><div id="rto"></div>` : '<p class="muted">Sync first to choose profiles.</p>'}`;
+  $("#sync").onclick = () => guard(async () => { $("#sync").disabled = true; $("#sync").textContent = "Syncing…"; const r = await api("/trash/sync", { method: "POST" }); toast(`Synced ${r.files} files`); checkBanner(); route(); });
+  if (!tp.loaded) return;
+  $("#save").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect(el) }); toast("Saved"); preview(); });
+  const preview = () => guard(async () => {
+    const p = await api("/trash/profile/" + $("#pv").value);
+    $("#pvo").innerHTML = `<p><b>${esc(p.name)}</b> — cutoff <b>${esc(p.cutoff)}</b>, min score ${p.min_format_score}, upgrade until score ${p.cutoff_format_score}</p>
+      <div class="chips" style="margin-bottom:10px">${p.qualities.filter((q) => q.allowed).map((q) => `<span class="chip ok">${esc(q.name)}</span>`).join("")}</div>
+      <div class="chips">${p.formats.map((f) => `<span class="chip ${f.score < 0 ? "bad" : ""}">${esc(f.name)}: ${f.score}</span>`).join("")}</div>`;
+  });
+  $("#pv").onchange = preview; preview();
+  $("#rtb").onclick = () => guard(async () => {
+    const [kind, tier] = $("#pv").value.split("/");
+    const r = await api(`/parse?kind=${kind}&tier=${tier}&title=${encodeURIComponent($("#rt").value)}`);
+    $("#rto").innerHTML = `<p>${esc(r.profile)}: <b>${esc(r.quality)}</b> ${r.allowed ? '<span class="chip ok">allowed</span>' : '<span class="chip bad">not allowed</span>'} score <b>${r.score}</b> — ${r.custom_formats.map(esc).join(", ") || "no custom formats"}
+      <br><span class="small muted">group ${esc(r.parsed.group)} · year ${esc(r.parsed.year)} · S${esc(r.parsed.season)} E${esc(r.parsed.episodes.join(","))}</span></p>`;
+  });
+}
+
+async function renderNaming(el, s) {
+  const tp = await api("/trash/profiles");
+  if (!tp.loaded) { el.innerHTML = '<p class="muted">Sync TRaSH Guides first (Profiles tab).</p>'; return; }
+  const nm = tp.naming;
+  const sel = (k, obj) => `<select data-k="${k}">${Object.keys(obj || {}).map((o) => `<option ${s[k] === o ? "selected" : ""}>${o}</option>`).join("")}</select><div class="help"><code>${esc((obj || {})[s[k]] || "")}</code></div>`;
+  el.innerHTML = `<p class="muted">Naming schemes come from TRaSH Guides' recommended Radarr/Sonarr formats.</p><div class="form">
+    <label>Movie folder</label>${sel("naming_movie_folder", nm.movie.folder)}
+    <label>Movie file</label>${sel("naming_movie_file", nm.movie.file)}
+    <label>Series folder</label>${sel("naming_series_folder", nm.tv.series)}
+    <label>Season folder</label>${sel("naming_season_folder", nm.tv.season)}
+    <label>Episode file</label>${sel("naming_episode_file", (nm.tv.episodes || {}).standard)}
+    <span></span><div><button class="primary" id="save">Save</button></div></div>
+    <p class="small muted">Folder naming is applied when an item is added; file naming is applied on every import.</p>`;
+  $("#save").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect(el) }); toast("Saved"); route(); });
+}
+routes.settings = (sub) => renderSettings(sub || "general");
+
+checkBanner();
+route();

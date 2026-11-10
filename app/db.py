@@ -1,0 +1,210 @@
+"""SQLite storage. One small file in /config, no external database needed."""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import threading
+from contextlib import contextmanager
+from typing import Any
+
+CONFIG_DIR = os.environ.get("OMNIARR_CONFIG", "/config")
+DB_PATH = os.path.join(CONFIG_DIR, "omniarr.db")
+
+_lock = threading.RLock()
+_conn: sqlite3.Connection | None = None
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+
+CREATE TABLE IF NOT EXISTS indexers (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, apikey TEXT NOT NULL,
+  movie_categories TEXT DEFAULT '2000', tv_categories TEXT DEFAULT '5000',
+  enabled INTEGER DEFAULT 1, priority INTEGER DEFAULT 25
+);
+
+CREATE TABLE IF NOT EXISTS movies (
+  id INTEGER PRIMARY KEY, tmdb_id INTEGER UNIQUE NOT NULL, imdb_id TEXT, title TEXT NOT NULL,
+  original_title TEXT, year INTEGER, overview TEXT, poster TEXT, runtime INTEGER,
+  release_date TEXT, tier TEXT NOT NULL DEFAULT 'hd', monitored INTEGER DEFAULT 1,
+  folder TEXT, file_path TEXT, file_quality TEXT, file_score INTEGER, file_size INTEGER,
+  added TEXT DEFAULT CURRENT_TIMESTAMP, last_search TEXT
+);
+
+CREATE TABLE IF NOT EXISTS series (
+  id INTEGER PRIMARY KEY, tvdb_id INTEGER UNIQUE NOT NULL, imdb_id TEXT, tmdb_id INTEGER,
+  title TEXT NOT NULL, year INTEGER, overview TEXT, poster TEXT, runtime INTEGER,
+  status TEXT, series_type TEXT DEFAULT 'standard', tier TEXT NOT NULL DEFAULT 'hd',
+  monitored INTEGER DEFAULT 1, folder TEXT, added TEXT DEFAULT CURRENT_TIMESTAMP,
+  last_refresh TEXT
+);
+
+CREATE TABLE IF NOT EXISTS episodes (
+  id INTEGER PRIMARY KEY, series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE,
+  tvdb_id INTEGER, season INTEGER NOT NULL, episode INTEGER NOT NULL, absolute INTEGER,
+  title TEXT, air_date TEXT, overview TEXT, monitored INTEGER DEFAULT 1,
+  file_path TEXT, file_quality TEXT, file_score INTEGER, file_size INTEGER, last_search TEXT,
+  UNIQUE(series_id, season, episode)
+);
+
+CREATE TABLE IF NOT EXISTS downloads (
+  id INTEGER PRIMARY KEY, kind TEXT NOT NULL, movie_id INTEGER, series_id INTEGER,
+  episode_ids TEXT, release_title TEXT NOT NULL, indexer TEXT, guid TEXT, size INTEGER,
+  quality TEXT, score INTEGER, custom_formats TEXT, nzbget_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'queued', progress REAL DEFAULT 0, message TEXT,
+  dest_dir TEXT, added TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS blocklist (
+  id INTEGER PRIMARY KEY, release_title TEXT NOT NULL, guid TEXT, reason TEXT,
+  added TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY, level TEXT, message TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+DEFAULT_SETTINGS: dict[str, Any] = {
+    # metadata
+    "tmdb_api_key": "",
+    "tvdb_api_key": "",
+    "tvdb_pin": "",
+    "metadata_language": "en",
+    # NZBGet
+    "nzbget_url": "http://nzbget:6789",
+    "nzbget_username": "nzbget",
+    "nzbget_password": "",
+    "nzbget_category_movies": "movies",
+    "nzbget_category_tv": "tv",
+    # root folders, split by quality tier
+    "root_movies_hd": "/data/media/movies",
+    "root_movies_uhd": "/data/media/movies-4k",
+    "root_tv_hd": "/data/media/tv",
+    "root_tv_uhd": "/data/media/tv-4k",
+    # path the download client uses vs. what this container sees
+    "remote_path_from": "",
+    "remote_path_to": "",
+    # TRaSH profile choices (file stems in docs/json/<app>/quality-profiles)
+    "profile_movies_hd": "hd-bluray-web",
+    "profile_movies_uhd": "uhd-bluray-web",
+    "profile_tv_hd": "web-1080p",
+    "profile_tv_uhd": "web-2160p",
+    "trash_score_set": "default",
+    "trash_branch": "master",
+    "trash_auto_sync_hours": 24,
+    # naming (keys into TRaSH naming json)
+    "naming_movie_folder": "plex-tmdb",
+    "naming_movie_file": "plex-tmdb",
+    "naming_series_folder": "plex-tvdb",
+    "naming_season_folder": "default",
+    "naming_episode_file": "default",
+    "import_mode": "move",  # move | hardlink | copy
+    # scheduling
+    "search_interval_minutes": 60,
+    "rss_interval_minutes": 15,
+    "series_refresh_hours": 12,
+    "upgrades_enabled": True,
+}
+
+
+def connect() -> sqlite3.Connection:
+    global _conn
+    with _lock:
+        if _conn is None:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            _conn = sqlite3.connect(DB_PATH, check_same_thread=False, isolation_level=None)
+            _conn.row_factory = sqlite3.Row
+            _conn.execute("PRAGMA journal_mode=WAL")
+            _conn.execute("PRAGMA foreign_keys=ON")
+            _conn.executescript(SCHEMA)
+        return _conn
+
+
+def reset_for_tests(path: str) -> None:
+    global _conn, DB_PATH, CONFIG_DIR
+    with _lock:
+        if _conn:
+            _conn.close()
+        _conn = None
+        CONFIG_DIR = os.path.dirname(path)
+        DB_PATH = path
+
+
+@contextmanager
+def tx():
+    c = connect()
+    with _lock:
+        c.execute("BEGIN")
+        try:
+            yield c
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+
+
+def q(sql: str, params: tuple | dict = ()) -> list[dict]:
+    with _lock:
+        return [dict(r) for r in connect().execute(sql, params).fetchall()]
+
+
+def one(sql: str, params: tuple | dict = ()) -> dict | None:
+    rows = q(sql, params)
+    return rows[0] if rows else None
+
+
+def ex(sql: str, params: tuple | dict = ()) -> int:
+    with _lock:
+        cur = connect().execute(sql, params)
+        return cur.lastrowid
+
+
+def insert(table: str, data: dict) -> int:
+    cols = ",".join(data)
+    marks = ",".join("?" for _ in data)
+    return ex(f"INSERT INTO {table} ({cols}) VALUES ({marks})", tuple(data.values()))
+
+
+def update(table: str, row_id: int, data: dict) -> None:
+    if not data:
+        return
+    sets = ",".join(f"{k}=?" for k in data)
+    ex(f"UPDATE {table} SET {sets} WHERE id=?", (*data.values(), row_id))
+
+
+# ---- settings -----------------------------------------------------------
+def get_settings() -> dict[str, Any]:
+    s = dict(DEFAULT_SETTINGS)
+    for r in q("SELECT key, value FROM settings"):
+        try:
+            s[r["key"]] = json.loads(r["value"])
+        except json.JSONDecodeError:
+            s[r["key"]] = r["value"]
+    # environment variables override (handy for Unraid templates)
+    for k in DEFAULT_SETTINGS:
+        env = os.environ.get("OMNIARR_" + k.upper())
+        if env is not None and env != "":
+            d = DEFAULT_SETTINGS[k]
+            s[k] = int(env) if isinstance(d, int) and not isinstance(d, bool) else (
+                env.lower() in ("1", "true", "yes") if isinstance(d, bool) else env)
+    return s
+
+
+def setting(key: str) -> Any:
+    return get_settings().get(key)
+
+
+def save_settings(values: dict[str, Any]) -> None:
+    with tx() as c:
+        for k, v in values.items():
+            if k in DEFAULT_SETTINGS:
+                c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                          (k, json.dumps(v)))
+
+
+def log(message: str, level: str = "info") -> None:
+    import logging
+    logging.getLogger("omniarr").log(logging.WARNING if level == "warn" else logging.ERROR if level == "error" else logging.INFO, message)
+    ex("INSERT INTO events(level, message) VALUES(?,?)", (level, message))
+    ex("DELETE FROM events WHERE id < (SELECT MAX(id) - 2000 FROM events)")

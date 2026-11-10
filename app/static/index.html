@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Omniarr</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><img src="/static/icon.svg" alt=""> Omniarr</div>
+  <nav>
+    <a href="#/movies" data-tab="movies">Movies</a>
+    <a href="#/series" data-tab="series">TV</a>
+    <a href="#/add" data-tab="add">Add</a>
+    <a href="#/activity" data-tab="activity">Activity</a>
+    <a href="#/settings" data-tab="settings">Settings</a>
+  </nav>
+</header>
+<div id="banner"></div>
+<main id="view"></main>
+<div id="modal" class="hidden"><div class="modal-body"></div></div>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

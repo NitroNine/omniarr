@@ -1,0 +1,21 @@
+services:
+  omniarr:
+    build: .
+    image: omniarr:latest
+    container_name: omniarr
+    restart: unless-stopped
+    ports:
+      - "8790:8790"
+    environment:
+      - PUID=99
+      - PGID=100
+      - UMASK=002
+      - TZ=America/New_York
+      # Optional: protect the web UI with a login
+      # - OMNIARR_USERNAME=admin
+      # - OMNIARR_PASSWORD=changeme
+    volumes:
+      - /mnt/user/appdata/omniarr:/config
+      # One share containing both downloads and media lets imports use
+      # instant hardlinks/moves (TRaSH recommended layout).
+      - /mnt/user/data:/data
