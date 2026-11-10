@@ -345,6 +345,37 @@ def put_quality_limits(key: str, body: dict):
     return get_quality_limits()[key]
 
 
+# ----------------------------------------------------------- folder picker --
+# Admin only (not in auth.USER_ROUTES). Paths are as the container sees them:
+# /data is the Data share from the Unraid template.
+def _existing_dir(path: str) -> str:
+    base = os.path.abspath(path or ("/data" if os.path.isdir("/data") else "/"))
+    while not os.path.isdir(base) and base != "/":  # a folder that doesn't exist yet: start at its parent
+        base = os.path.dirname(base)
+    return base
+
+
+@app.get("/api/fs/browse")
+def browse_folders(path: str = ""):
+    base = _existing_dir(path)
+    try:
+        folders = sorted((e.name for e in os.scandir(base)
+                          if e.is_dir(follow_symlinks=True) and not e.name.startswith((".", "@"))), key=str.lower)
+    except PermissionError:
+        raise HTTPException(403, f"No permission to read {base}")
+    return {"path": base, "parent": None if base == "/" else os.path.dirname(base), "folders": folders[:2000]}
+
+
+@app.post("/api/fs/mkdir")
+def make_folder(body: dict):
+    parent, name = _existing_dir(body.get("path", "")), (body.get("name") or "").strip()
+    if not name or "/" in name or name in (".", ".."):
+        raise ValueError("Give the new folder a name (no slashes)")
+    new = os.path.join(parent, name)
+    os.makedirs(new, exist_ok=True)
+    return {"path": new}
+
+
 # --------------------------------------------------------- library import --
 @app.get("/api/import/scan")
 def import_scan(kind: str = "movie"):

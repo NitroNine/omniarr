@@ -127,3 +127,15 @@ body.logged-out nav, body.logged-out .usermenu { display: none; }
 @media (max-width: 700px) {
   .usermenu { order: 3; width: 100%; justify-content: flex-end; }
 }
+
+/* folder picker */
+.folder-field { display: flex; gap: 6px; }
+.folder-field input { flex: 1; min-width: 0; }
+.folder-path { padding: 6px 0 10px; word-break: break-all; }
+.folder-list { display: flex; flex-direction: column; max-height: 55vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.folder-list .folder { display: flex; align-items: center; gap: 8px; text-align: left; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text); padding: 9px 12px; cursor: pointer; }
+.folder-list .folder:last-child { border-bottom: 0; }
+.folder-list .folder:hover { background: var(--chip); }
+.folder-list .folder.up { color: var(--muted); }
+.ficon { width: 16px; height: 12px; border-radius: 2px; background: var(--accent); position: relative; flex: none; opacity: .8; }
+.ficon::before { content: ""; position: absolute; left: 0; top: -3px; width: 7px; height: 4px; border-radius: 2px 2px 0 0; background: var(--accent); }

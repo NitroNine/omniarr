@@ -159,3 +159,25 @@ def test_env_password_bootstraps_admin(env, monkeypatch):
     assert u["username"] == "unraid" and u["role"] == "admin"
     auth._failures.clear()
     _login("unraid", "fromtemplate")
+
+
+def test_folder_picker(client, env, tmp_path):
+    import os
+    from fastapi.testclient import TestClient
+
+    from app import auth
+    from app.main import app
+    (tmp_path / "media" / "Movies").mkdir(parents=True)
+    (tmp_path / "media" / ".hidden").mkdir()
+    d = client.get("/api/fs/browse", params={"path": str(tmp_path / "media")}).json()
+    assert d["folders"] == ["Movies"] and d["parent"] == str(tmp_path)
+    # a folder that doesn't exist yet opens at its nearest existing parent
+    assert client.get("/api/fs/browse", params={"path": str(tmp_path / "media" / "nope" / "x")}).json()["path"] == str(tmp_path / "media")
+    r = client.post("/api/fs/mkdir", json={"path": str(tmp_path / "media"), "name": "Movies 4K"}).json()
+    assert os.path.isdir(r["path"])
+    assert client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "../x"}).status_code == 400
+    # admins only
+    auth.create_user("viewer2", "viewerpass")
+    v = TestClient(app)
+    v.post("/api/auth/login", json={"username": "viewer2", "password": "viewerpass"})
+    assert v.get("/api/fs/browse").status_code == 403

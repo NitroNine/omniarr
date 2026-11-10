@@ -483,12 +483,12 @@ const SECTIONS = {
     ["nzbget_username", "Username", "text"], ["nzbget_password", "Password", "password"],
     ["nzbget_category_movies", "Movie category", "text"], ["nzbget_category_tv", "TV category", "text"],
     ["remote_path_from", "Remote path (NZBGet)", "text", "If NZBGet sees downloads at a different path, e.g. /downloads/completed"],
-    ["remote_path_to", "Local path (Omniarr)", "text", "…and Omniarr sees them at, e.g. /data/downloads/completed"],
+    ["remote_path_to", "Local path (Omniarr)", "folder", "…and Omniarr sees them at, e.g. /data/downloads/completed"],
     ["import_mode", "Import mode", ["move", "hardlink", "copy"], "Hardlink needs downloads and media on the same share (e.g. /mnt/user/data)."],
   ] },
   roots: { title: "Root folders", fields: [
-    ["root_movies_hd", "Movies — 1080p and lower", "text"], ["root_movies_uhd", "Movies — 4K", "text"],
-    ["root_tv_hd", "TV — 1080p and lower", "text"], ["root_tv_uhd", "TV — 4K", "text"],
+    ["root_movies_hd", "Movies — 1080p and lower", "folder"], ["root_movies_uhd", "Movies — 4K", "folder", "Pick the same folder as 1080p to keep both versions of a movie side by side in one folder."],
+    ["root_tv_hd", "TV — 1080p and lower", "folder"], ["root_tv_uhd", "TV — 4K", "folder", "Same folder as 1080p = both versions of a show in one folder."],
   ] },
   schedule: { title: "Schedule", fields: [
     ["rss_interval_minutes", "RSS sync (minutes)", "number"], ["search_interval_minutes", "Backlog search (minutes)", "number", "Searches up to 10 missing items per run, each at most once a day."],
@@ -506,6 +506,7 @@ async function renderSettings(sub = "general") {
       let input;
       if (Array.isArray(type)) input = `<select data-k="${k}">${type.map((o) => `<option ${s[k] === o ? "selected" : ""}>${o}</option>`).join("")}</select>`;
       else if (type === "checkbox") input = `<input type="checkbox" data-k="${k}" ${s[k] ? "checked" : ""}>`;
+      else if (type === "folder") input = `<div class="folder-field"><input type="text" data-k="${k}" value="${esc(s[k])}" autocomplete="off"><button type="button" onclick="pickFolder(this.previousElementSibling)">Browse…</button></div>`;
       else input = `<input type="${type}" data-k="${k}" value="${esc(s[k])}" autocomplete="off">`;
       return `<label>${label}</label>${input}${help ? `<div class="help">${help}</div>` : ""}`;
     }).join("")}<span></span><div class="toolbar"><button class="primary" id="save">Save</button>${sub === "downloads" ? '<button id="test">Test NZBGet</button>' : ""}</div></div>`;
@@ -516,6 +517,31 @@ async function renderSettings(sub = "general") {
   else if (sub === "limits") await renderLimits(el);
   else if (sub === "users") await renderUsers(el);
   else if (sub === "naming") await renderNaming(el, s);
+}
+// Folder picker: browse the folders Omniarr can see (/data = the Data share from the Unraid template)
+async function pickFolder(input) {
+  const join = (a, b) => (a.endsWith("/") ? a : a + "/") + b;
+  modal('<p class="muted">Loading folders…</p>');
+  const draw = async (path) => {
+    const d = await guard(() => api("/fs/browse?path=" + encodeURIComponent(path)));
+    if (!d) return;
+    const body = $("#modal .modal-body");
+    body.innerHTML = `<div class="toolbar"><h2 class="grow">Choose a folder</h2><button onclick="closeModal()">Cancel</button></div>
+      <div class="folder-path"><code>${esc(d.path)}</code></div>
+      <div class="folder-list">${d.parent !== null ? `<button class="folder up" data-p="${esc(d.parent)}">↑ Up one level</button>` : ""}
+        ${d.folders.map((f) => `<button class="folder" data-p="${esc(join(d.path, f))}"><span class="ficon"></span>${esc(f)}</button>`).join("") || '<p class="muted small" style="padding:8px">No folders inside this one.</p>'}</div>
+      <div class="toolbar" style="margin-top:12px"><button id="fnew">New folder…</button><span class="grow"></span><button class="primary" id="fuse">Use this folder</button></div>
+      <p class="small muted">These are the paths Omniarr sees. <code>/data</code> is the Data share set in the Unraid template, for example <code>/mnt/user/media</code>.</p>`;
+    body.querySelectorAll(".folder").forEach((b) => (b.onclick = () => draw(b.dataset.p)));
+    $("#fuse").onclick = () => { input.value = d.path; input.dispatchEvent(new Event("input")); closeModal(); toast("Folder chosen — click Save to keep it"); };
+    $("#fnew").onclick = () => guard(async () => {
+      const name = prompt(`New folder inside ${d.path}:`);
+      if (!name) return;
+      const r = await api("/fs/mkdir", { method: "POST", body: { path: d.path, name } });
+      await draw(r.path);
+    });
+  };
+  await draw(input.value || "");
 }
 function collect(el) {
   const out = {};
