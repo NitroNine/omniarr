@@ -97,7 +97,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tmdb_api_key": "",
     "metadata_language": "en",
     "streaming_region": "US",  # country for "where to watch" (Discover)
-    "streaming_hide_ads": True,  # leave ad-supported services and ad tiers off the Streaming tab
+    "streaming_hide_ads": True,  # leave "... with Ads" plans of paid services off the Streaming tab
     # NZBGet
     "nzbget_url": "http://nzbget:6789",
     "nzbget_username": "nzbget",

@@ -143,22 +143,18 @@ def originals_network(name: str) -> int | None:
     return ORIGINALS_NETWORK.get(n)
 
 
-# Free, ad-supported services (FAST). Ad tiers of paid services are caught by name ("... with Ads").
-_AD_SUPPORTED = {"tubi", "tubi tv", "pluto tv", "freevee", "amazon freevee", "the roku channel", "roku channel", "plex",
-                 "plex channel", "plex player", "crackle", "xumo play", "xumo", "sling freestream", "fandango at home free",
-                 "vudu free", "popcornflix", "filmrise", "shout! factory tv", "redbox free live tv", "local now",
-                 "youtube free", "youtube (free)", "distrotv", "cineverse", "kanopy with ads", "cwtv", "the cw"}
-_ADS_RX = re.compile(r"\b(with ads|ads|ad-supported|ad supported|free with ads)\b", re.I)
+# Ad tiers of paid services ("Netflix Standard with Ads", "Amazon Prime Video with Ads"). Free
+# services such as Tubi or Pluto TV stay: they have no ad-free plan to prefer.
+_ADS_RX = re.compile(r"\bwith ads\b", re.I)
 
 
 def has_ads(name: str) -> bool:
-    n = (name or "").strip().lower()
-    return n in _AD_SUPPORTED or bool(_ADS_RX.search(n))
+    return bool(_ADS_RX.search(name or ""))
 
 
 async def watch_providers() -> list[dict]:
     """Streaming services available in the configured region (movies + TV merged).
-    Ad-supported services and ad tiers are left out unless the streaming_hide_ads setting is off."""
+    Ad tiers of paid services ("... with Ads") are left out unless the streaming_hide_ads setting is off."""
     out = await _all_watch_providers()
     if db.setting("streaming_hide_ads"):
         out = [p for p in out if not has_ads(p["name"])]

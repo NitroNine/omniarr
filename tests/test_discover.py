@@ -38,7 +38,7 @@ def _fake_tmdb(monkeypatch):
 def test_providers_merge_and_flags(env, monkeypatch):
     _fake_tmdb(monkeypatch)
     ps = asyncio.run(metadata.watch_providers())
-    assert [p["name"] for p in ps] == ["Netflix", "Apple TV+", "Paramount Plus", "Apple TV Store"]
+    assert [p["name"] for p in ps] == ["Netflix", "Apple TV+", "Paramount Plus", "Tubi TV", "Apple TV Store"]
     nf = ps[0]
     assert nf["kinds"] == ["movie", "tv"] and nf["logo"].endswith("/n.png") and nf["originals"]
     assert next(p for p in ps if p["name"] == "Apple TV+")["originals"]
@@ -83,11 +83,13 @@ def test_api_marks_library_and_adds_tv(client, monkeypatch):
     assert tv["results"][0]["library_id"] == s["id"]
 
 
-def test_ad_supported_services_hidden(env, monkeypatch):
+def test_ad_plans_hidden(env, monkeypatch):
     _fake_tmdb(monkeypatch)
     names = [p["name"] for p in asyncio.run(metadata.watch_providers())]
-    assert "Netflix Standard with Ads" not in names and "Tubi TV" not in names and "Netflix" in names
-    assert not metadata.has_ads("Paramount Plus") and not metadata.has_ads("Shudder")  # 'ads' only as a word
+    assert "Netflix Standard with Ads" not in names
+    assert "Netflix" in names and "Tubi TV" in names  # the ad-free plan and free services stay
+    assert metadata.has_ads("Amazon Prime Video with Ads") and not metadata.has_ads("Amazon Prime Video")
+    assert not metadata.has_ads("Pluto TV") and not metadata.has_ads("Shudder")
     db.save_settings({"streaming_hide_ads": False})
     names = [p["name"] for p in asyncio.run(metadata.watch_providers())]
-    assert "Netflix Standard with Ads" in names and "Tubi TV" in names
+    assert "Netflix Standard with Ads" in names
