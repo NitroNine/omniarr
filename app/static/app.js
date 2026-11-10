@@ -746,11 +746,12 @@ function collect(el) {
 }
 async function renderIndexers(el) {
   const rows = await api("/indexers");
+  window._ix = rows;
   el.innerHTML = `<p class="muted">Any Newznab-compatible Usenet indexer. Movies use category 2000 and TV 5000 by default.</p>
   ${rows.length ? `<div class="table-wrap"><table><tr><th>Name</th><th>URL</th><th>Categories (movie / tv)</th><th>Priority</th><th>Enabled</th><th></th></tr>
   ${rows.map((r) => `<tr><td>${esc(r.name)}</td><td class="small">${esc(r.url)}</td><td class="small">${esc(r.movie_categories)} / ${esc(r.tv_categories)}</td><td>${r.priority}</td>
     <td><input type="checkbox" ${r.enabled ? "checked" : ""} onchange="toggleIx(${r.id}, this.checked)"></td>
-    <td><button class="small" onclick="testIx(${r.id})">Test</button> <button class="small danger" onclick="delIx(${r.id})">Delete</button></td></tr>`).join("")}</table></div>` : ""}
+    <td><button class="small" onclick="testIx(${r.id})">Test</button> <button class="small" onclick="editIx(${r.id})">Edit</button> <button class="small danger" onclick="delIx(${r.id})">Delete</button></td></tr>`).join("")}</table></div>` : ""}
   <h3>Add indexer</h3><div class="form" id="ixf">
     <label>Name</label><input data-k="name" placeholder="NZBGeek">
     <label>URL</label><input data-k="url" placeholder="https://api.nzbgeek.info">
@@ -760,6 +761,30 @@ async function renderIndexers(el) {
     <label>Priority</label><input data-k="priority" type="number" value="25"><div class="help">Lower = preferred.</div>
     <span></span><div><button class="primary" id="addix">Add</button></div></div>`;
   $("#addix").onclick = () => guard(async () => { const b = collect($("#ixf")); if (!b.name || !b.url || !b.apikey) throw new Error("Name, URL and API key are required"); const r = await api("/indexers", { method: "POST", body: b }); const t = await api(`/indexers/${r.id}/test`, { method: "POST" }); toast(t.ok ? `Added — ${t.message}` : `Added, but test failed: ${t.message}`, !t.ok); route(); });
+}
+function editIx(id) {
+  const r = (window._ix || []).find((x) => x.id === id);
+  if (!r) return;
+  modal(`<h2>Edit indexer</h2><div class="form" id="ixe">
+    <label>Name</label><input data-k="name" value="${esc(r.name)}">
+    <label>URL</label><input data-k="url" value="${esc(r.url)}">
+    <label>API key</label><input data-k="apikey" type="password" autocomplete="off" placeholder="Unchanged (${esc(r.apikey)})"><div class="help">Leave empty to keep the current key.</div>
+    <label>Movie categories</label><input data-k="movie_categories" value="${esc(r.movie_categories)}"><div class="help">Comma-separated Newznab categories, e.g. 2000 or 2040,2045.</div>
+    <label>TV categories</label><input data-k="tv_categories" value="${esc(r.tv_categories)}">
+    <label>Priority</label><input data-k="priority" type="number" value="${r.priority}"><div class="help">Lower = preferred.</div>
+    <label>Enabled</label><input type="checkbox" data-k="enabled" ${r.enabled ? "checked" : ""}>
+    <span></span><div class="toolbar"><button class="primary" id="ixsave">Save</button><button id="ixsavetest">Save &amp; test</button><button onclick="closeModal()">Cancel</button></div></div>`);
+  const save = async (test) => {
+    const b = collect($("#ixe"));
+    if (!b.name.trim() || !b.url.trim()) throw new Error("Name and URL are required");
+    await api("/indexers/" + id, { method: "PUT", body: b });
+    closeModal();
+    if (test) { const t = await api(`/indexers/${id}/test`, { method: "POST" }); toast(t.ok ? "Saved — " + t.message : `Saved, but the test failed: ${t.message}`, !t.ok); }
+    else toast("Saved");
+    route();
+  };
+  $("#ixsave").onclick = () => guard(() => save(false));
+  $("#ixsavetest").onclick = () => guard(() => save(true));
 }
 async function toggleIx(id, on) { await guard(() => api("/indexers/" + id, { method: "PUT", body: { enabled: on } })); }
 async function testIx(id) { await guard(async () => { const r = await api(`/indexers/${id}/test`, { method: "POST" }); toast(r.ok ? "OK — " + r.message : r.message, !r.ok); }); }

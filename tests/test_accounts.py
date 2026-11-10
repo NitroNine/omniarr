@@ -181,3 +181,22 @@ def test_folder_picker(client, env, tmp_path):
     v = TestClient(app)
     v.post("/api/auth/login", json={"username": "viewer2", "password": "viewerpass"})
     assert v.get("/api/fs/browse").status_code == 403
+
+
+def test_edit_indexer(client):
+    iid = client.post("/api/indexers", json={"name": "Geek", "url": "https://api.example", "apikey": "abcdef123456"}).json()["id"]
+    row = next(r for r in client.get("/api/indexers").json() if r["id"] == iid)
+    assert row["apikey"] == "abcd…"  # never sent back in full
+    r = client.put(f"/api/indexers/{iid}", json={"name": " Geek 2 ", "url": "https://api2.example", "apikey": "",
+                                                "movie_categories": "2040,2045", "priority": "10", "enabled": False})
+    assert r.status_code == 200
+    saved = db.one("SELECT * FROM indexers WHERE id=?", (iid,))
+    assert (saved["name"], saved["url"], saved["movie_categories"], saved["priority"], saved["enabled"]) == \
+        ("Geek 2", "https://api2.example", "2040,2045", 10, 0)
+    assert saved["apikey"] == "abcdef123456"  # empty key = keep it
+    client.put(f"/api/indexers/{iid}", json={"apikey": "abcd…"})
+    assert db.one("SELECT apikey FROM indexers WHERE id=?", (iid,))["apikey"] == "abcdef123456"
+    client.put(f"/api/indexers/{iid}", json={"apikey": "newkey999"})
+    assert db.one("SELECT apikey FROM indexers WHERE id=?", (iid,))["apikey"] == "newkey999"
+    assert client.put(f"/api/indexers/{iid}", json={"url": "  "}).status_code == 400
+    assert client.put("/api/indexers/9999", json={"name": "x"}).status_code == 404

@@ -453,7 +453,18 @@ def add_indexer(ix: IndexerIn):
 
 @app.put("/api/indexers/{iid}")
 def edit_indexer(iid: int, ix: dict):
-    allowed = {k: v for k, v in ix.items() if k in IndexerIn.model_fields and not (k == "apikey" and "…" in str(v))}
+    # an empty or masked ("abcd…") API key means "keep the saved one"
+    allowed = {k: v for k, v in ix.items() if k in IndexerIn.model_fields
+               and not (k == "apikey" and ("…" in str(v) or not str(v).strip()))}
+    for k in ("name", "url"):
+        if k in allowed:
+            allowed[k] = str(allowed[k]).strip()
+            if not allowed[k]:
+                raise HTTPException(400, f"The indexer {k} can't be empty")
+    if "priority" in allowed:
+        allowed["priority"] = int(allowed["priority"])
+    if not db.one("SELECT 1 FROM indexers WHERE id=?", (iid,)):
+        raise HTTPException(404)
     if "enabled" in allowed:
         allowed["enabled"] = int(bool(allowed["enabled"]))
     db.update("indexers", iid, allowed)
