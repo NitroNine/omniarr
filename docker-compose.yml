@@ -11,9 +11,11 @@ services:
       - PGID=100
       - UMASK=002
       - TZ=America/New_York
-      # Optional: protect the web UI with a login
+      # Optional: create the admin account on first start (otherwise the web UI asks you)
       # - OMNIARR_USERNAME=admin
       # - OMNIARR_PASSWORD=changeme
+      # Set to true if you serve Omniarr over HTTPS (reverse proxy) so login cookies are HTTPS-only
+      # - OMNIARR_SECURE_COOKIES=true
     volumes:
       - /mnt/user/appdata/omniarr:/config
       # One share containing both downloads and media lets imports use

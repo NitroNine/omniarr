@@ -1,7 +1,5 @@
 import asyncio
 
-from fastapi.testclient import TestClient
-
 from app import collections_, db
 from app.services import metadata
 
@@ -74,12 +72,11 @@ def test_keyword_universe(env, monkeypatch):
     assert c["source"] == "keyword" and c["total"] == 2 and len(c["movies"]) == 2
 
 
-def test_movie_lookup_flags_collection(env, monkeypatch):
+def test_movie_lookup_flags_collection(client, monkeypatch):
     _fake(monkeypatch, [120])
 
     async def search(term):
         return [{"tmdb_id": 120, "title": "The Fellowship of the Ring", "year": 2001}]
     monkeypatch.setattr(metadata, "search_movies", search)
-    from app.main import app
-    res = TestClient(app).get("/api/lookup/movie", params={"term": "fellowship"}).json()
+    res = client.get("/api/lookup/movie", params={"term": "fellowship"}).json()
     assert res[0]["collection"] == {"id": 119, "name": "The Lord of the Rings Collection"}

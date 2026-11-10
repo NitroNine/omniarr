@@ -3,6 +3,12 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const view = $("#view");
 let settingsCache = null;
+let ME = null;
+const isAdmin = () => !!ME && ME.role === "admin";
+const canUhd = () => !!ME && (ME.role === "admin" || !!ME.allow_uhd);
+function tierOptions(long = true) {
+  return `<option value="hd">1080p${long ? " library" : ""}</option>${canUhd() ? `<option value="uhd">4K${long ? " library" : ""}</option>` : ""}`;
+}
 
 async function api(path, opts = {}) {
   const o = { headers: { "Content-Type": "application/json" }, ...opts };
@@ -10,6 +16,7 @@ async function api(path, opts = {}) {
   const r = await fetch("/api" + path, o);
   let data = null;
   try { data = await r.json(); } catch { /* empty */ }
+  if (r.status === 401 && data && data.login) { ME = null; renderAuth("login"); }
   if (!r.ok) throw new Error((data && data.detail) || r.statusText);
   return data;
 }
@@ -27,16 +34,19 @@ function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 // ------------------------------------------------------------- router ---
-const routes = { discover: renderDiscover, collections: renderCollections, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
+const routes = { requests: (sub) => renderRequests(sub), discover: renderDiscover, collections: renderCollections, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
+const ADMIN_PAGES = ["settings", "activity", "import"];
 async function route() {
-  const [, name = "movies", arg] = location.hash.split("/");
+  let [, name = "movies", arg] = location.hash.split("/");
+  if (!isAdmin() && ADMIN_PAGES.includes(name)) { location.hash = "#/movies"; return; }
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("active", a.dataset.tab === name || ((name === "movie" || name === "collections") && a.dataset.tab === "movies") || (name === "show" && a.dataset.tab === "series")));
   view.innerHTML = '<p class="muted">Loading…</p>';
   await guard(() => (routes[name] || renderMovies)(arg));
 }
-window.addEventListener("hashchange", route);
+window.addEventListener("hashchange", () => { if (ME) route(); });
 
 async function checkBanner() {
+  if (!isAdmin()) { $("#banner").innerHTML = ""; return; }
   const st = await api("/status").catch(() => null);
   const s = await api("/settings").catch(() => null);
   settingsCache = s;
@@ -76,15 +86,15 @@ async function renderMovie(id) {
       ${m.imdb_id ? `<a class="chip" target="_blank" rel="noopener" href="https://www.imdb.com/title/${esc(m.imdb_id)}">IMDb</a>` : ""}
       ${m.collection_id ? `<a class="chip" href="javascript:void(0)" onclick="openCollection('collection', ${m.collection_id})">Part of ${esc(m.collection_name)} →</a>` : ""}</div>
     <p>${esc(m.overview)}</p>
-    <p class="small muted">Folder: <code>${esc(m.path)}</code></p>
-    <p class="small">${m.file_path ? `File: <code>${esc(m.file_path)}</code> <span class="chip ok">${esc(m.file_quality)}</span> <span class="chip">score ${m.file_score}</span> ${size(m.file_size)}` : '<span class="chip bad">No file</span>'}</p>
-    <div class="toolbar">
+    ${isAdmin() ? `<p class="small muted">Folder: <code>${esc(m.path)}</code></p>` : ""}
+    <p class="small">${m.file_path ? `${isAdmin() ? `File: <code>${esc(m.file_path)}</code> ` : "Downloaded "}<span class="chip ok">${esc(m.file_quality)}</span> <span class="chip">score ${m.file_score}</span> ${size(m.file_size)}` : '<span class="chip bad">Not downloaded yet</span>'}</p>
+    <div class="toolbar admin-only">
       <button class="primary" id="as">Automatic search</button><button id="is">Interactive search</button>
       <select id="tier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
       <label><input type="checkbox" id="mon" ${m.monitored ? "checked" : ""}> Monitored</label>
       <button id="rs">Rescan folder</button>
       <button class="danger" id="del">Delete</button></div>
-    <h3>History</h3>${historyTable(m.history)}</div></div>`;
+    <div class="admin-only"><h3>History</h3>${historyTable(m.history)}</div></div></div>`;
   $("#tier").value = m.tier;
   $("#tier").onchange = () => guard(async () => { await api("/movies/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
   $("#mon").onchange = () => guard(() => api("/movies/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
@@ -149,8 +159,8 @@ async function renderShow(id) {
     <h2>${esc(s.title)} <span class="muted">(${s.year || "?"})</span></h2>
     <div class="chips">${tierChip(s.tier)}${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}<span class="chip">${esc(s.series_type)}</span>
       <a class="chip" target="_blank" rel="noopener" href="https://thetvdb.com/dereferrer/series/${s.tvdb_id}">TheTVDB</a></div>
-    <p>${esc(s.overview)}</p><p class="small muted">Folder: <code>${esc(s.path)}</code></p>
-    <div class="toolbar"><button class="primary" id="as">Search all missing</button><button id="rf">Refresh from TheTVDB</button>
+    <p>${esc(s.overview)}</p>${isAdmin() ? `<p class="small muted">Folder: <code>${esc(s.path)}</code></p>` : ""}
+    <div class="toolbar admin-only"><button class="primary" id="as">Search all missing</button><button id="rf">Refresh from TheTVDB</button>
       <select id="tier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
       <select id="stype"><option value="standard">Standard</option><option value="daily">Daily</option><option value="anime">Anime</option></select>
       <label><input type="checkbox" id="mon" ${s.monitored ? "checked" : ""}> Monitored</label>
@@ -159,14 +169,14 @@ async function renderShow(id) {
     ${Object.keys(seasons).sort((a, b) => b - a).map((sn) => {
       const eps = seasons[sn]; const have = eps.filter((e) => e.file_path).length;
       return `<details class="season" ${sn == Math.max(...Object.keys(seasons)) ? "open" : ""}><summary>${sn == 0 ? "Specials" : "Season " + sn} <span class="muted small">${have}/${eps.length}</span>
-        <button class="small" onclick="event.preventDefault();seasonSearch(${id},${sn})">Search season</button>
-        <button class="small" onclick="event.preventDefault();interactive('tv',${id},'/series/${id}/search?season=${sn}&interactive=true')">Interactive</button>
-        <button class="small" onclick="event.preventDefault();monSeason(${id},${sn},true)">Monitor all</button>
-        <button class="small" onclick="event.preventDefault();monSeason(${id},${sn},false)">Unmonitor all</button></summary>
+        <button class="small admin-only" onclick="event.preventDefault();seasonSearch(${id},${sn})">Search season</button>
+        <button class="small admin-only" onclick="event.preventDefault();interactive('tv',${id},'/series/${id}/search?season=${sn}&interactive=true')">Interactive</button>
+        <button class="small admin-only" onclick="event.preventDefault();monSeason(${id},${sn},true)">Monitor all</button>
+        <button class="small admin-only" onclick="event.preventDefault();monSeason(${id},${sn},false)">Unmonitor all</button></summary>
         <div class="table-wrap"><table><tr><th></th><th>#</th><th>Title</th><th>Air date</th><th>File</th><th></th></tr>
-        ${eps.map((e) => `<tr><td><input type="checkbox" ${e.monitored ? "checked" : ""} onchange="monEp(${e.id}, this.checked)"></td><td>${e.episode}</td><td>${esc(e.title || "TBA")}</td><td class="small">${esc(e.air_date || "")}</td>
-          <td>${e.download ? `<span class="chip warn">${esc(e.download.status)} ${Math.round(e.download.progress)}%</span>` : e.file_path ? `<span class="chip ok" title="${esc(e.file_path)}">${esc(e.file_quality)}</span>` : e.air_date && e.air_date <= today ? (e.monitored ? '<span class="chip bad">Missing</span>' : '<span class="chip">Skipped</span>') : '<span class="chip">Unaired</span>'}</td>
-          <td><button class="small" onclick="epSearch(${id},${e.id},this)">Search</button> <button class="small" onclick="interactive('tv',${id},'/series/${id}/search?episode_id=${e.id}&interactive=true')">…</button></td></tr>`).join("")}</table></div></details>`;
+        ${eps.map((e) => `<tr><td><input type="checkbox" ${e.monitored ? "checked" : ""} ${isAdmin() ? "" : "disabled"} onchange="monEp(${e.id}, this.checked)"></td><td>${e.episode}</td><td>${esc(e.title || "TBA")}</td><td class="small">${esc(e.air_date || "")}</td>
+          <td>${e.download ? `<span class="chip warn">${esc(e.download.status)} ${Math.round(e.download.progress)}%</span>` : e.file_path ? `<span class="chip ok" title="${isAdmin() ? esc(e.file_path) : ""}">${esc(e.file_quality)}</span>` : e.air_date && e.air_date <= today ? (e.monitored ? '<span class="chip bad">Missing</span>' : '<span class="chip">Skipped</span>') : '<span class="chip">Unaired</span>'}</td>
+          <td class="admin-only"><button class="small" onclick="epSearch(${id},${e.id},this)">Search</button> <button class="small" onclick="interactive('tv',${id},'/series/${id}/search?episode_id=${e.id}&interactive=true')">…</button></td></tr>`).join("")}</table></div></details>`;
     }).join("")}`;
   $("#tier").value = s.tier; $("#stype").value = s.series_type || "standard";
   $("#tier").onchange = () => guard(async () => { await api("/series/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
@@ -212,26 +222,38 @@ async function renderAdd() {
       <div class="grow"><b>${esc(r.title)}</b> <span class="muted">${r.year || ""}</span>${r.status ? ` <span class="chip">${esc(r.status)}</span>` : ""}<p>${esc(r.overview)}</p>
         ${r.collection ? `<button class="small" onclick="openCollection('collection', ${r.collection.id})">Part of ${esc(r.collection.name)} — add whole collection…</button>` : ""}</div>
       <div class="add-ctrls">${r.in_library ? '<span class="chip ok">In library</span>' : `
-        <select id="t${i}"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>
-        ${kind === "series" ? `<select id="m${i}"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option><option value="none">None</option></select>` : ""}
+        <select id="t${i}">${tierOptions()}</select>
+        ${kind === "series" ? `<select id="m${i}"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option>${isAdmin() ? '<option value="none">None</option>' : ""}</select>` : ""}
         <label class="small"><input type="checkbox" id="s${i}" checked> Search now</label>
-        <button class="primary" onclick="addItem('${kind}', ${i}, this)">Add</button>`}</div></div>`).join("") || '<p class="muted" style="padding:12px">No results.</p>';
+        <button class="primary" onclick="addItem('${kind}', ${i}, this)">${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted" style="padding:12px">No results.</p>';
   });
   $("#go").onclick = go;
   $("#term").addEventListener("keydown", (e) => e.key === "Enter" && go());
 }
+// Admins add straight to the library; users create a request (auto-approved if an admin allowed that).
+async function addOrRequest(kind, body) {
+  if (!isAdmin()) {
+    const r = await api("/requests", { method: "POST", body: { kind, ...body } });
+    const ok = r.status === "approved" || r.status === "available";
+    toast(r.duplicate ? `${r.title} has already been requested` : ok ? `Added ${r.title}` : r.status === "failed" ? `${r.title}: ${r.note}` : `Requested ${r.title} — waiting for an admin to approve`, r.status === "failed");
+    refreshBadge();
+    return { id: ok ? r.item_id : null, requested: !ok, title: r.title };
+  }
+  if (kind === "movie") return api("/movies", { method: "POST", body });
+  if (kind === "tv") return api(body.tmdb_id && !body.tvdb_id ? "/series/from-tmdb" : "/series", { method: "POST", body });
+  return api("/collections", { method: "POST", body });
+}
+const addLabel = () => (isAdmin() ? "Add" : "Request");
+
 async function addItem(kind, i, btn) {
   const r = window._lookup[i]; btn.disabled = true;
   await guard(async () => {
-    if (kind === "movie") {
-      const m = await api("/movies", { method: "POST", body: { tmdb_id: r.tmdb_id, tier: $("#t" + i).value, search: $("#s" + i).checked } });
-      toast(`Added ${m.title}`);
-    } else {
-      btn.textContent = "Adding…";
-      const s = await api("/series", { method: "POST", body: { tvdb_id: r.tvdb_id, tier: $("#t" + i).value, monitor: $("#m" + i).value, search: $("#s" + i).checked } });
-      toast(`Added ${s.title}`);
-    }
-    btn.textContent = "Added";
+    btn.textContent = isAdmin() ? "Adding…" : "Requesting…";
+    const res = kind === "movie"
+      ? await addOrRequest("movie", { tmdb_id: r.tmdb_id, tier: $("#t" + i).value, search: $("#s" + i).checked })
+      : await addOrRequest("tv", { tvdb_id: r.tvdb_id, tier: $("#t" + i).value, monitor: $("#m" + i).value, search: $("#s" + i).checked });
+    if (isAdmin()) toast(`Added ${res.title}`);
+    btn.textContent = res.requested ? "Requested" : "Added";
   });
 }
 
@@ -263,7 +285,7 @@ async function renderProvider(pid) {
       <select id="dsort"><option value="popular">Most popular</option><option value="newest">Newest</option><option value="rating">Top rated</option><option value="title">A–Z</option></select>
       ${prov.originals ? `<label id="dorigw"><input type="checkbox" id="dorig" ${disc.originals ? "checked" : ""}> ${esc(prov.name)} originals only</label>` : ""}
       <span class="grow"></span>
-      <label>Add to <select id="dtier"><option value="hd">1080p library</option><option value="uhd">4K library</option></select></label>
+      <label>${addLabel()} for <select id="dtier">${tierOptions()}</select></label>
       <select id="dmon" title="TV: which episodes to monitor"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option></select>
       <label class="small"><input type="checkbox" id="dsearch" checked> Search on add</label></div>
     <div class="grid" id="dg"></div><div class="toolbar" style="justify-content:center;margin-top:16px"><button id="dmore">Load more</button></div>`;
@@ -278,7 +300,7 @@ async function renderProvider(pid) {
     $("#dg").innerHTML = window._disc.map((r, i) => `<div class="card" ${r.library_id ? `onclick="location.hash='#/${disc.kind === "movie" ? "movie" : "show"}/${r.library_id}'"` : ""} title="${esc(r.overview)}">${poster(r.poster, r.title)}
       <div class="meta"><div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
       <div class="chips"><span class="chip">${r.year || "TBA"}</span>${r.rating ? `<span class="chip">★ ${r.rating.toFixed(1)}</span>` : ""}</div>
-      ${r.library_id ? '<span class="chip ok">In library</span>' : `<button class="small primary add-btn" onclick="event.stopPropagation();discAdd(${i}, this)">+ Add</button>`}</div></div>`).join("") || '<p class="muted">Nothing found.</p>';
+      ${r.library_id ? '<span class="chip ok">In library</span>' : `<button class="small primary add-btn" onclick="event.stopPropagation();discAdd(${i}, this)">+ ${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted">Nothing found.</p>';
     $("#dmore").style.display = d.page < d.total_pages ? "" : "none";
   };
   view.querySelectorAll(".tabs2 button").forEach((b) => (b.onclick = () => { disc.kind = b.dataset.k; view.querySelectorAll(".tabs2 button").forEach((x) => x.classList.toggle("active", x === b)); showMon(); guard(() => load(true)); }));
@@ -293,13 +315,13 @@ async function discAdd(i, btn) {
   await guard(async () => {
     const tier = $("#dtier").value, search = $("#dsearch").checked;
     const item = disc.kind === "movie"
-      ? await api("/movies", { method: "POST", body: { tmdb_id: r.tmdb_id, tier, search } })
-      : await api("/series/from-tmdb", { method: "POST", body: { tmdb_id: r.tmdb_id, tier, monitor: $("#dmon").value, search } });
+      ? await addOrRequest("movie", { tmdb_id: r.tmdb_id, tier, search })
+      : await addOrRequest("tv", { tmdb_id: r.tmdb_id, tier, monitor: $("#dmon").value, search });
     r.library_id = item.id;
-    btn.outerHTML = '<span class="chip ok">Added</span>';
-    toast(`Added ${item.title}`);
+    btn.outerHTML = item.requested ? '<span class="chip warn">Requested</span>' : '<span class="chip ok">Added</span>';
+    if (isAdmin()) toast(`Added ${item.title}`);
   });
-  if (btn.isConnected) { btn.disabled = false; btn.textContent = "+ Add"; }
+  if (btn.isConnected) { btn.disabled = false; btn.textContent = "+ " + addLabel(); }
 }
 
 // -------------------------------------------------------- collections ---
@@ -313,11 +335,11 @@ async function openCollection(source, id) {
   $("#modal .modal-body").innerHTML = `<div class="toolbar"><h2 class="grow">${esc(c.name)} <span class="muted small">${c.parts.length} movies</span></h2><button onclick="closeModal()">Close</button></div>
     ${c.overview ? `<p class="muted">${esc(c.overview)}</p>` : ""}
     <div class="panel"><div class="toolbar">
-      <label>Library <select id="ctier"><option value="hd">1080p</option><option value="uhd">4K</option></select></label>
+      <label>Library <select id="ctier">${tierOptions(false)}</select></label>
       <label><input type="checkbox" id="cmon" ${!saved || saved.monitored ? "checked" : ""}> Add future movies in this collection automatically</label>
       <label><input type="checkbox" id="csearch" checked> Search now</label>
       <span class="grow"></span><button class="small" id="call">Select all</button><button class="small" id="cnone">Select none</button>
-      <button class="primary" id="cadd">Add selected</button></div></div>
+      <button class="primary" id="cadd">${addLabel()} selected</button></div></div>
     <div class="table-wrap"><table><tr><th></th><th></th><th>Movie</th><th>Released</th><th></th></tr>
     ${c.parts.map((p) => `<tr><td><input type="checkbox" class="cpick" value="${p.tmdb_id}" ${p.in_library ? "checked disabled" : excluded.has(p.tmdb_id) ? "" : "checked"}></td>
       <td>${p.poster ? `<img src="${esc(p.poster)}" alt="" style="width:40px;border-radius:3px">` : ""}</td>
@@ -325,33 +347,33 @@ async function openCollection(source, id) {
       <td class="small">${esc(p.release_date || "TBA")}${!p.release_date || p.release_date > today ? ' <span class="chip warn">upcoming</span>' : ""}</td>
       <td>${p.in_library ? `${tierChip(p.tier)} <span class="chip ${p.has_file ? "ok" : ""}">${p.has_file ? "Downloaded" : "In library"}</span>` : ""}</td></tr>`).join("")}</table></div>
     <p class="small muted">Unticked movies are remembered and won't be added automatically later. Upcoming movies are added now and searched for once they're released.</p>`;
-  if (saved) $("#ctier").value = saved.tier;
+  if (saved && (saved.tier === "hd" || canUhd())) $("#ctier").value = saved.tier;
   const boxes = () => [...document.querySelectorAll(".cpick:not(:disabled)")];
   $("#call").onclick = () => boxes().forEach((b) => (b.checked = true));
   $("#cnone").onclick = () => boxes().forEach((b) => (b.checked = false));
   $("#cadd").onclick = () => guard(async () => {
-    $("#cadd").disabled = true; $("#cadd").textContent = "Adding…";
+    $("#cadd").disabled = true; $("#cadd").textContent = isAdmin() ? "Adding…" : "Requesting…";
     const ids = [...document.querySelectorAll(".cpick:checked")].map((b) => +b.value);
-    const r = await api("/collections", { method: "POST", body: { source, tmdb_id: id, tier: $("#ctier").value, tmdb_ids: ids, monitor: $("#cmon").checked, search: $("#csearch").checked } });
-    toast(`${r.name}: added ${r.added} movie(s)`);
+    const r = await addOrRequest("collection", { source, tmdb_id: id, tier: $("#ctier").value, tmdb_ids: ids, monitor: $("#cmon").checked, search: $("#csearch").checked });
+    if (isAdmin()) toast(`${r.name}: added ${r.added} movie(s)`);
     closeModal(); if (location.hash.startsWith("#/collections")) route();
   });
 }
 async function renderCollections() {
   const rows = await api("/collections");
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Collections <span class="muted small">(${rows.length})</span></h2>
-    <a href="#/add"><button class="primary">Add collection</button></a></div>
+    <a href="#/add"><button class="primary">${addLabel()} a collection</button></a></div>
     ${rows.length ? `<div class="table-wrap"><table><tr><th></th><th>Collection</th><th>Have</th><th>Library</th><th>Auto-add new</th><th></th></tr>
     ${rows.map((c) => { const have = c.movies.filter((m) => m.file_path).length; return `<tr>
       <td>${c.poster ? `<img src="${esc(c.poster)}" alt="" style="width:46px;border-radius:4px">` : ""}</td>
       <td><b>${esc(c.name)}</b> <span class="chip">${c.source === "keyword" ? "Universe" : "Collection"}</span>
         <div class="small muted">${c.movies.map((m) => `<a href="#/movie/${m.id}" style="color:inherit">${esc(m.title)}</a>`).join(" · ")}</div></td>
       <td><span class="chip ${have && have >= c.total ? "ok" : ""}">${have}/${c.total}</span></td>
-      <td><select onchange="editColl(${c.id}, {tier: this.value})"><option value="hd" ${c.tier === "hd" ? "selected" : ""}>1080p</option><option value="uhd" ${c.tier === "uhd" ? "selected" : ""}>4K</option></select></td>
-      <td><input type="checkbox" ${c.monitored ? "checked" : ""} onchange="editColl(${c.id}, {monitored: this.checked})"></td>
+      <td>${isAdmin() ? "" : tierChip(c.tier)}<select class="admin-only" onchange="editColl(${c.id}, {tier: this.value})"><option value="hd" ${c.tier === "hd" ? "selected" : ""}>1080p</option><option value="uhd" ${c.tier === "uhd" ? "selected" : ""}>4K</option></select></td>
+      <td><input type="checkbox" ${c.monitored ? "checked" : ""} ${isAdmin() ? "" : "disabled"} onchange="editColl(${c.id}, {monitored: this.checked})"></td>
       <td><button class="small" onclick="openCollection('${c.source}', ${c.tmdb_id})">View</button>
-        <button class="small" onclick="refreshColl(${c.id})">Check for new</button>
-        <button class="small danger" onclick="delColl(${c.id})">Remove</button></td></tr>`; }).join("")}</table></div>
+        <button class="small admin-only" onclick="refreshColl(${c.id})">Check for new</button>
+        <button class="small danger admin-only" onclick="delColl(${c.id})">Remove</button></td></tr>`; }).join("")}</table></div>
     <p class="small muted">"Library" decides where newly found movies go; movies already added stay where they are. Removing a collection keeps its movies.</p>`
     : '<p class="muted">No collections yet. On the Add page, search for a movie that is part of a collection, or switch the search to "Movie collection / universe".</p>'}`;
 }
@@ -414,7 +436,7 @@ const SECTIONS = {
 };
 async function renderSettings(sub = "general") {
   const s = await api("/settings");
-  const tabs = { general: "Metadata", downloads: "NZBGet", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", naming: "Naming (TRaSH)", schedule: "Schedule" };
+  const tabs = { general: "Metadata", downloads: "NZBGet", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", users: "Users", naming: "Naming (TRaSH)", schedule: "Schedule" };
   view.innerHTML = `<h2>Settings</h2><div class="tabs2">${Object.entries(tabs).map(([k, v]) => `<button class="${k === sub ? "active" : ""}" onclick="location.hash='#/settings/${k}'">${v}</button>`).join("")}</div><div id="set" class="panel"></div>`;
   const el = $("#set");
   if (SECTIONS[sub]) {
@@ -430,6 +452,7 @@ async function renderSettings(sub = "general") {
   } else if (sub === "indexers") await renderIndexers(el);
   else if (sub === "profiles") await renderProfiles(el, s);
   else if (sub === "limits") await renderLimits(el);
+  else if (sub === "users") await renderUsers(el);
   else if (sub === "naming") await renderNaming(el, s);
 }
 function collect(el) {
@@ -646,5 +669,149 @@ function setTheme(t) {
 document.querySelectorAll("[data-theme-choice]").forEach((b) => (b.onclick = () => setTheme(b.dataset.themeChoice)));
 setTheme(currentTheme());
 
-checkBanner();
-route();
+// ----------------------------------------------------------- requests ---
+const REQ_TABS = { all: "All", pending: "Pending", approved: "Approved", available: "Available", declined: "Declined" };
+async function renderRequests(sub = "all") {
+  if (!REQ_TABS[sub]) sub = "all";
+  const rows = await api("/requests" + (sub === "all" ? "" : "?status=" + sub));
+  const kindName = { movie: "Movie", tv: "TV show", collection: "Collection" };
+  const statusChip = (r) => {
+    const cls = { pending: "warn", approved: "", available: "ok", declined: "bad", failed: "bad" }[r.status];
+    const p = r.progress && r.status === "approved" && r.progress.total ? ` ${r.progress.have}/${r.progress.total}` : "";
+    return `<span class="chip ${cls}">${{ pending: "Waiting for approval", approved: "Approved — downloading", available: "Available", declined: "Declined", failed: "Failed" }[r.status]}${p}</span>`;
+  };
+  const link = (r) => !r.item_id || r.status === "pending" ? esc(r.title) : r.kind === "movie" ? `<a href="#/movie/${r.item_id}">${esc(r.title)}</a>` : r.kind === "tv" ? `<a href="#/show/${r.item_id}">${esc(r.title)}</a>` : `<a href="#/collections">${esc(r.title)}</a>`;
+  view.innerHTML = `<div class="toolbar"><h2 class="grow">${isAdmin() ? "Requests" : "My requests"}</h2>
+    <a href="#/discover"><button>Browse streaming</button></a><a href="#/add"><button class="primary">New request</button></a></div>
+    <div class="tabs2">${Object.entries(REQ_TABS).map(([k, v]) => `<button class="${k === sub ? "active" : ""}" onclick="location.hash='#/requests/${k}'">${v}</button>`).join("")}</div>
+    ${rows.length ? `<div class="table-wrap"><table><tr><th></th><th>Title</th><th>Library</th>${isAdmin() ? "<th>Requested by</th>" : ""}<th>Requested</th><th>Status</th><th></th></tr>
+    ${rows.map((r) => `<tr><td>${r.poster ? `<img src="${esc(r.poster)}" alt="" style="width:42px;border-radius:4px">` : ""}</td>
+      <td><b>${link(r)}</b> <span class="muted">${r.year || ""}</span><div class="small muted">${kindName[r.kind]}${r.kind === "collection" && r.options.tmdb_ids ? ` · ${r.options.tmdb_ids.length} movies` : ""}</div>
+        ${r.note && r.note !== "Auto-approved" ? `<div class="small ${r.status === "declined" || r.status === "failed" ? "rej" : "muted"}">${esc(r.note)}</div>` : ""}</td>
+      <td>${isAdmin() && r.status === "pending" ? `<select id="rt${r.id}"><option value="hd" ${r.tier === "hd" ? "selected" : ""}>1080p</option><option value="uhd" ${r.tier === "uhd" ? "selected" : ""}>4K</option></select>` : tierChip(r.tier)}</td>
+      ${isAdmin() ? `<td>${esc(r.username || "deleted user")}</td>` : ""}
+      <td class="small muted">${esc(r.created)}${r.decided_by_name ? `<br>${r.note === "Auto-approved" ? "auto-approved" : (r.status === "declined" ? "declined" : "approved") + " by " + esc(r.decided_by_name)}` : ""}</td>
+      <td>${statusChip(r)}</td>
+      <td>${r.status === "pending" ? (isAdmin()
+        ? `<button class="small primary" onclick="approveReq(${r.id}, this)">Approve</button> <button class="small danger" onclick="declineReq(${r.id})">Decline</button>`
+        : `<button class="small" onclick="cancelReq(${r.id})">Cancel</button>`) : (isAdmin() ? `<button class="small" title="Remove from the list" onclick="cancelReq(${r.id})">✕</button>` : "")}</td></tr>`).join("")}</table></div>`
+    : `<p class="muted">${sub === "pending" ? "No requests waiting." : "No requests yet."}${isAdmin() ? "" : " Find something on the Add or Streaming pages and click Request."}</p>`}`;
+}
+async function approveReq(id, btn) {
+  btn.disabled = true;
+  await guard(async () => {
+    const r = await api(`/requests/${id}/approve`, { method: "POST", body: { tier: $("#rt" + id) ? $("#rt" + id).value : null } });
+    toast(r.status === "failed" ? `${r.title}: ${r.note}` : `Approved ${r.title}`, r.status === "failed");
+  });
+  refreshBadge(); route();
+}
+async function declineReq(id) {
+  const note = prompt("Reason for declining (optional, shown to the user):");
+  if (note === null) return;
+  await guard(() => api(`/requests/${id}/decline`, { method: "POST", body: { note } }));
+  refreshBadge(); route();
+}
+async function cancelReq(id) {
+  if (!confirm(isAdmin() ? "Remove this request from the list? (Anything already added stays in the library.)" : "Cancel this request?")) return;
+  await guard(() => api("/requests/" + id, { method: "DELETE" }));
+  refreshBadge(); route();
+}
+
+// -------------------------------------------------------------- users ---
+async function renderUsers(el) {
+  const users = await api("/users");
+  const tick = (u, k, label) => `<label class="small" style="color:var(--text)"><input type="checkbox" ${u[k] ? "checked" : ""} ${u.role === "admin" && k !== "enabled" ? "disabled" : ""} onchange="editUser(${u.id}, {${k}: this.checked})"> ${label}</label>`;
+  el.innerHTML = `<p class="muted">Admins can do everything. Users can browse the library and request movies, shows and collections.
+    <b>Auto-approve</b> adds a user's requests straight away; otherwise they wait in <a href="#/requests/pending">Requests</a> for an admin.
+    <b>4K</b> lets a user request titles for the 4K library.</p>
+    <div class="table-wrap"><table><tr><th>User</th><th>Role</th><th>Permissions</th><th>Last login</th><th></th></tr>
+    ${users.map((u) => `<tr><td><b>${esc(u.username)}</b>${u.id === ME.id ? ' <span class="chip">you</span>' : ""}</td>
+      <td><select onchange="editUser(${u.id}, {role: this.value})"><option value="user" ${u.role === "user" ? "selected" : ""}>User</option><option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option></select></td>
+      <td>${u.role === "admin" ? '<span class="small muted">Everything</span> ' : `${tick(u, "auto_approve", "Auto-approve requests")} ${tick(u, "allow_uhd", "Can request 4K")} `}${tick(u, "enabled", "Enabled")}</td>
+      <td class="small muted">${esc(u.last_login || "never")}</td>
+      <td><button class="small" onclick="resetPw(${u.id}, '${esc(u.username)}')">Set password</button> ${u.id === ME.id ? "" : `<button class="small danger" onclick="delUser(${u.id}, '${esc(u.username)}')">Delete</button>`}</td></tr>`).join("")}</table></div>
+    <h3>Add user</h3><form class="form" id="nuf">
+      <label>Username</label><input id="nu" autocomplete="off" required>
+      <label>Password</label><input id="np" type="password" autocomplete="new-password" required><div class="help">At least 8 characters. They can change it later under Account.</div>
+      <label>Role</label><select id="nr"><option value="user">User — can request</option><option value="admin">Admin — full access</option></select>
+      <label>Auto-approve requests</label><input type="checkbox" id="na">
+      <label>Can request 4K</label><input type="checkbox" id="n4">
+      <span></span><div><button class="primary" type="submit">Create user</button></div></form>`;
+  $("#nuf").onsubmit = (e) => { e.preventDefault(); guard(async () => {
+    await api("/users", { method: "POST", body: { username: $("#nu").value.trim(), password: $("#np").value, role: $("#nr").value, auto_approve: $("#na").checked, allow_uhd: $("#n4").checked } });
+    toast("User created"); route();
+  }); };
+}
+async function editUser(id, body) { await guard(async () => { await api("/users/" + id, { method: "PUT", body }); toast("Saved"); }); route(); }
+async function resetPw(id, name) {
+  const pw = prompt(`New password for ${name} (at least 8 characters):`);
+  if (pw) await guard(async () => { await api("/users/" + id, { method: "PUT", body: { password: pw } }); toast("Password set — they'll need to log in again"); });
+}
+async function delUser(id, name) { if (confirm(`Delete ${name}? Their requests stay in the list.`)) await guard(async () => { await api("/users/" + id, { method: "DELETE" }); route(); }); }
+
+// ---------------------------------------------------- login / accounts ---
+function renderAuth(mode) {
+  document.body.classList.add("logged-out");
+  document.body.classList.remove("is-admin");
+  $("#banner").innerHTML = "";
+  const setup = mode === "setup";
+  view.innerHTML = `<div class="auth-box panel">
+    <h2>${setup ? "Welcome to Omniarr" : "Log in"}</h2>
+    ${setup ? '<p class="muted">Create the admin account. Admins manage settings and approve requests; you can add more users afterwards under Settings → Users.</p>' : ""}
+    <form id="authf" class="form" style="grid-template-columns:1fr">
+      <label for="au">Username</label><input id="au" autocomplete="username" required>
+      <label for="ap">Password</label><input id="ap" type="password" autocomplete="${setup ? "new-password" : "current-password"}" required>
+      ${setup ? '<label for="ap2">Repeat password</label><input id="ap2" type="password" autocomplete="new-password" required><div class="small muted">At least 8 characters.</div>' : ""}
+      <button class="primary" type="submit">${setup ? "Create admin account" : "Log in"}</button>
+      <div id="aerr" class="rej"></div></form></div>`;
+  $("#au").focus();
+  $("#authf").onsubmit = async (e) => {
+    e.preventDefault();
+    $("#aerr").textContent = "";
+    if (setup && $("#ap").value !== $("#ap2").value) { $("#aerr").textContent = "Passwords don't match"; return; }
+    try {
+      await api(setup ? "/auth/setup" : "/auth/login", { method: "POST", body: { username: $("#au").value.trim(), password: $("#ap").value } });
+      if (!location.hash || location.hash === "#/") location.hash = "#/movies";
+      boot();
+    } catch (err) { $("#aerr").textContent = err.message; }
+  };
+}
+function renderUserMenu() {
+  $("#usermenu").innerHTML = `<span class="small muted">${esc(ME.username)}${isAdmin() ? ' <span class="chip">admin</span>' : ""}</span>
+    <button class="small" onclick="changePassword()">Account</button><button class="small" onclick="logout()">Log out</button>`;
+}
+async function logout() { await api("/auth/logout", { method: "POST" }).catch(() => {}); ME = null; renderAuth("login"); }
+function changePassword() {
+  modal(`<div class="toolbar"><h2 class="grow">Change password</h2><button onclick="closeModal()">Close</button></div>
+    <form id="pwf" class="form"><label>Current password</label><input id="pw0" type="password" autocomplete="current-password" required>
+    <label>New password</label><input id="pw1" type="password" autocomplete="new-password" required>
+    <label>Repeat new password</label><input id="pw2" type="password" autocomplete="new-password" required>
+    <span></span><div><button class="primary" type="submit">Change password</button></div></form>`);
+  $("#pwf").onsubmit = (e) => { e.preventDefault(); guard(async () => {
+    if ($("#pw1").value !== $("#pw2").value) throw new Error("New passwords don't match");
+    await api("/auth/password", { method: "POST", body: { current: $("#pw0").value, new: $("#pw1").value } });
+    closeModal(); toast("Password changed");
+  }); };
+}
+async function refreshBadge() {
+  if (!ME) return;
+  const me = await api("/auth/me").catch(() => null);
+  if (!me) return;
+  ME = { ...ME, ...me };
+  const n = isAdmin() ? me.pending_requests || 0 : 0;
+  $("#reqbadge").textContent = n ? String(n) : "";
+}
+async function boot() {
+  const st = await fetch("/api/auth/status").then((r) => r.json()).catch(() => ({}));
+  if (st.setup_needed) return renderAuth("setup");
+  if (!st.user) return renderAuth("login");
+  ME = st.user;
+  document.body.classList.remove("logged-out");
+  document.body.classList.toggle("is-admin", isAdmin());
+  renderUserMenu();
+  checkBanner();
+  refreshBadge();
+  route();
+}
+setInterval(() => { if (isAdmin()) refreshBadge(); }, 60000);
+boot();

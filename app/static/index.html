@@ -11,7 +11,7 @@
   try { var t = localStorage.getItem("omniarr-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
 </script>
 </head>
-<body>
+<body class="logged-out">
 <header>
   <div class="brand"><img src="/static/icon.svg" alt=""> Omniarr</div>
   <nav>
@@ -19,15 +19,17 @@
     <a href="#/series" data-tab="series">TV</a>
     <a href="#/discover" data-tab="discover">Streaming</a>
     <a href="#/add" data-tab="add">Add</a>
-    <a href="#/import" data-tab="import">Import</a>
-    <a href="#/activity" data-tab="activity">Activity</a>
-    <a href="#/settings" data-tab="settings">Settings</a>
+    <a href="#/requests" data-tab="requests">Requests <span id="reqbadge" class="badge"></span></a>
+    <a href="#/import" data-tab="import" class="admin-only">Import</a>
+    <a href="#/activity" data-tab="activity" class="admin-only">Activity</a>
+    <a href="#/settings" data-tab="settings" class="admin-only">Settings</a>
   </nav>
   <div class="theme-toggle" role="group" aria-label="Colour theme">
     <button data-theme-choice="system" title="Follow your device">Auto</button>
     <button data-theme-choice="light" title="Light mode">☀ Light</button>
     <button data-theme-choice="dark" title="Dark mode">☾ Dark</button>
   </div>
+  <div class="usermenu" id="usermenu"></div>
 </header>
 <div id="banner"></div>
 <main id="view"></main>

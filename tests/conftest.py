@@ -25,3 +25,16 @@ def env(tmp_path, monkeypatch):
     db.save_settings({**roots, "import_mode": "move", "tmdb_api_key": "x", "tvdb_api_key": "x"})
     db.insert("indexers", {"name": "FakeIdx", "url": "http://idx", "apikey": "k"})
     yield {"tmp": tmp_path, "data": data}
+
+
+@pytest.fixture()
+def client(env):
+    """Logged-in admin API client."""
+    from fastapi.testclient import TestClient
+
+    from app import auth
+    from app.main import app
+    auth.create_user("admin", "password123", role="admin")
+    c = TestClient(app)
+    assert c.post("/api/auth/login", json={"username": "admin", "password": "password123"}).status_code == 200
+    return c

@@ -2,19 +2,17 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import os
-import secrets
 import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import collections_, db, decision, importer, library, scanner, search, trash
+from . import auth, collections_, db, requests_, decision, importer, library, scanner, search, trash
 from .services import metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
@@ -77,6 +75,7 @@ async def scheduler():
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     db.connect()
+    auth.bootstrap_from_env()
     trash.ensure_loaded()
     task = asyncio.create_task(scheduler())
     log.info("Omniarr started — config dir %s", db.CONFIG_DIR)
@@ -89,21 +88,33 @@ app = FastAPI(title="Omniarr", lifespan=lifespan)
 
 # ------------------------------------------------------------------ auth --
 @app.middleware("http")
-async def basic_auth(request: Request, call_next):
-    password = os.environ.get("OMNIARR_PASSWORD")
-    if password and request.url.path != "/health":
-        user = os.environ.get("OMNIARR_USERNAME", "admin")
-        hdr = request.headers.get("authorization", "")
-        ok = False
-        if hdr.lower().startswith("basic "):
-            try:
-                u, _, p = base64.b64decode(hdr[6:]).decode().partition(":")
-                ok = secrets.compare_digest(u, user) and secrets.compare_digest(p, password)
-            except (ValueError, UnicodeDecodeError):
-                ok = False
-        if not ok:
-            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="Omniarr"'})
+async def require_login(request: Request, call_next):
+    """Every /api call needs a logged-in user; non-admins only get the routes in auth.USER_ROUTES."""
+    path = request.url.path
+    request.state.user = None
+    if path.startswith("/api/") and not path.startswith("/api/auth/") or path in ("/api/auth/me", "/api/auth/logout",
+                                                                                   "/api/auth/password"):
+        user = auth.user_for_token(request.cookies.get(auth.SESSION_COOKIE))
+        if not user:
+            return JSONResponse({"detail": "Please log in", "login": True}, status_code=401)
+        if user["role"] != "admin" and not auth.user_may(request.method, path):
+            return JSONResponse({"detail": "Only an admin can do that"}, status_code=403)
+        request.state.user = user
     return await call_next(request)
+
+
+def _user(request: Request) -> dict:
+    return request.state.user
+
+
+def _is_admin(request: Request) -> bool:
+    u = getattr(request.state, "user", None)
+    return bool(u and u["role"] == "admin")
+
+
+@app.exception_handler(PermissionError)
+async def forbidden(_req, exc):
+    return JSONResponse({"detail": str(exc)}, status_code=403)
 
 
 @app.exception_handler(metadata.MetadataError)
@@ -117,6 +128,119 @@ async def friendly_errors(_req, exc):
 
 @app.get("/health")
 def health():
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ auth --
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+def _set_session(resp: JSONResponse, token: str) -> JSONResponse:
+    resp.set_cookie(auth.SESSION_COOKIE, token, max_age=auth.SESSION_DAYS * 86400, httponly=True, samesite="lax",
+                    secure=os.environ.get("OMNIARR_SECURE_COOKIES", "").lower() in ("1", "true", "yes"))
+    return resp
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request):
+    return {"setup_needed": auth.user_count() == 0,
+            "user": auth.user_for_token(request.cookies.get(auth.SESSION_COOKIE))}
+
+
+@app.post("/api/auth/setup")
+def auth_setup(body: LoginIn):
+    """First run only: create the admin account."""
+    if auth.user_count() > 0:
+        raise PermissionError("Setup is already done")
+    auth.create_user(body.username, body.password, role="admin")
+    token, user = auth.login(body.username, body.password, "setup")
+    return _set_session(JSONResponse({"user": user}), token)
+
+
+@app.post("/api/auth/login")
+def auth_login(body: LoginIn, request: Request):
+    token, user = auth.login(body.username, body.password, request.client.host if request.client else "?")
+    return _set_session(JSONResponse({"user": user}), token)
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request):
+    auth.logout(request.cookies.get(auth.SESSION_COOKIE))
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.SESSION_COOKIE)
+    return resp
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    u = dict(_user(request))
+    if u["role"] == "admin":
+        u["pending_requests"] = requests_.pending_count()
+    return u
+
+
+@app.post("/api/auth/password")
+def auth_password(body: dict, request: Request):
+    auth.change_own_password(_user(request), body.get("current", ""), body.get("new", ""))
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------- users --
+class UserIn(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
+    auto_approve: bool = False
+    allow_uhd: bool = False
+
+
+@app.get("/api/users")
+def users_list():
+    return auth.list_users()
+
+
+@app.post("/api/users")
+def users_create(body: UserIn):
+    return auth.create_user(body.username, body.password, body.role, body.auto_approve, body.allow_uhd)
+
+
+@app.put("/api/users/{uid}")
+def users_update(uid: int, body: dict, request: Request):
+    return auth.update_user(uid, body, _user(request))
+
+
+@app.delete("/api/users/{uid}")
+def users_delete(uid: int, request: Request):
+    auth.delete_user(uid, _user(request))
+    return {"ok": True}
+
+
+# -------------------------------------------------------------- requests --
+@app.get("/api/requests")
+def requests_list(request: Request, status: str | None = None):
+    return requests_.list_for(_user(request), status)
+
+
+@app.post("/api/requests")
+async def requests_create(body: dict, request: Request):
+    return await requests_.create(_user(request), body)
+
+
+@app.post("/api/requests/{rid}/approve")
+async def requests_approve(rid: int, request: Request, body: dict | None = None):
+    return await requests_.approve(rid, _user(request), tier=(body or {}).get("tier"))
+
+
+@app.post("/api/requests/{rid}/decline")
+def requests_decline(rid: int, request: Request, body: dict | None = None):
+    return requests_.decline(rid, _user(request), (body or {}).get("note"))
+
+
+@app.delete("/api/requests/{rid}")
+def requests_cancel(rid: int, request: Request):
+    requests_.cancel(rid, _user(request))
     return {"ok": True}
 
 
@@ -460,10 +584,14 @@ def list_movies():
 
 
 @app.get("/api/movies/{mid}")
-def get_movie(mid: int):
+def get_movie(mid: int, request: Request = None):
     m = db.one("SELECT * FROM movies WHERE id=?", (mid,))
     if not m:
         raise HTTPException(404)
+    if request is not None and not _is_admin(request):
+        m["file_path"] = bool(m["file_path"]) or None
+        m["history"], m["path"] = [], ""
+        return m
     m["history"] = db.q("SELECT * FROM downloads WHERE kind='movie' AND movie_id=? ORDER BY id DESC", (mid,))
     m["path"] = library.movie_dir(m)
     return m
@@ -528,7 +656,7 @@ def list_series():
 
 
 @app.get("/api/series/{sid}")
-def get_series(sid: int):
+def get_series(sid: int, request: Request = None):
     s = db.one("SELECT * FROM series WHERE id=?", (sid,))
     if not s:
         raise HTTPException(404)
@@ -541,6 +669,10 @@ def get_series(sid: int):
             active[eid] = {"status": dl["status"], "progress": dl["progress"]}
     for e in s["episodes"]:
         e["download"] = active.get(e["id"])
+    if request is not None and not _is_admin(request):
+        s["path"] = ""
+        for e in s["episodes"]:
+            e["file_path"] = bool(e["file_path"]) or None
     return s
 
 

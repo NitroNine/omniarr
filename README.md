@@ -7,6 +7,7 @@ Movies and TV in one self-hosted app, built for Unraid:
 - **Two libraries per media type:** 1080p-and-lower and 4K, each with its own root folder and TRaSH profile. You can move an item between them at any time, and its files move too.
 - **Search:** works with any **Newznab** Usenet indexer (NZBGeek, DrunkenSlug, NZBFinder, …). It does RSS sync, backlog search, season packs and upgrades up to the cutoff.
 - **Collections and universes:** add a whole movie collection (e.g. *The Lord of the Rings Collection*) or a universe (e.g. the MCU, through its TMDB keyword) in one go. New movies announced later are added automatically.
+- **User accounts and requests:** family and friends get their own logins and can request movies, shows and collections. An admin approves each request, or turns on auto-approve for users they trust.
 - **Streaming tab:** browse Netflix, Apple TV+, Prime Video, Disney+, Max, Hulu, Paramount+, Peacock and more. Click a service's logo to see the movies and TV shows it offers, and add them with one click.
 - **Library import:** brings in media that's already in your root folders. Omniarr matches each folder on TMDB/TheTVDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
 - **Quality limits per library:** choose which qualities are allowed (your maximum and minimum), the quality to *upgrade until*, and whether upgrades happen at all.
@@ -47,7 +48,7 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 | `/config` | `/mnt/user/appdata/omniarr` |
 | `/data` | `/mnt/user/data` (one share holding both `usenet/` downloads and `media/`) |
 | `PUID` / `PGID` | `99` / `100` |
-| `OMNIARR_PASSWORD` | optional; turns on a login for the web UI |
+| `OMNIARR_PASSWORD` | optional; creates the admin account on first start (otherwise the web UI asks you to create one) |
 
 **Paths:** follow TRaSH's folder layout. Give NZBGet the same `/data` mapping and set its `DestDir` to `/data/usenet/completed`. Then moves are instant, and the `hardlink` import mode works. If NZBGet reports a different path than Omniarr sees, set the remote path mapping under **Settings → NZBGet**.
 
@@ -69,6 +70,34 @@ Use the switch in the top-right corner: **Auto** follows your device's setting, 
 - **Settings → Profiles → "Test a release name"** shows how a release title is parsed, which TRaSH custom formats match, and its score. Handy for working out why something was or wasn't grabbed.
 - **Interactive search** on any movie, season or episode lists every result with its score and rejection reasons. You can grab any of them by hand.
 - **Activity** shows the queue, history, an event log and the blocklist, plus buttons to run RSS sync or a backlog search now.
+
+## Users and requests
+
+The first time you open Omniarr, it asks you to create the **admin** account. If you set `OMNIARR_PASSWORD` in the Unraid template, that becomes the admin login instead.
+
+Add more people under **Settings → Users**:
+
+| | Admin | User |
+|---|---|---|
+| Browse Movies, TV, Collections, Streaming | ✓ | ✓ |
+| Add titles | Directly | As a **request** |
+| Settings, Import, Activity/downloads, delete, search | ✓ | ✗ |
+| See file paths on disk | ✓ | ✗ |
+
+Per-user options, which only an admin can change:
+- **Auto-approve requests:** the user's requests are added straight away.
+- **Can request 4K:** without it, users only see the 1080p library when requesting.
+- **Enabled:** turning it off logs the user out everywhere.
+- **Set password.**
+
+**Requests tab:** users see their own requests. Each one moves through **Waiting for approval → Approved — downloading (2/10) → Available**, or **Declined** with the admin's reason.
+
+Admins see everyone's requests, with a red badge in the menu showing how many are waiting. They can:
+- **Approve**, and switch the request between 1080p and 4K when doing so,
+- **Decline**, with an optional reason shown to the user,
+- clear old requests from the list.
+
+Everyone can change their own password under **Account**. Passwords are stored hashed (PBKDF2), and repeated failed logins are slowed down. If you put Omniarr behind an HTTPS reverse proxy, set `OMNIARR_SECURE_COOKIES=true`.
 
 ## Streaming tab
 
@@ -168,6 +197,8 @@ app/
   importer.py      NZBGet tracking, import, rename, blocklist
   library.py       add/refresh movies & series, root folders, 1080p/4K moves
   services/metadata.py also covers streaming providers (TMDB watch providers / discover)
+  auth.py          accounts, password hashing, sessions, what users may access
+  requests_.py     user requests, approval / auto-approval
   collections_.py  TMDB collections / keyword universes, auto-adding new entries
   scanner.py       library import: scan root folders, match, detect existing files
   services/        TMDB, TheTVDB, Newznab, NZBGet, ffprobe

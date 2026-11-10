@@ -1,7 +1,5 @@
 import asyncio
 
-from fastapi.testclient import TestClient
-
 from app import db
 from app.services import metadata
 
@@ -59,10 +57,9 @@ def test_discover_params(env, monkeypatch):
     assert path == "/discover/tv" and p["with_networks"] == 2552 and "with_watch_providers" not in p
 
 
-def test_api_marks_library_and_adds_tv(env, monkeypatch):
+def test_api_marks_library_and_adds_tv(client, monkeypatch):
     _fake_tmdb(monkeypatch)
     db.insert("movies", {"tmdb_id": 100, "title": "Glass Onion", "tier": "hd", "folder": "x"})
-    client = TestClient(__import__("app.main", fromlist=["app"]).app)
     d = client.get("/api/providers/8/movie").json()
     assert d["provider"]["name"] == "Netflix" and d["total_results"] == 55
     assert d["results"][0]["library_id"] and d["results"][1]["library_id"] is None

@@ -111,3 +111,14 @@ code { background: var(--chip); padding: 1px 4px; border-radius: 4px; font-size:
   .theme-toggle { order: 1; }
   nav { order: 2; width: 100%; }
 }
+
+/* accounts */
+body:not(.is-admin) .admin-only { display: none !important; }
+body.logged-out nav, body.logged-out .usermenu { display: none; }
+.usermenu { display: flex; align-items: center; gap: 6px; }
+.badge:not(:empty) { background: var(--bad); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 11px; font-weight: 700; margin-left: 2px; }
+.auth-box { max-width: 380px; margin: 48px auto; }
+.auth-box .form button { margin-top: 6px; }
+@media (max-width: 700px) {
+  .usermenu { order: 3; width: 100%; justify-content: flex-end; }
+}
