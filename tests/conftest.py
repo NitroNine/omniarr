@@ -19,9 +19,7 @@ def env(tmp_path, monkeypatch):
     trash.STORE.loaded = False
     trash.STORE.reload()
     data = tmp_path / "data"
-    roots = {k: str(data / "media" / v) for k, v in
-             {"root_movies_hd": "movies", "root_movies_uhd": "movies-4k",
-              "root_tv_hd": "tv", "root_tv_uhd": "tv-4k"}.items()}
+    roots = {"root_movies": str(data / "media" / "movies"), "root_tv": str(data / "media" / "tv")}
     db.save_settings({**roots, "import_mode": "move", "tmdb_api_key": "x"})
     db.insert("indexers", {"name": "FakeIdx", "url": "http://idx", "apikey": "k"})
     yield {"tmp": tmp_path, "data": data}

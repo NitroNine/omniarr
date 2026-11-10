@@ -11,11 +11,7 @@ GB = 1024 ** 3
 
 
 def _shared_roots(env):
-    shared_movies = str(env["data"] / "media" / "movies")
-    shared_tv = str(env["data"] / "media" / "tv")
-    db.save_settings({"root_movies_hd": shared_movies, "root_movies_uhd": shared_movies,
-                      "root_tv_hd": shared_tv, "root_tv_uhd": shared_tv})
-    return shared_movies, shared_tv
+    return db.setting("root_movies"), db.setting("root_tv")
 
 
 def _fake_movie(monkeypatch):
@@ -160,7 +156,7 @@ def test_library_import_from_shared_folder_finds_both_versions(env, monkeypatch)
     _touch(os.path.join(folder, "Dune.Part.Two.2024.1080p.BluRay.x264-SPARKS.mkv"), 1000)
     _touch(os.path.join(folder, "Dune.Part.Two.2024.2160p.UHD.BluRay.x265-W4NK3R.mkv"), 2000)
 
-    [cand] = scanner.scan("movie")  # the shared folder is scanned once, not once per library
+    [cand] = scanner.scan("movie")
     assert cand["tier"] == "auto"
     asyncio.run(scanner.import_one({"kind": "movie", "tier": "auto", "folder": cand["folder"], "id": 693134}))
     rows = {m["tier"]: m for m in db.q("SELECT * FROM movies")}
@@ -193,3 +189,14 @@ def test_old_database_is_upgraded_to_versions(tmp_path):
         raise AssertionError("same version twice")
     except sqlite3.IntegrityError:
         pass
+
+
+def test_old_split_root_folders_become_one(tmp_path):
+    db.reset_for_tests(str(tmp_path / "o.db"))
+    db.connect()
+    db.ex("INSERT INTO settings(key, value) VALUES ('root_movies_hd', '\"/data/Movies\"'), "
+          "('root_movies_uhd', '\"/data/Movies-4K\"'), ('root_tv_uhd', '\"/data/TV-4K\"')")
+    db.reset_for_tests(str(tmp_path / "o.db"))
+    assert db.setting("root_movies") == "/data/Movies"  # the 1080p folder is kept
+    assert db.setting("root_tv") == "/data/media/tv"    # nothing set: default
+    assert not db.q("SELECT key FROM settings WHERE key LIKE 'root_%\\_%' ESCAPE '\\'")

@@ -488,8 +488,8 @@ const SECTIONS = {
     ["import_mode", "Import mode", ["move", "hardlink", "copy"], "Hardlink needs downloads and media on the same share (e.g. /mnt/user/data)."],
   ] },
   roots: { title: "Root folders", fields: [
-    ["root_movies_hd", "Movies — 1080p and lower", "folder"], ["root_movies_uhd", "Movies — 4K", "folder", "Pick the same folder as 1080p to keep both versions of a movie side by side in one folder."],
-    ["root_tv_hd", "TV — 1080p and lower", "folder"], ["root_tv_uhd", "TV — 4K", "folder", "Same folder as 1080p = both versions of a show in one folder."],
+    ["root_movies", "Movies folder", "folder", "Every movie gets its own folder in here. When you have both versions, the 1080p and 4K files sit side by side in it."],
+    ["root_tv", "TV folder", "folder", "Every show gets its own folder in here, with 1080p and 4K episodes side by side."],
   ] },
   schedule: { title: "Schedule", fields: [
     ["rss_interval_minutes", "RSS sync (minutes)", "number"], ["search_interval_minutes", "Backlog search (minutes)", "number", "Searches up to 10 missing items per run, each at most once a day."],

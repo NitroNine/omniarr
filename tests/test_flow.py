@@ -81,17 +81,17 @@ def test_movie_end_to_end(env, monkeypatch):
     (dl_dir / "dune.part.two.en.srt").write_text("1")
     asyncio.run(importer.process_downloads())
     movie = db.one("SELECT * FROM movies WHERE id=?", (m["id"],))
-    expected_dir = os.path.join(db.setting("root_movies_hd"), "Dune Part Two (2024) {tmdb-693134}")
+    expected_dir = os.path.join(db.setting("root_movies"), "Dune Part Two (2024) {tmdb-693134}")
     assert movie["file_path"].startswith(expected_dir)
     assert os.path.basename(movie["file_path"]) == "Dune Part Two (2024) {tmdb-693134} [Bluray-1080p][x264]-SPARKS.mkv"
     assert os.path.exists(movie["file_path"])
     assert os.path.exists(movie["file_path"][:-4] + ".en.srt")
     assert db.one("SELECT status FROM downloads")["status"] == "imported"
 
-    # Switching to the 4K library moves the folder
+    # Switching to 4K changes the profile; the file stays in the movie's folder
     library.change_tier("movie", m["id"], "uhd")
-    movie = db.one("SELECT * FROM movies WHERE id=?", (m["id"],))
-    assert movie["file_path"].startswith(db.setting("root_movies_uhd")) and os.path.exists(movie["file_path"])
+    moved = db.one("SELECT * FROM movies WHERE id=?", (m["id"],))
+    assert moved["tier"] == "uhd" and moved["file_path"] == movie["file_path"] and os.path.exists(moved["file_path"])
 
 
 def test_series_end_to_end(env, monkeypatch):
@@ -143,7 +143,7 @@ def test_series_end_to_end(env, monkeypatch):
     eps = db.q("SELECT * FROM episodes WHERE season=1 ORDER BY episode")
     assert all(e["file_path"] for e in eps)
     assert eps[0]["file_path"] == os.path.join(
-        db.setting("root_tv_hd"), "The Bear (2022) {tvdb-403245}", "Season 01",
+        db.setting("root_tv"), "The Bear (2022) {tvdb-403245}", "Season 01",
         "The Bear (2022) - S01E01 - Ep 1 [WEBDL-1080p][EAC3 5.1][h264]-NTb.mkv")
 
 

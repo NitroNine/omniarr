@@ -54,9 +54,9 @@ def shares_folder(kind: str, item: dict) -> dict | None:
     return sib if os.path.normpath(d(sib)) == os.path.normpath(d(item)) else None
 
 
-def root_for(kind: str, tier: str) -> str:
-    key = f"root_{'movies' if kind == 'movie' else 'tv'}_{tier}"
-    return db.setting(key)
+def root_for(kind: str, tier: str | None = None) -> str:
+    """The root folder for movies or TV. Both versions (tiers) of a title live in it, side by side."""
+    return db.setting("root_movies" if kind == "movie" else "root_tv")
 
 
 def movie_folder_name(movie: dict) -> str:

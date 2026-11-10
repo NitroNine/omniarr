@@ -104,11 +104,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "nzbget_password": "",
     "nzbget_category_movies": "movies",
     "nzbget_category_tv": "tv",
-    # root folders, split by quality tier
-    "root_movies_hd": "/data/media/movies",
-    "root_movies_uhd": "/data/media/movies-4k",
-    "root_tv_hd": "/data/media/tv",
-    "root_tv_uhd": "/data/media/tv-4k",
+    # root folders: one for movies, one for TV. 1080p and 4K versions of a title share its folder.
+    "root_movies": "/data/media/movies",
+    "root_tv": "/data/media/tv",
     # path the download client uses vs. what this container sees
     "remote_path_from": "",
     "remote_path_to": "",
@@ -161,6 +159,12 @@ MIGRATIONS = [
 
 
 def _migrate(c: sqlite3.Connection) -> None:
+    # Root folders used to be split into 1080p and 4K; now there's one per media type
+    # (versions share the title folder). Keep the 1080p folder the user had set.
+    for kind in ("movies", "tv"):
+        if not c.execute("SELECT 1 FROM settings WHERE key=?", (f"root_{kind}",)).fetchone():
+            c.execute("UPDATE settings SET key=? WHERE key=?", (f"root_{kind}", f"root_{kind}_hd"))
+        c.execute("DELETE FROM settings WHERE key IN (?, ?)", (f"root_{kind}_hd", f"root_{kind}_uhd"))
     # TheTVDB support was removed: TV comes from TMDB only
     c.execute("DELETE FROM settings WHERE key IN ('tvdb_api_key', 'tvdb_pin', 'tv_metadata_source')")
     # Older databases allowed one row per title (tmdb_id / tvdb_id UNIQUE). Rows are now

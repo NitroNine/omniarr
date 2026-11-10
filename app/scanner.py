@@ -60,22 +60,17 @@ def _dir_stats(path: str) -> tuple[int, int]:
 
 
 def scan(kind: str) -> list[dict]:
-    """List folders (and loose video files) in the root folders of `kind` that aren't in the
-    library yet. When the 1080p and 4K root folders are the same folder it's scanned once,
-    with tier 'auto' (the versions are worked out from the files at import)."""
+    """List folders (and loose video files) in the movies or TV folder that aren't in the
+    library yet. Their tier is 'auto': the versions (1080p / 4K) come from the files at import."""
     table = "movies" if kind == "movie" else "series"
-    known = {(os.path.normpath(library.root_for(kind, r["tier"]) or ""), r["folder"])
-             for r in db.q(f"SELECT tier, folder FROM {table}")}
-    roots: dict[str, list[str]] = {}
-    for tier in library.TIERS:
-        root = library.root_for(kind, tier)
-        if root and os.path.isdir(root):
-            roots.setdefault(os.path.normpath(root), []).append(tier)
+    known = {r["folder"] for r in db.q(f"SELECT folder FROM {table}")}
+    root = library.root_for(kind)
+    roots = {os.path.normpath(root): ["auto"]} if root and os.path.isdir(root) else {}
     out = []
     for root, tiers in roots.items():
-        tier = tiers[0] if len(tiers) == 1 else "auto"
+        tier = tiers[0]
         for entry in sorted(os.listdir(root), key=str.lower):
-            if entry.startswith((".", "@")) or (root, entry) in known:
+            if entry.startswith((".", "@")) or entry in known:
                 continue
             path = os.path.join(root, entry)
             loose = os.path.isfile(path)
@@ -299,8 +294,7 @@ async def import_one(item: dict) -> dict:
     quality found in the folder (shared 1080p/4K root folder)."""
     kind, tier, folder = item["kind"], item["tier"], item["folder"]
     rename = bool(item.get("rename"))
-    shared = [t for t in library.TIERS if library.root_for(kind, t)]
-    src_root = library.root_for(kind, "hd" if tier in ("auto", "both") else tier) or library.root_for(kind, shared[0])
+    src_root = library.root_for(kind)
     tiers = await tiers_in(os.path.join(src_root, folder)) if tier == "auto" else library.tiers_of(tier)
     from . import search
     if kind == "movie":

@@ -4,31 +4,31 @@ Movies and TV in one self-hosted app, built for Unraid:
 
 - **Metadata:** movies and TV come from **The Movie Database (TMDB)**, which needs one free API key (see [Metadata](#metadata-tmdb)).
 - **Quality, custom formats, scores, size limits and naming** are all imported from **[TRaSH Guides](https://trash-guides.info)**. Omniarr pulls TRaSH's JSON straight from GitHub and re-syncs it daily.
-- **Two libraries per media type:** 1080p-and-lower and 4K, each with its own root folder and TRaSH profile. You can move an item between them at any time, and its files move too.
+- **1080p and 4K versions, side by side:** each movie or show can have a 1080p version, a 4K version, or both. Both live in the title's one folder, and each has its own TRaSH profile, searches and upgrades.
 - **Search:** works with any **Newznab** Usenet indexer (NZBGeek, DrunkenSlug, NZBFinder, …). It does RSS sync, backlog search, season packs and upgrades up to the cutoff.
 - **Collections and universes:** add a whole movie collection (e.g. *The Lord of the Rings Collection*) or a universe (e.g. the MCU, through its TMDB keyword) in one go. New movies announced later are added automatically.
 - **User accounts and requests:** family and friends get their own logins and can request movies, shows and collections. An admin approves each request, or turns on auto-approve for users they trust.
 - **Streaming tab:** browse Netflix, Apple TV+, Prime Video, Disney+, Max, Hulu, Paramount+, Peacock and more. Click a service's logo to see the movies and TV shows it offers, and add them with one click.
-- **Library import:** brings in media that's already in your root folders. Omniarr matches each folder on TMDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
+- **Library import:** brings in media that's already in your movies and TV folders. Omniarr matches each folder on TMDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
 - **Quality limits per library:** choose which qualities are allowed (your maximum and minimum), the quality to *upgrade until*, and whether upgrades happen at all.
-- **Downloads:** sent to **NZBGet**. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the right root folder. Failed downloads are blocklisted and searched again.
+- **Downloads:** sent to **NZBGet**. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the title's folder. Failed downloads are blocklisted and searched again.
 
-## How the 1080p / 4K split works
+## 1080p and 4K versions
 
-| Library | Root folder (default) | TRaSH profile (default) |
-|---|---|---|
-| Movies, 1080p and lower | `/data/media/movies` | HD Bluray + WEB |
-| Movies, 4K | `/data/media/movies-4k` | UHD Bluray + WEB |
-| TV, 1080p and lower | `/data/media/tv` | WEB-1080p |
-| TV, 4K | `/data/media/tv-4k` | WEB-2160p |
+Omniarr has one **movies folder** and one **TV folder** (defaults `/data/media/movies` and `/data/media/tv`, set under **Settings → Root folders**, where **Browse…** lets you pick them). Every title gets its own folder inside.
 
-When you add a title you choose **1080p**, **4K** or **1080p + 4K**. Each version uses its own profile: for example, the 1080p version never grabs a 2160p release. All four profiles can be changed to any TRaSH profile (Remux, SQP, Anime, French, German, …) under **Settings → Profiles**.
+When you add a title you choose **1080p**, **4K** or **1080p + 4K**. Each version is searched for, downloaded and upgraded on its own, with its own TRaSH profile:
 
-### Both versions in one folder
+| Version | TRaSH profile (default) |
+|---|---|
+| Movies, 1080p and lower | HD Bluray + WEB |
+| Movies, 4K | UHD Bluray + WEB |
+| TV, 1080p and lower | WEB-1080p |
+| TV, 4K | WEB-2160p |
 
-A title can have a 1080p version, a 4K version, or both. Each version is searched for, downloaded and upgraded on its own. You can add the missing version later from the title's page (**+ Add 4K version**), and remove one version without touching the other.
+For example, the 1080p version never grabs a 2160p release. All four profiles can be changed to any TRaSH profile (Remux, SQP, Anime, French, German, …) under **Settings → Profiles**. You can add the missing version later from the title's page (**+ Add 4K version**), and remove one version without touching the other.
 
-To keep both versions side by side, set the 1080p and 4K root folders to the same folder under **Settings → Root folders**. The files then sit together in one title folder:
+Both versions' files sit together in the title folder:
 
 ```
 Dune Part Two (2024) {tmdb-693134}/
@@ -36,7 +36,7 @@ Dune Part Two (2024) {tmdb-693134}/
   Dune Part Two (2024) {tmdb-693134} - [Remux-2160p][TrueHD Atmos 7.1][DV HDR10][HEVC]-GROUP.mkv
 ```
 
-Plex, Jellyfin and Emby show these as two versions of one movie and pick the right one for each screen. TRaSH naming puts the quality in the file name, so the two files never collide. With a shared folder, **Library Import** scans it once and adds a version for each quality it finds, and a rescan gives 2160p files to the 4K version and everything else to the 1080p version.
+Plex, Jellyfin and Emby show these as two versions of one movie and pick the right one for each screen. TRaSH naming puts the quality in the file name, so the two files never collide. A rescan gives 2160p files to the 4K version and everything else to the 1080p version.
 
 ## Install on Unraid
 
@@ -120,7 +120,7 @@ Or use `docker-compose.yml` (Compose Manager plugin).
 2. **Settings → Metadata:** enter your free TMDB API key (v3 key or v4 read token). Get one at themoviedb.org → Settings → API.
 3. **Settings → NZBGet:** URL, username and password, then **Test**. Create the `movies` and `tv` categories in NZBGet, or change the names here.
 4. **Settings → Indexers:** add each Usenet indexer (URL + API key). It's tested as soon as you add it.
-5. **Settings → Root folders:** check the four paths.
+5. **Settings → Root folders:** pick your movies folder and TV folder.
 6. **Add:** search for a movie or show, pick **1080p** or **4K**, and click Add.
 
 ## Light and dark mode
@@ -201,7 +201,7 @@ Movies you untick are remembered and never added automatically later.
 
 ## Importing media you already have
 
-Go to **Import**, choose Movies or TV shows, and click **Scan root folders**. Omniarr lists every folder in your 1080p and 4K roots that isn't in the library yet, plus loose movie files sitting directly in a root. Each one is matched:
+Go to **Import**, choose Movies or TV shows, and click **Scan root folders**. Omniarr lists every folder in your movies or TV folder that isn't in the library yet, plus loose movie files sitting directly in the movies folder. When a folder holds both 1080p and 4K files, both versions are added. Each one is matched:
 
 1. **IDs in the folder name** win: `{tmdb-603}`, `[tmdbid-603]`, `{tvdb-81189}`, `[tvdbid-81189]`, `{imdb-tt0133093}`. These are marked "ID match".
 2. Otherwise Omniarr searches by **title + year** read from the folder name (e.g. `The Matrix (1999)` or `The.Matrix.1999.1080p.BluRay-GRP`). Matches are marked "exact" or "guess". Use **Change** to fix any guess before importing.
@@ -263,7 +263,7 @@ app/
   decision.py      accept/reject + ranking + upgrade logic
   search.py        indexer search, RSS sync, grabbing
   importer.py      NZBGet tracking, import, rename, blocklist
-  library.py       add/refresh movies & series, root folders, 1080p/4K moves
+  library.py       add/refresh movies & series, 1080p/4K versions, folders
   services/metadata.py also covers streaming providers (TMDB watch providers / discover)
   auth.py          accounts, password hashing, sessions, what users may access
   requests_.py     user requests, approval / auto-approval

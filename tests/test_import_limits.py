@@ -44,7 +44,7 @@ def _fake_movies(monkeypatch):
 
 def test_movie_library_import(env, monkeypatch):
     _fake_movies(monkeypatch)
-    hd = db.setting("root_movies_hd")
+    hd = db.setting("root_movies")
     _touch(os.path.join(hd, "Dune Part Two (2024) {tmdb-693134}", "Dune.Part.Two.2024.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX.mkv"))
     _touch(os.path.join(hd, "Dune Part Two (2024) {tmdb-693134}", "Sample", "sample.mkv"), 10)
     _touch(os.path.join(hd, "Heat (1995)", "Heat.1995.BluRay.1080p.x264-AMIABLE.mkv"))
@@ -93,13 +93,13 @@ def test_series_library_import(env, monkeypatch):
                  "air_date": f"2022-0{s}-{e:02d}", "overview": ""} for s in (1, 2) for e in (1, 2, 3)]
     monkeypatch.setattr(metadata, "series_details", details)
     monkeypatch.setattr(metadata, "series_episodes", episodes)
-    root = os.path.join(db.setting("root_tv_uhd"), "The Bear (2022) [tvdbid-403245]")
+    root = os.path.join(db.setting("root_tv"), "The Bear (2022) [tvdbid-403245]")
     _touch(os.path.join(root, "Season 01", "The.Bear.S01E01.2160p.WEB-DL.DDP5.1.H.265-NTb.mkv"))
     _touch(os.path.join(root, "Season 01", "The.Bear.S01E02E03.2160p.WEB-DL.DDP5.1.H.265-NTb.mkv"))
     _touch(os.path.join(root, "Season 2", "Episode 1.mkv"))  # folder + episode-number fallback
 
     [cand] = scanner.scan("tv")
-    assert cand["tier"] == "uhd" and cand["tvdb_id"] == 403245
+    assert cand["tier"] == "auto" and cand["tvdb_id"] == 403245
     c = asyncio.run(scanner.match(cand))
     asyncio.run(scanner.import_one({"kind": "tv", "tier": "uhd", "folder": c["folder"], "id": c["match"]["tvdb_id"],
                                     "monitor": "existing"}))
