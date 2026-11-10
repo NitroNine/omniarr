@@ -101,7 +101,11 @@ async def require_login(request: Request, call_next):
         if user["role"] != "admin" and not auth.user_may(request.method, path):
             return JSONResponse({"detail": "Only an admin can do that"}, status_code=403)
         request.state.user = user
-    return await call_next(request)
+    resp = await call_next(request)
+    if not path.startswith("/api/") and not path.endswith((".png", ".svg", ".ico")):
+        # the UI has no build step / versioned file names: make browsers re-check it, so updates show at once
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 def _user(request: Request) -> dict:

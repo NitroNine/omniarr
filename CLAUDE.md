@@ -16,6 +16,10 @@ moved to local; this file carries the context over.
   and TRaSH profile; per-library **quality limits** override (allowed qualities, upgrade-until
   cutoff, upgrades on/off, CF score cutoff) in setting `quality_overrides`.
 - **Newznab indexers** + **NZBGet** (JSON-RPC); import with TRaSH naming, blocklist + re-search.
+- **Title pages** `#/title/{movie|tv}/{tmdb_id}` (`/api/info/…`, `metadata.movie_info/tv_info`, 6 h cache):
+  cast, crew, release dates (cinema/digital/disc per `streaming_region`, else US), trailer, streaming.
+  Movies are only searched once `library.available_date` (first digital/disc date, else cinema + 90 d) passes;
+  job `movie_refresh` re-reads dates daily for monitored movies without a file.
 - **Library import** of existing folders (`app/scanner.py`), **collections/universes**
   (TMDB collections and keywords, `app/collections_.py`), **Streaming tab** (TMDB watch providers),
   **user accounts + requests** with admin approval / per-user auto-approve and 4K permission
@@ -30,7 +34,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 32 tests, all passing at hand-over
+.venv/bin/pytest -q                       # 44 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

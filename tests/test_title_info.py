@@ -97,3 +97,9 @@ def test_tv_info_endpoint_and_user_access(client, monkeypatch):
     assert kid.get("/api/info/movie/550").json()["requested"] == ["hd"]
     assert kid.get("/api/info/tv/1399").status_code == 200
     assert kid.get("/api/info/person/1").status_code in (400, 403)
+
+
+def test_ui_is_revalidated(env):
+    c = TestClient(app)
+    assert c.get("/static/app.js").headers["cache-control"] == "no-cache"
+    assert c.get("/").headers["cache-control"] == "no-cache"
