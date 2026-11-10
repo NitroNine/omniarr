@@ -26,6 +26,29 @@ You choose the library when you add a title. The profile decides which releases 
 
 ## Install on Unraid
 
+### Quickest: the install script
+
+1. Copy the `omniarr` folder to your server, e.g. into the `appdata` share, so it ends up at `/mnt/user/appdata/omniarr-src`.
+2. Open **Terminal** in the Unraid web UI (the `>_` icon, top right) and run:
+
+```bash
+cd /mnt/user/appdata/omniarr-src && bash install-unraid.sh
+```
+
+The script:
+- builds the image,
+- installs the Unraid template, so the container appears on the Docker tab with **Edit** and **WebUI** working,
+- starts the container on port 8790 with `/mnt/user/appdata/omniarr` as `/config` and `/mnt/user/data` as `/data`,
+- prints the address to open.
+
+Re-run it to update to a newer copy of the code. Your settings and accounts are kept. To use a different media share or port:
+
+```bash
+DATA_SHARE=/mnt/user/media PORT=8791 bash install-unraid.sh
+```
+
+### Manual install
+
 ### 1. Get the image
 
 **Option A — GitHub (recommended).** Push this folder to a GitHub repository. The included workflow (`.github/workflows/docker.yml`) runs the tests, then publishes `ghcr.io/<you>/<repo>:latest` for amd64 and arm64. If the package is private, make it public in GitHub's package settings, or log Unraid in to GHCR.
