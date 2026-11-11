@@ -75,8 +75,14 @@ async def movie_details(tmdb_id: int) -> dict:
         "year": _year(m.get("release_date")), "overview": m.get("overview"),
         "poster": TMDB_IMG + m["poster_path"] if m.get("poster_path") else None,
         "runtime": m.get("runtime") or 0, "release_date": m.get("release_date"),
-        "digital_release": dates["digital"], "physical_release": dates["physical"],
+        "digital_release": home_date(dates), "physical_release": dates["physical"],
     }
+
+
+def home_date(dates: dict) -> str | None:
+    """Earliest digital or TV premiere: a TV-movie (Hallmark etc.) is on Usenet the day it airs."""
+    ds = [d for d in (dates.get("digital"), dates.get("tv")) if d]
+    return min(ds) if ds else None
 
 
 # TMDB release types: 1 premiere, 2 limited theatrical, 3 theatrical, 4 digital, 5 physical (disc), 6 TV
@@ -320,19 +326,20 @@ _SORTS = {"popular": "popularity.desc", "newest": None, "rating": "vote_average.
 
 
 async def discover(kind: str, provider_id: int, page: int = 1, sort: str = "popular",
-                   originals_of: str | None = None) -> dict:
+                   originals_of: str | None = None, released: bool = False) -> dict:
     """Movies or TV shows streaming on a service (flat-rate subscription) in the region.
-    originals_of: provider name -> TV limited to that service's own network."""
+    originals_of: provider name -> TV limited to that service's own network.
+    released: only titles whose release (movies) or first air date (TV) has passed."""
     region = _region()
     params: dict = {"page": page, "watch_region": region, "include_adult": "false"}
     if kind == "tv" and originals_of and originals_network(originals_of):
         params["with_networks"] = originals_network(originals_of)
     else:
         params.update(with_watch_providers=provider_id, with_watch_monetization_types="flatrate")
+    if sort == "newest" or released:
+        params["primary_release_date.lte" if kind == "movie" else "first_air_date.lte"] = time.strftime("%Y-%m-%d")
     if sort == "newest":
         params["sort_by"] = "primary_release_date.desc" if kind == "movie" else "first_air_date.desc"
-        today = time.strftime("%Y-%m-%d")
-        params["primary_release_date.lte" if kind == "movie" else "first_air_date.lte"] = today
     elif sort == "rating":
         params.update(sort_by="vote_average.desc", **{"vote_count.gte": 300})
     elif sort == "title":

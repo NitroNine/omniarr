@@ -143,7 +143,7 @@ function infoBody(i) {
       + row("Digital", d.digital, d.digital_country) + row("Disc (Blu-ray / DVD)", d.physical, d.physical_country)
       + row("On TV", d.tv, d.tv_country);
     if (!dates) dates = '<tr><td class="muted">No release dates on TMDB yet.</td></tr>';
-    if (i.available_date) dates += `<tr><th>Searched from</th><td>${fmtDate(i.available_date)} <span class="small muted">${d.digital || d.physical ? "first home release" : "estimate: 90 days after cinemas"}</span></td></tr>`;
+    if (i.available_date) dates += `<tr><th>Searched from</th><td>${fmtDate(i.available_date)} <span class="small muted">${d.digital || d.physical || d.tv ? "first home or TV release" : "estimate: 90 days after cinemas"}</span></td></tr>`;
   } else {
     const ne = i.next_episode;
     dates = row("First aired", i.first_air) + row(i.status === "Ended" || i.status === "Canceled" ? "Last aired" : "Latest episode", i.last_air)
@@ -468,6 +468,7 @@ async function renderProvider(pid) {
       <select id="dmon" title="TV: which episodes to monitor"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option></select>
       <label class="small"><input type="checkbox" id="dsearch" checked> Search on add</label></div>
     <div class="toolbar selbar"><button class="small" id="dall">Select all</button><button class="small" id="dnone">Clear</button>
+      <label class="small" title="Hide titles that haven't been released yet"><input type="checkbox" id="dout" ${disc.released ? "checked" : ""}> Already out only</label>
       <button class="small primary" id="dbulk" disabled>${addLabel()} selected</button><span class="small muted" id="dprog"></span></div>
     <div class="grid" id="dg"></div><div class="toolbar" style="justify-content:center;margin-top:16px"><button id="dmore">Load more</button></div>`;
   $("#dsort").value = disc.sort;
@@ -475,7 +476,7 @@ async function renderProvider(pid) {
   showMon();
   const load = async (reset) => {
     if (reset) { disc.page = 1; $("#dg").innerHTML = '<p class="muted">Loading…</p>'; }
-    const d = await api(`/providers/${pid}/${disc.kind}?page=${disc.page}&sort=${disc.sort}&originals=${disc.kind === "tv" && disc.originals}`);
+    const d = await api(`/providers/${pid}/${disc.kind}?page=${disc.page}&sort=${disc.sort}&originals=${disc.kind === "tv" && disc.originals}&released=${!!disc.released}`);
     window._disc = reset ? d.results : [...(window._disc || []), ...d.results];
     $("#dcount").textContent = `${d.total_results.toLocaleString()} ${disc.kind === "movie" ? "movies" : "shows"}`;
     disc.total = d.total_results; disc.more = d.page < d.total_pages;
@@ -491,6 +492,9 @@ async function renderProvider(pid) {
   $("#dsort").onchange = () => { disc.sort = $("#dsort").value; guard(() => load(true)); };
   if ($("#dorig")) $("#dorig").onchange = () => { disc.originals = $("#dorig").checked; guard(() => load(true)); };
   $("#dmore").onclick = () => { disc.page++; guard(() => load(false)); };
+  $("#dout").onchange = () => {  // hidden titles drop out of the selection too
+    disc.released = $("#dout").checked; disc.sel.clear(); discSelCount(); guard(() => load(true));
+  };
   $("#dall").onclick = discSelectAll;
   $("#dnone").onclick = () => { disc.sel.clear(); view.querySelectorAll("#dg .pick input").forEach((b) => (b.checked = false)); discSelCount(); };
   $("#dbulk").onclick = () => guard(discBulkAdd);

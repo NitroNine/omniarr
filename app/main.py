@@ -712,7 +712,7 @@ async def title_info(kind: str, tmdb_id: int, request: Request):
         rows = db.q("SELECT id, tier FROM movies WHERE tmdb_id=? ORDER BY tier", (tmdb_id,))
         d = info["dates"]
         info["available_date"] = library.available_date({"release_date": d.get("theatrical") or d.get("premiere"),
-                                                         "digital_release": d.get("digital"),
+                                                         "digital_release": metadata.home_date(d),
                                                          "physical_release": d.get("physical")})
         match = ("target_id=?", (tmdb_id,))
     else:
@@ -734,11 +734,12 @@ async def providers():
 
 
 @app.get("/api/providers/{pid}/{kind}")
-async def provider_titles(pid: int, kind: str, page: int = 1, sort: str = "popular", originals: bool = False):
+async def provider_titles(pid: int, kind: str, page: int = 1, sort: str = "popular", originals: bool = False,
+                          released: bool = False):
     if kind not in ("movie", "tv"):
         raise HTTPException(400)
     prov = next((p for p in await metadata.watch_providers() if p["id"] == pid), None)
-    data = await metadata.discover(kind, pid, page, sort, prov["name"] if (originals and prov) else None)
+    data = await metadata.discover(kind, pid, page, sort, prov["name"] if (originals and prov) else None, released)
     if kind == "movie":
         have = {r["tmdb_id"]: r["id"] for r in db.q("SELECT id, tmdb_id FROM movies")}
     else:

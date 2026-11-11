@@ -57,6 +57,9 @@ def test_discover_params(env, monkeypatch):
     asyncio.run(metadata.discover("tv", 350, originals_of="Apple TV+"))
     path, p = CALLS[-1]
     assert path == "/discover/tv" and p["with_networks"] == 2552 and "with_watch_providers" not in p
+    assert "first_air_date.lte" not in p
+    asyncio.run(metadata.discover("tv", 350, released=True))  # "Already out only"
+    assert CALLS[-1][1]["first_air_date.lte"] and CALLS[-1][1]["sort_by"] == "popularity.desc"
 
 
 def test_api_marks_library_and_adds_tv(client, monkeypatch):

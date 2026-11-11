@@ -38,6 +38,15 @@ def test_available_date():
     assert library.movie_available({})  # no dates at all: don't hold it back
 
 
+def test_tv_movie_available_when_it_airs(env):
+    """Hallmark-style TV movies only have a TV premiere (type 6): searchable that day, not 90 days later."""
+    d = metadata.release_dates({"results": [{"iso_3166_1": "US", "release_dates": [
+        {"type": 6, "release_date": "2026-11-08T00:00:00.000Z"}]}]}, "CA")
+    assert metadata.home_date(d) == "2026-11-08"
+    assert metadata.home_date({"digital": "2024-04-16", "tv": "2024-06-01"}) == "2024-04-16"
+    assert library.available_date({"release_date": "2026-11-08", "digital_release": metadata.home_date(d)}) == "2026-11-08"
+
+
 def _fake_tmdb(monkeypatch):
     async def tmdb(path, **params):
         if path == "/movie/550":
