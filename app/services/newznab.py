@@ -185,25 +185,36 @@ def enabled_indexers() -> list[dict]:
     return db.q("SELECT * FROM indexers WHERE enabled=1 ORDER BY priority, id")
 
 
-async def _fan_out(build) -> list[Release]:
+async def _fan_out(build, enough=None) -> list[Release]:
+    """Ask the indexers. With `enough` (a test on the releases found so far), go by priority: the preferred
+    indexers (lowest number) first, and the next ones only while nothing usable has turned up. Without it, ask all."""
     idx = enabled_indexers()
     if not idx:
         db.log("No enabled indexers — add one under Settings → Indexers.", "warn")
         return []
-    results = await asyncio.gather(*(build(i) for i in idx), return_exceptions=True)
+    tiers = [[i for i in idx if i["priority"] == p] for p in sorted({i["priority"] for i in idx})] if enough else [idx]
     out: list[Release] = []
-    busy = []
-    for i, res in zip(idx, results):
-        if isinstance(res, IndexerBusy):
-            busy.append(res)  # already logged when the pause started
-        elif isinstance(res, Exception):
-            db.log(f"Indexer {i['name']} failed: {redact(res)}", "warn")
-        else:
-            out.extend(res)
-    if busy and len(busy) == len(idx):
+    busy, asked = [], 0
+    for tier in tiers:
+        results = await asyncio.gather(*(build(i) for i in tier), return_exceptions=True)
+        asked += len(tier)
+        for i, res in zip(tier, results):
+            if isinstance(res, IndexerBusy):
+                busy.append(res)  # already logged when the pause started
+            elif isinstance(res, Exception):
+                db.log(f"Indexer {i['name']} failed: {redact(res)}", "warn")
+            else:
+                out.extend(res)
+        if enough and out and enough(_dedupe(out)):
+            break
+    if busy and len(busy) == asked and not out:
         raise busy[0]  # every indexer is paused: try this search again later rather than calling it "nothing found"
+    return _dedupe(out)
+
+
+def _dedupe(rels: list[Release]) -> list[Release]:
     seen, uniq = set(), []
-    for r in out:
+    for r in rels:
         k = (r.title.lower(), r.size // (1024 * 1024))
         if k not in seen:
             seen.add(k)
@@ -211,7 +222,7 @@ async def _fan_out(build) -> list[Release]:
     return uniq
 
 
-async def search_movie(movie: dict) -> list[Release]:
+async def search_movie(movie: dict, enough=None) -> list[Release]:
     async def one(ix):
         cat = ix["movie_categories"]
         res: list[Release] = []
@@ -225,10 +236,10 @@ async def search_movie(movie: dict) -> list[Release]:
         if not res:
             res = await _query(ix, {"t": "search", "q": f"{movie['title']} {movie.get('year') or ''}".strip(), "cat": cat})
         return res
-    return await _fan_out(one)
+    return await _fan_out(one, enough)
 
 
-async def search_episodes(series: dict, season: int, episode: int | None = None) -> list[Release]:
+async def search_episodes(series: dict, season: int, episode: int | None = None, enough=None) -> list[Release]:
     async def one(ix):
         cat = ix["tv_categories"]
         p = {"t": "tvsearch", "cat": cat, "season": season}
@@ -249,7 +260,7 @@ async def search_episodes(series: dict, season: int, episode: int | None = None)
         if not res:
             res = await _query(ix, {**p, "q": re.sub(r"\s*\((19|20)\d{2}\)$", "", series["title"])})
         return res
-    return await _fan_out(one)
+    return await _fan_out(one, enough)
 
 
 async def rss(kind: str) -> list[Release]:

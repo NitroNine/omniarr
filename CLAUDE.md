@@ -24,7 +24,7 @@ moved to local; this file carries the context over.
   free space covers 2x (queue + release) + `download_min_free_gb`; disk-full failures (FAILURE/MOVE, WARNING/SPACE, or
   near-zero free) are not blocklisted (`importer.space_failure`). Indexer HTTP goes through `newznab._request`:
   one request at a time per host, 1 s apart; a 429 pauses that host (`IndexerBusy`, Retry-After, "after midnight" = hourly retries, or 60 s doubling to
-  15 min) and slows it further. `search.HOLD` = NoSpace/IndexerBusy: stop grabbing, keep items wanted. API keys are
+  15 min) and slows it further. Indexer `priority`: searches ask the lowest number first, backups only while nothing acceptable turned up (`newznab._fan_out(enough=…)`); RSS asks all; a grab skips releases on paused indexers. `search.HOLD` = NoSpace/IndexerBusy: stop grabbing, keep items wanted. API keys are
   redacted in errors and `db.log`. Old installs with an
   NZBGet password migrate to `external`.
 - **Title pages** `#/title/{movie|tv}/{tmdb_id}` (`/api/info/…`, `metadata.movie_info/tv_info`, 6 h cache):
@@ -45,7 +45,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 70 tests
+.venv/bin/pytest -q                       # 71 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

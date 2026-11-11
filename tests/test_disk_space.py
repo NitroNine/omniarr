@@ -13,7 +13,7 @@ def _heat(monkeypatch):
                 "overview": "", "poster": None, "runtime": 170, "release_date": "1995-12-15"}
     monkeypatch.setattr(metadata, "movie_details", details)
 
-    async def fake_search(_m):
+    async def fake_search(_m, enough=None):
         return [newznab.Release(title="Heat.1995.1080p.BluRay.x264-AMIABLE", guid="g1", link="http://idx/1",
                                 size=12 * GB, indexer="FakeIdx", indexer_id=1)]
 
@@ -114,7 +114,7 @@ def test_failure_retries_capped(env, monkeypatch):
     m = _heat(monkeypatch)
     n = {"i": 0}
 
-    async def many(_m):  # a fresh release on every search
+    async def many(_m, enough=None):  # a fresh release on every search
         n["i"] += 1
         return [newznab.Release(title=f"Heat.1995.1080p.BluRay.x264-GRP{n['i']}", guid=f"g{n['i']}",
                                 link=f"http://idx/{n['i']}", size=12 * GB, indexer="FakeIdx", indexer_id=1)]

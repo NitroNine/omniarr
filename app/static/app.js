@@ -813,7 +813,7 @@ async function renderIndexers(el) {
     <label>Movie categories</label><input data-k="movie_categories" value="2000">
     <label>TV categories</label><input data-k="tv_categories" value="5000">
     <span></span><div><button type="button" id="ixload">Load categories from indexer</button><div id="ixcats"></div></div>
-    <label>Priority</label><input data-k="priority" type="number" value="25"><div class="help">Lower = preferred.</div>
+    <label>Priority</label><input data-k="priority" type="number" value="25"><div class="help">Lower = preferred. Searches go to the lowest number first; higher numbers are backups, searched only when the preferred indexers find nothing usable or are paused. RSS uses all of them.</div>
     <span></span><div><button class="primary" id="addix">Add</button></div></div>`;
   $("#ixload").onclick = () => loadCats($("#ixf"));
   $("#addix").onclick = () => guard(async () => { const b = collect($("#ixf")); if (!b.name || !b.url || !b.apikey) throw new Error("Name, URL and API key are required"); const r = await api("/indexers", { method: "POST", body: b }); const t = await api(`/indexers/${r.id}/test`, { method: "POST" }); toast(t.ok ? `Added — ${t.message}` : `Added, but test failed: ${t.message}`, !t.ok); route(); });
@@ -870,7 +870,7 @@ function editIx(id) {
     <label>Movie categories</label><input data-k="movie_categories" value="${esc(r.movie_categories)}"><div class="help">Comma-separated Newznab categories, e.g. 2000 or 2040,2045.</div>
     <label>TV categories</label><input data-k="tv_categories" value="${esc(r.tv_categories)}">
     <span></span><div><button type="button" id="ixload">Reload categories</button><div id="ixcats"><p class="small muted">Loading the indexer's categories…</p></div></div>
-    <label>Priority</label><input data-k="priority" type="number" value="${r.priority}"><div class="help">Lower = preferred.</div>
+    <label>Priority</label><input data-k="priority" type="number" value="${r.priority}"><div class="help">Lower = preferred. Searches go to the lowest number first; higher numbers are backups, searched only when the preferred indexers find nothing usable or are paused. RSS uses all of them.</div>
     <label>Enabled</label><input type="checkbox" data-k="enabled" ${r.enabled ? "checked" : ""}>
     <span></span><div class="toolbar"><button class="primary" id="ixsave">Save</button><button id="ixsavetest">Save &amp; test</button><button onclick="closeModal()">Cancel</button></div></div>`);
   const save = async (test) => {

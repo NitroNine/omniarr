@@ -126,7 +126,7 @@ def test_grab_falls_back_to_other_indexer(env, monkeypatch):
     ds = [NS(accepted=True, release=NS(link=f"http://{h}/api?t=get&id=1", indexer=h), to_dict=dict)
           for h in ("busy.test", "other.test")]
 
-    async def none(_):
+    async def none(_, enough=None):
         return []
     monkeypatch.setattr(newznab, "search_movie", none)
     monkeypatch.setattr(search.decision, "decide_movie", lambda m, r: ds)
@@ -147,3 +147,35 @@ def test_grab_falls_back_to_other_indexer(env, monkeypatch):
     with pytest.raises(newznab.IndexerBusy):
         asyncio.run(search.search_movie(mid))
     assert db.one("SELECT last_search FROM movies")["last_search"] is None
+
+
+def test_backup_indexer_only_when_needed(env):
+    """Lowest priority number is searched first; the backup only if nothing usable turned up or it's paused."""
+    db.ex("DELETE FROM indexers")
+    db.ex("INSERT INTO indexers (name, url, apikey, priority) VALUES ('main', 'http://main.test', 'k', 10)")
+    db.ex("INSERT INTO indexers (name, url, apikey, priority) VALUES ('backup', 'http://backup.test', 'k', 25)")
+    asked, answer = [], {}
+
+    def rel(name):
+        return newznab.Release(title=f"Heat.1995.1080p.{name}", guid=name, link=f"http://{name}.test/get",
+                               size=1, indexer=name, indexer_id=0)
+
+    async def build(ix):
+        asked.append(ix["name"])
+        a = answer[ix["name"]]
+        if isinstance(a, Exception):
+            raise a
+        return [rel(ix["name"])] if a else []
+
+    def run(main, enough):
+        asked.clear()
+        answer.update(main=main, backup=True)
+        return asyncio.run(newznab._fan_out(build, enough))
+
+    assert [r.indexer for r in run(True, lambda rs: True)] == ["main"] and asked == ["main"]
+    assert [r.indexer for r in run(True, lambda rs: len(rs) > 1)] == ["main", "backup"]  # main's not usable
+    assert asked == ["main", "backup"]
+    assert [r.indexer for r in run(False, lambda rs: True)] == ["backup"]  # main found nothing
+    assert [r.indexer for r in run(newznab.IndexerBusy("main.test", time.time() + 60), lambda rs: True)] == ["backup"]
+    run(True, None)
+    assert sorted(asked) == ["backup", "main"]  # no test (RSS): every indexer

@@ -40,7 +40,7 @@ def test_movie_end_to_end(env, monkeypatch):
         ("Dune.Part.Two.2024.1080p.WEB-DL.H.264-TINY", 50 * 1024 ** 2),         # too small
     ])
 
-    async def fake_search(_movie):
+    async def fake_search(_movie, enough=None):
         return releases
     sent = {}
 
@@ -109,7 +109,7 @@ def test_series_end_to_end(env, monkeypatch):
     monkeypatch.setattr(metadata, "series_episodes", episodes)
     gb = 1024 ** 3
 
-    async def fake_search(_s, season, ep=None):
+    async def fake_search(_s, season, ep=None, enough=None):
         return _feed([("The.Bear.S01.1080p.HULU.WEB-DL.DDP5.1.H.264-NTb", 6 * gb),
                       ("The.Bear.S01E01.1080p.WEB.h264-ETHEL", 1 * gb),
                       ("The.Bear.S01.2160p.WEB-DL.DDP5.1.H.265-NTb", 20 * gb)])
@@ -154,7 +154,7 @@ def test_failed_download_blocklists(env, monkeypatch):
     monkeypatch.setattr(metadata, "movie_details", details)
     calls = {"n": 0}
 
-    async def fake_search(_m):
+    async def fake_search(_m, enough=None):
         calls["n"] += 1
         return _feed([("Heat.1995.1080p.BluRay.x264-AMIABLE", 12 * 1024 ** 3)])
 

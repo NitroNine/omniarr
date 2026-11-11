@@ -75,7 +75,8 @@ async def search_movie(movie_id: int, auto_grab: bool = True) -> list[dict]:
     movie = db.one("SELECT * FROM movies WHERE id=?", (movie_id,))
     if not movie:
         raise ValueError("Movie not found")
-    releases = await newznab.search_movie(movie)
+    releases = await newznab.search_movie(  # backup indexers only when the preferred ones have nothing usable
+        movie, enough=lambda rels: any(d.accepted for d in decision.decide_movie(movie, rels)))
     decisions = decision.decide_movie(movie, releases)
     if auto_grab and decisions and decisions[0].accepted and not decision.active_download_for("movie", movie_id):
         busy = None
@@ -120,12 +121,15 @@ async def search_series(series_id: int, season: int | None = None, episode_id: i
     all_decisions: list[decision.Decision] = []
     for sn, eps in by_season.items():
         total = db.one("SELECT COUNT(*) c FROM episodes WHERE series_id=? AND season=?", (series_id, sn))["c"]
+        def enough(rels, eps=eps):
+            return any(d.accepted for d in decision.decide_episodes(series, eps, rels))
         if episode_id is None and len(eps) > 1 and len(eps) >= total / 2:
-            releases = await newznab.search_episodes(series, sn)  # season search (packs + singles)
+            releases = await newznab.search_episodes(series, sn, enough=enough)  # season search (packs + singles)
         else:
             releases = []
             for e in eps[:25]:
-                releases += await newznab.search_episodes(series, sn, e["episode"])
+                releases += await newznab.search_episodes(series, sn, e["episode"],
+                                                          enough=lambda rels, e=e: enough(rels, [e]))
         decisions = decision.decide_episodes(series, eps, releases)
         all_decisions += decisions
         if auto_grab:
