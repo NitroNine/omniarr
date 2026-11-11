@@ -17,6 +17,7 @@ from .services import downloader, metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("omniarr")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # its INFO lines print full URLs, indexer API keys included
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 

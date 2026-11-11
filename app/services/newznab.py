@@ -73,6 +73,23 @@ def _retry_after(r: httpx.Response) -> float | None:
         return None
 
 
+def _error_text(r: httpx.Response) -> str:
+    """The indexer's own explanation, e.g. nzbs.in: "Too many API requests. Slow down. Try again after midnight." """
+    m = re.search(r"<error[^>]*>([^<]{1,200})</error>|description=\"([^\"]{1,200})\"", r.text or "")
+    return redact((m.group(1) or m.group(2)).strip()) if m else ""
+
+
+def _until_midnight() -> float:
+    """A daily limit that resets "after midnight" (the indexer's timezone is unknown): try again at the next UTC
+    midnight or in an hour, whichever is sooner, so at most one request an hour goes to it until then."""
+    t = time.time()
+    return min(3600.0, 86400 - t % 86400 + 60)
+
+
+def _human(sec: float) -> str:
+    return f"{round(sec)} s" if sec < 120 else f"{round(sec / 60)} min"
+
+
 async def _request(url: str, params: dict | None = None, timeout: float = 45) -> httpx.Response:
     host, g = _gate(url)
     if g.until > time.time():
@@ -92,13 +109,14 @@ async def _request(url: str, params: dict | None = None, timeout: float = 45) ->
             g.last = time.monotonic()
         if r.status_code == 429:
             g.backoff = min(MAX_BACKOFF, max(60.0, g.backoff * 2))
-            pause = _retry_after(r) or g.backoff
+            said = _error_text(r)
+            pause = _retry_after(r) or (_until_midnight() if "midnight" in said.lower() else g.backoff)
             g.until = time.time() + pause
             global resume_at
             resume_at = max(resume_at, g.until + 5)
             g.interval = min(MAX_INTERVAL, g.interval * 1.5)  # and go a bit slower afterwards
-            db.log(f"Indexer {host} said \"too many requests\" (429). Pausing it for {round(pause)} s, "
-                   f"then one request every {g.interval:.1f} s.", "warn")
+            db.log(f"Indexer {host} said \"too many requests\" (429){': ' + said if said else ''}. "
+                   f"Pausing it for {_human(pause)}, then one request every {g.interval:.1f} s.", "warn")
             raise IndexerBusy(host, g.until)
         g.backoff = 0.0
         if r.status_code >= 400:

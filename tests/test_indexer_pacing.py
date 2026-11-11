@@ -18,7 +18,7 @@ def net(monkeypatch):
         state["times"].append(time.monotonic())
         if state["limit"]:
             h = {"Retry-After": state["retry_after"]} if state["retry_after"] else {}
-            return httpx.Response(429, headers=h)
+            return httpx.Response(429, headers=h, text=state.get("body", ""))
         if req.url.params.get("t") == "get":
             return httpx.Response(200, content=b'<?xml version="1.0"?><nzb></nzb>')
         return httpx.Response(200, text='<rss><channel><item><title>Heat.1995.1080p.BluRay.x264-AMIABLE</title>'
@@ -105,3 +105,14 @@ def test_backlog_searches_every_new_title(env, monkeypatch):
     asyncio.run(search.missing_search(limit=5))
     assert sum(not t.startswith("Old") for t in searched) == 25
     assert sum(t.startswith("Old") for t in searched) == 5
+
+
+def test_daily_limit_pauses_till_midnight(env, net):
+    """nzbs.in: 429 "Try again after midnight" -> retry at most hourly, and say why in the log."""
+    net["limit"] = True
+    net["body"] = '<?xml version="1.0"?><response><error>Too many API requests. Slow down. Try again after midnight.</error></response>'
+    with pytest.raises(newznab.IndexerBusy) as e:
+        asyncio.run(newznab.fetch_nzb("http://idx.test/api?t=get&id=1&apikey=SECRET"))
+    assert 60 <= e.value.until - time.time() <= 3600
+    msg = db.one("SELECT message FROM events WHERE message LIKE '%429%'")["message"]
+    assert "Try again after midnight" in msg and "SECRET" not in msg
