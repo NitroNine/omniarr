@@ -108,3 +108,32 @@ def test_failure_while_disk_nearly_full_not_blocklisted(env, monkeypatch):
     _nzbget(monkeypatch, free_gb=1, history=[{"NZBID": 5, "Status": "FAILURE/UNPACK", "DestDir": "/nope"}])
     asyncio.run(importer.process_downloads())
     assert db.one("SELECT COUNT(*) c FROM blocklist")["c"] == 0
+
+
+def test_failure_retries_capped(env, monkeypatch):
+    m = _heat(monkeypatch)
+    n = {"i": 0}
+
+    async def many(_m):  # a fresh release on every search
+        n["i"] += 1
+        return [newznab.Release(title=f"Heat.1995.1080p.BluRay.x264-GRP{n['i']}", guid=f"g{n['i']}",
+                                link=f"http://idx/{n['i']}", size=12 * GB, indexer="FakeIdx", indexer_id=1)]
+    monkeypatch.setattr(newznab, "search_movie", many)
+    nid = {"v": 0}
+
+    async def fake_call(method, *params):
+        if method == "append":
+            nid["v"] += 1
+            return nid["v"]
+        if method == "history":  # everything fails its repair
+            return [{"NZBID": i, "Status": "FAILURE/PAR", "DestDir": "/nope"} for i in range(1, nid["v"] + 1)]
+        if method == "status":
+            return {"FreeDiskSpaceMB": 500 * 1024}
+        return []
+    monkeypatch.setattr(nzbget, "call", fake_call)
+    asyncio.run(search.search_movie(m["id"]))
+    for _ in range(10):
+        asyncio.run(importer.process_downloads())
+    # the first grab plus 3 retries, then it waits for the backlog search
+    assert db.one("SELECT COUNT(*) c FROM downloads")["c"] == 4
+    assert db.one("SELECT COUNT(*) c FROM blocklist")["c"] == 4

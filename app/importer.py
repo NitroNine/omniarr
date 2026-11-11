@@ -305,11 +305,26 @@ async def space_failure(dl: dict, reason: str, hist: dict | None = None) -> None
         db.ex("UPDATE episodes SET last_search=NULL WHERE id=?", (eid,))
 
 
+def _failures_today(dl: dict) -> int:
+    """Real (not disk-full) failures in the last 24 h for the same movie, or overlapping episodes."""
+    q = ("SELECT episode_ids FROM downloads WHERE status='failed' AND updated >= datetime('now','-1 day') "
+         "AND (message IS NULL OR message NOT LIKE 'Download disk ran out%') AND ")
+    if dl["kind"] == "movie":
+        return len(db.q(q + "kind='movie' AND movie_id=?", (dl["movie_id"],)))
+    mine = set(json.loads(dl["episode_ids"] or "[]"))
+    rows = db.q(q + "kind='tv' AND series_id=?", (dl["series_id"],))
+    return sum(1 for r in rows if mine & set(json.loads(r["episode_ids"] or "[]")))
+
+
 async def fail_download(dl: dict, reason: str, research: bool = True) -> None:
     db.ex("UPDATE downloads SET status='failed', message=?, updated=datetime('now') WHERE id=?", (reason, dl["id"]))
     db.insert("blocklist", {"release_title": dl["release_title"], "guid": dl["guid"], "reason": reason})
     db.log(f"Download failed ({reason}): {dl['release_title']} — blocklisted", "warn")
     if not research:
+        return
+    cap = int(db.setting("failed_retry_limit") or 0)
+    if cap and _failures_today(dl) > cap:
+        db.log(f"{dl['release_title']}: {cap} retries used up today; the backlog search will try again later.", "warn")
         return
     from . import search
     try:

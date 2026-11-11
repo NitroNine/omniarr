@@ -668,6 +668,7 @@ async function renderDownloads(el, s) {
       ["remote_path_to", "Local path (Omniarr)", "folder", "…and Omniarr sees them at, e.g. /data/downloads/completed"],
     ], s)}
     ${formRows([["download_min_free_gb", "Keep free (GB)", "number", "Omniarr stops grabbing when the download disk can't fit the next release (about twice its size while unpacking), everything already queued, and this much spare. Grabbing picks up again as downloads finish."]], s)}
+    ${formRows([["failed_retry_limit", "Retries after a failure", "number", "When a download fails, Omniarr blocklists that release and grabs another one straight away, up to this many times a day per movie or episode. After that the hourly backlog search tries again the next day. 0 = no limit."]], s)}
     ${formRows([["import_mode", "Import mode", ["move", "hardlink", "copy"], "Move is right for most setups. Hardlink keeps the download too (for seeding-style setups) and needs the same share."]], s)}
     <span></span><div class="toolbar"><button class="primary" id="save">Save</button>${builtin ? "" : '<button id="test">Test NZBGet</button>'}</div></div>
     ${builtin ? `<h3>Usenet servers</h3>
