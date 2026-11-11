@@ -491,7 +491,7 @@ async function renderProvider(pid) {
   $("#dsort").onchange = () => { disc.sort = $("#dsort").value; guard(() => load(true)); };
   if ($("#dorig")) $("#dorig").onchange = () => { disc.originals = $("#dorig").checked; guard(() => load(true)); };
   $("#dmore").onclick = () => { disc.page++; guard(() => load(false)); };
-  $("#dall").onclick = () => guard(discSelectAll);
+  $("#dall").onclick = discSelectAll;
   $("#dnone").onclick = () => { disc.sel.clear(); view.querySelectorAll("#dg .pick input").forEach((b) => (b.checked = false)); discSelCount(); };
   $("#dbulk").onclick = () => guard(discBulkAdd);
   await load(true);
@@ -502,15 +502,7 @@ function discSelCount() {
   if (!b) return;
   b.disabled = !n; b.textContent = `${addLabel()} selected${n ? ` (${n.toLocaleString()})` : ""}`;
 }
-async function discSelectAll() {
-  if (disc.more && confirm(`Only ${window._disc.length} of ${disc.total.toLocaleString()} are loaded. Load all of them and select everything?\n\nCancel selects just the ones shown.`)) {
-    const prog = $("#dprog");
-    while (disc.more && disc.page < 500) {  // TMDB stops at page 500
-      disc.page++; prog.textContent = `Loading… ${window._disc.length.toLocaleString()} of ${disc.total.toLocaleString()}`;
-      await disc.load(false);
-    }
-    prog.textContent = "";
-  }
+function discSelectAll() {  // only the titles loaded on screen; "Load more" then Select all adds the next batch
   window._disc.filter((r) => !r.library_id).forEach((r) => disc.sel.add(r.tmdb_id));
   view.querySelectorAll("#dg .pick input").forEach((b) => (b.checked = true));
   discSelCount();
