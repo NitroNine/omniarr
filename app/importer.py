@@ -2,6 +2,7 @@
 TRaSH naming. Failed downloads are blocklisted and a new search is started."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -154,9 +155,9 @@ async def import_movie(dl: dict, source_dir: str) -> None:
     subs = subtitles_for(video)
     if movie["file_path"] and movie["file_path"] != dest:
         _remove_old(movie["file_path"])
-    _transfer(video, dest)
+    await asyncio.to_thread(_transfer, video, dest)
     for sub in subs:
-        _transfer(sub, os.path.join(dest_dir, name + sub_suffix(sub, video)))
+        await asyncio.to_thread(_transfer, sub, os.path.join(dest_dir, name + sub_suffix(sub, video)))
     db.update("movies", movie["id"], {"file_path": dest, "file_quality": dl["quality"], "file_score": dl["score"],
                                       "file_size": os.path.getsize(dest)})
     db.log(f"Imported {movie['title']} → {dest}")
@@ -198,9 +199,9 @@ async def import_episodes(dl: dict, source_dir: str) -> None:
         for e in episodes:
             if e["file_path"] and e["file_path"] != dest:
                 _remove_old(e["file_path"])
-        _transfer(video, dest)
+        await asyncio.to_thread(_transfer, video, dest)
         for sub in subs:
-            _transfer(sub, os.path.join(dest_dir, name + sub_suffix(sub, video)))
+            await asyncio.to_thread(_transfer, sub, os.path.join(dest_dir, name + sub_suffix(sub, video)))
         size = os.path.getsize(dest)
         for e in episodes:
             db.update("episodes", e["id"], {"file_path": dest, "file_quality": dl["quality"],

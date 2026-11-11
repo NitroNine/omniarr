@@ -63,6 +63,16 @@ def download_dir() -> str:
     return DOWNLOADS_MOUNT if os.path.isdir(DOWNLOADS_MOUNT) else "/data/usenet"
 
 
+def _article_cache_mb() -> int:
+    """1 GB of article cache when the machine has RAM to spare (8 GB+), else 200 MB."""
+    try:
+        with open("/proc/meminfo") as f:
+            total_kb = int(next(line for line in f if line.startswith("MemTotal")).split()[1])
+        return 1024 if total_kb >= 8 * 1024 * 1024 else 200
+    except (OSError, StopIteration, ValueError):
+        return 200
+
+
 def servers() -> list[dict]:
     return db.q("SELECT * FROM usenet_servers ORDER BY level, id")
 
@@ -111,7 +121,9 @@ def options() -> dict[str, str]:
         "HealthCheck": "delete",  # hopeless downloads fail fast -> blocklist + search again
         "ParCheck": "auto", "ParRepair": "yes", "Unpack": "yes", "DirectUnpack": "yes",
         "AppendCategoryDir": "yes",
-        "ArticleCache": "200", "WriteBuffer": "1024", "DirectWrite": "yes",
+        # speed: big in-memory article cache, parallel repair/unpack on all cores, files renamed while downloading
+        "ArticleCache": str(_article_cache_mb()), "WriteBuffer": "1024", "DirectWrite": "yes",
+        "PostStrategy": "rocket", "ParThreads": "0", "ParBuffer": "500", "DirectRename": "yes",
         "DiskSpace": "1000",  # MB; pause instead of filling the array
         "NzbDirInterval": "0",
         "DownloadRate": str(rate),

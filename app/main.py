@@ -58,7 +58,7 @@ async def scheduler():
         now = time.time()
         jobs = [
             ("downloader", 30, downloader.ensure),  # keeps the built-in NZBGet running
-            ("downloads", 30, importer.process_downloads),
+            ("downloads", 15, importer.process_downloads),  # import soon after NZBGet finishes
             ("trash", 3600, _trash_auto),
             ("series_refresh", 3600, _refresh_all_series),
             ("collections", 3600, collections_.refresh_due),
