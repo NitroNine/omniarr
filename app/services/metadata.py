@@ -574,6 +574,8 @@ async def _discover_christmas_all(released: bool) -> dict:
                 if english and r.get("original_language") not in (None, "", "en"):
                     continue
                 date = r.get("release_date") or None
+                if date and not date.startswith(since[:4]):  # an older film premiering on TV this year
+                    continue
                 item = {"tmdb_id": r["id"], "title": r.get("title"), "year": _year(date), "overview": r.get("overview"),
                         "rating": r.get("vote_average"), "date": date,
                         "poster": TMDB_IMG + r["poster_path"] if r.get("poster_path") else None, "_check": check}

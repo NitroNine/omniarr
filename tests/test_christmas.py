@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 
 from app import db, library, scanner, search
 from app.services import metadata
@@ -74,6 +75,7 @@ def test_library_scan_looks_inside_christmas_folder(env):
 
 
 def test_christmas_tab_list(env, monkeypatch):
+    Y = time.strftime("%Y")
     async def tmdb(path, **p):
         if path == "/search/keyword":
             return {"total_pages": 1, "results": [{"id": 207317, "name": "christmas"}, {"id": 1, "name": "holiday"},
@@ -81,14 +83,15 @@ def test_christmas_tab_list(env, monkeypatch):
         if path == "/discover/movie" and "with_keywords" in p:
             assert p["with_keywords"] == "207317|1"
             assert p["primary_release_date.gte"][5:] == "01-01" and p["primary_release_date.lte"][5:] == "12-31"
-            return {"total_pages": 1, "results": [{"id": 10, "title": "Elf Again", "release_date": "2026-11-27", "original_language": "en"},
-                                                  {"id": 9, "title": "Das Geheimnis der Weihnacht", "release_date": "2026-12-24", "original_language": "de"}]}
+            return {"total_pages": 1, "results": [{"id": 10, "title": "Elf Again", "release_date": Y + "-11-27", "original_language": "en"},
+                                                  {"id": 9, "title": "Das Geheimnis der Weihnacht", "release_date": Y + "-12-24", "original_language": "de"}]}
         if path == "/discover/movie":
             assert p["with_release_type"] == "6" and p["release_date.lte"][5:] == "12-31"
             if p["page"] == 2:
-                return {"total_pages": 2, "results": [{"id": 14, "title": "Obscure Little Christmas", "release_date": "2026-12-01"}]}
-            return {"total_pages": 2, "results": [{"id": 11, "title": "Mistletoe and Mimosas", "release_date": "2026-11-15"},
-                                                  {"id": 12, "title": "A Lifetime Thriller", "release_date": "2026-11-14"}]}
+                return {"total_pages": 2, "results": [{"id": 14, "title": "Obscure Little Christmas", "release_date": Y + "-12-01"}]}
+            return {"total_pages": 2, "results": [{"id": 11, "title": "Mistletoe and Mimosas", "release_date": Y + "-11-15"},
+                                                  {"id": 12, "title": "A Lifetime Thriller", "release_date": Y + "-11-14"},
+                                                  {"id": 15, "title": "Old Christmas Movie", "release_date": "2024-12-01"}]}
         if path.endswith("/keywords"):
             return {"keywords": []}
         if path == "/movie/11/watch/providers":
