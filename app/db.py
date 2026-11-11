@@ -112,6 +112,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # from the Unraid template (/downloads) when it's mapped, else /data/usenet.
     "download_dir": "",
     "download_speed_limit": 0,  # built-in: KB/s, 0 = unlimited
+    "download_min_free_gb": 20,  # don't grab when the download disk would drop below this
     "_downloader_password": "",  # built-in: generated, localhost-only control password
     # external NZBGet
     "nzbget_url": "http://nzbget:6789",

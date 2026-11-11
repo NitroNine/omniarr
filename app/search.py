@@ -8,9 +8,49 @@ from . import db, decision, library
 from .parser import normalize_title, parse
 from .services import newznab, nzbget
 
+GB = 1024 ** 3
+_last_space_log = 0.0
+
+
+class NoSpace(Exception):
+    """The download disk can't hold this release on top of what's already queued."""
+
+
+def _queued_bytes() -> int:
+    rows = db.q("SELECT size, progress FROM downloads WHERE status IN ('queued','downloading')")
+    return int(sum((r["size"] or 0) * (1 - (r["progress"] or 0) / 100) for r in rows))
+
+
+async def check_space(size: int) -> None:
+    """Refuse a grab the download disk can't finish.
+
+    A Usenet download needs roughly twice its size while it's unpacked (the RAR parts and
+    the unpacked file), so we want room for 2x everything still queued, 2x this release,
+    plus the reserve from settings (`download_min_free_gb`)."""
+    try:
+        st = await nzbget.status()
+    except nzbget.NZBGetError:
+        return  # the grab itself will report the downloader problem
+    free_mb = st.get("FreeDiskSpaceMB") if isinstance(st, dict) else None
+    if not free_mb:
+        return
+    free = int(free_mb) * 1024 ** 2
+    reserve = int(float(db.setting("download_min_free_gb") or 0) * GB)
+    need = 2 * (_queued_bytes() + (size or 0)) + reserve
+    if free < need:
+        global _last_space_log
+        import time
+        msg = (f"Not enough space on the download disk: {free / GB:.0f} GB free, "
+               f"{need / GB:.0f} GB needed for this release plus the queue")
+        if time.time() - _last_space_log > 600:
+            db.log(msg + "; grabbing paused until downloads finish.", "warn")
+            _last_space_log = time.time()
+        raise NoSpace(msg)
+
 
 async def grab(d: decision.Decision, kind: str, movie_id: int | None = None, series_id: int | None = None) -> int:
     rel = d.release
+    await check_space(rel.size)
     nzb = await newznab.fetch_nzb(rel.link)
     s = db.get_settings()
     cat = s["nzbget_category_movies"] if kind == "movie" else s["nzbget_category_tv"]
@@ -33,11 +73,13 @@ async def search_movie(movie_id: int, auto_grab: bool = True) -> list[dict]:
         raise ValueError("Movie not found")
     releases = await newznab.search_movie(movie)
     decisions = decision.decide_movie(movie, releases)
-    db.update("movies", movie_id, {"last_search": db.one("SELECT datetime('now') t")["t"]})
     if auto_grab and decisions and decisions[0].accepted and not decision.active_download_for("movie", movie_id):
-        await grab(decisions[0], "movie", movie_id=movie_id)
-    elif auto_grab:
-        db.log(f"Search for {movie['title']}: {len(releases)} results, none acceptable")
+        await grab(decisions[0], "movie", movie_id=movie_id)  # NoSpace leaves last_search alone
+        db.update("movies", movie_id, {"last_search": db.one("SELECT datetime('now') t")["t"]})
+    else:
+        db.update("movies", movie_id, {"last_search": db.one("SELECT datetime('now') t")["t"]})
+        if auto_grab:
+            db.log(f"Search for {movie['title']}: {len(releases)} results, none acceptable")
     return [d.to_dict() for d in decisions]
 
 
@@ -90,6 +132,8 @@ async def _grab_best_for_episodes(series: dict, decisions: list[decision.Decisio
         try:
             await grab(d, "tv", series_id=series["id"])
             taken.update(d.episode_ids)
+        except NoSpace:
+            raise
         except Exception as e:  # noqa: BLE001
             db.log(f"Grab failed for {d.release.title}: {e}", "warn")
 
@@ -97,6 +141,13 @@ async def _grab_best_for_episodes(series: dict, decisions: list[decision.Decisio
 # ------------------------------------------------------------------- RSS --
 async def rss_sync() -> int:
     """Check the newest releases on every indexer against what we want."""
+    try:
+        return await _rss_sync()
+    except NoSpace:
+        return 0
+
+
+async def _rss_sync() -> int:
     grabbed = 0
     movies = [m for m in db.q("SELECT * FROM movies WHERE monitored=1") if library.movie_available(m)]
     wanted_movies = {}
@@ -163,6 +214,8 @@ async def missing_search(limit: int = 10) -> None:
                 continue
         try:
             await search_movie(m["id"])
+        except NoSpace:
+            return
         except Exception as e:  # noqa: BLE001
             db.log(f"Search for {m['title']} failed: {e}", "warn")
         limit -= 1
@@ -178,6 +231,8 @@ async def missing_search(limit: int = 10) -> None:
         seen.add(key)
         try:
             await search_series(e["series_id"], season=e["season"])
+        except NoSpace:
+            return
         except Exception as ex:  # noqa: BLE001
             db.log(f"Episode search failed: {ex}", "warn")
         limit -= 1

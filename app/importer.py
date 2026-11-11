@@ -9,7 +9,7 @@ import shutil
 
 from . import db, library, naming, trash
 from .parser import parse
-from .services import mediainfo, nzbget
+from .services import downloader, mediainfo, nzbget
 
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".ts", ".m2ts", ".wmv", ".mov", ".webm"}
 SUB_EXT = {".srt", ".ass", ".ssa", ".sub", ".idx", ".sup", ".vtt"}
@@ -225,6 +225,7 @@ async def process_downloads() -> None:
     except nzbget.NZBGetError as e:
         db.log(str(e), "warn")
         return
+    free_mb: float | None = None
     for dl in active:
         nid = dl["nzbget_id"]
         if nid in queue:
@@ -255,7 +256,52 @@ async def process_downloads() -> None:
                       (str(e), dl["id"]))
                 db.log(f"Import failed for {dl['release_title']}: {e}", "error")
         elif st.startswith(("FAILURE", "WARNING", "DELETED")):
-            await fail_download(dl, st, research=not st.startswith("DELETED/MANUAL"))
+            if free_mb is None:
+                free_mb = await _free_mb()
+            if _out_of_space(st, free_mb):
+                await space_failure(dl, st, h)
+            else:
+                await fail_download(dl, st, research=not st.startswith("DELETED/MANUAL"))
+
+
+SPACE_STATUSES = ("FAILURE/MOVE", "WARNING/SPACE", "FAILURE/SPACE")
+
+
+async def _free_mb() -> float:
+    try:
+        st = await nzbget.status()
+        return float(st.get("FreeDiskSpaceMB")) if isinstance(st, dict) and st.get("FreeDiskSpaceMB") is not None else -1
+    except (nzbget.NZBGetError, TypeError, ValueError):
+        return -1
+
+
+def _out_of_space(status: str, free_mb: float) -> bool:
+    """A failure caused by a full download disk says nothing about the release, so it mustn't be blocklisted."""
+    if status.startswith(SPACE_STATUSES):
+        return True
+    if status.startswith("DELETED/MANUAL") or free_mb < 0:
+        return False
+    reserve_mb = float(db.setting("download_min_free_gb") or 0) * 1024
+    return free_mb < max(2048.0, reserve_mb / 2)
+
+
+async def space_failure(dl: dict, reason: str, hist: dict | None = None) -> None:
+    """Disk-full failure: drop the half-finished files, don't blocklist, and let the backlog search try again."""
+    db.ex("UPDATE downloads SET status='failed', message=?, updated=datetime('now') WHERE id=?",
+          (f"Download disk ran out of space ({reason}); not blocklisted, will be searched again", dl["id"]))
+    db.log(f"Download failed because the disk was full ({reason}): {dl['release_title']}. Not blocklisted.", "warn")
+    path = map_path((hist or {}).get("DestDir") or "")
+    inter = os.path.realpath(os.path.join(downloader.download_dir(), "intermediate"))
+    if path and os.path.realpath(path).startswith(inter + os.sep) and os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
+    try:
+        await nzbget.delete(dl["nzbget_id"], from_history=True)
+    except nzbget.NZBGetError:
+        pass
+    if dl["kind"] == "movie" and dl["movie_id"]:
+        db.ex("UPDATE movies SET last_search=NULL WHERE id=?", (dl["movie_id"],))
+    for eid in json.loads(dl["episode_ids"] or "[]"):
+        db.ex("UPDATE episodes SET last_search=NULL WHERE id=?", (eid,))
 
 
 async def fail_download(dl: dict, reason: str, research: bool = True) -> None:

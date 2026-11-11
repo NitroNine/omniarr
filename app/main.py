@@ -128,6 +128,11 @@ async def forbidden(_req, exc):
     return JSONResponse({"detail": str(exc)}, status_code=403)
 
 
+@app.exception_handler(search.NoSpace)
+async def no_space(_req, exc):
+    return JSONResponse({"detail": str(exc)}, status_code=507)
+
+
 @app.exception_handler(metadata.MetadataError)
 @app.exception_handler(nzbget.NZBGetError)
 @app.exception_handler(ValueError)
