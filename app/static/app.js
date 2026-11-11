@@ -70,14 +70,35 @@ async function addVersion(kind, tier, btn) {
 async function deleteVersion(kind, item) {
   const others = item.versions.filter((v) => v.id !== item.id);
   const what = others.length ? `the ${TIER_LABEL[item.tier]} version of ${item.title}` : item.title;
-  if (!confirm(`Remove ${what}?`)) return;
-  const files = confirm(others.length ? `Also delete the ${TIER_LABEL[item.tier]} files from disk? The ${TIER_LABEL[others[0].tier]} version and its files stay.` : "Also delete its files from disk?");
+  if (!await ask(`Remove ${what}?`)) return;
+  const files = await ask(others.length ? `Also delete the ${TIER_LABEL[item.tier]} files from disk? The ${TIER_LABEL[others[0].tier]} version and its files stay.` : "Also delete its files from disk?", "Delete files", "Keep files");
   await api(`/${kind === "movie" ? "movies" : "series"}/${item.id}?delete_files=${files}`, { method: "DELETE" });
   location.hash = others.length ? `#/${kind === "movie" ? "movie" : "show"}/${others[0].id}` : `#/${kind === "movie" ? "movies" : "series"}`;
 }
 function poster(url, title) { return url ? `<img loading="lazy" src="${esc(url)}" alt="">` : `<div class="noposter">${esc(title)}</div>`; }
 function modal(html) { $("#modal .modal-body").innerHTML = html; $("#modal").classList.remove("hidden"); }
 function closeModal() { $("#modal").classList.add("hidden"); }
+// In-page stand-ins for confirm() / prompt() / alert(): browsers let those pop-ups be switched off, and then they do nothing.
+// They open over any open dialog, which stays as it was.
+function ask(msg, ok = "OK", cancel = "Cancel", input = null) {
+  return new Promise((done) => {
+    const o = document.createElement("div");
+    o.id = "ask"; o.className = "ask";
+    o.innerHTML = `<div class="modal-body"><p style="white-space:pre-line;margin-top:0">${esc(msg)}</p>
+      ${input ? `<input type="${input.type || "text"}" style="width:100%;margin-bottom:12px">` : ""}
+      <div class="toolbar" style="justify-content:flex-end">${cancel ? `<button data-a="0">${esc(cancel)}</button>` : ""}<button class="primary" data-a="1">${esc(ok)}</button></div></div>`;
+    const field = o.querySelector("input");
+    if (field) field.value = input.value || "";
+    const end = (yes) => { o.remove(); document.removeEventListener("keydown", key, true); done(input ? (yes ? field.value : null) : yes); };
+    const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); end(false); } else if (e.key === "Enter") { e.preventDefault(); end(true); } };
+    o.addEventListener("click", (e) => { if (e.target === o) end(false); else if (e.target.dataset.a) end(e.target.dataset.a === "1"); });
+    document.addEventListener("keydown", key, true);
+    document.body.appendChild(o);
+    (field || o.querySelector('[data-a="1"]')).focus();
+  });
+}
+const askText = (msg, value = "", type = "text") => ask(msg, "OK", "Cancel", { value, type });
+const tell = (msg) => ask(msg, "OK", null);
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 // ------------------------------------------------------------- router ---
@@ -337,7 +358,7 @@ function libDelete() {
   $("#ldfiles").onchange = () => { $("#ldgo").textContent = $("#ldfiles").checked ? `Delete ${n} ${what} and their files` : `Delete ${n} ${what}`; };
   $("#ldgo").onclick = () => guard(async () => {
     const files = $("#ldfiles").checked;
-    if (files && !confirm(`Permanently delete the files of ${n} ${what}? This can't be undone.`)) return;
+    if (files && !await ask(`Permanently delete the files of ${n} ${what}? This can't be undone.`)) return;
     $("#ldgo").disabled = true; $("#ldgo").textContent = "Deleting…";
     const r = await api(libSel.kind === "movie" ? "/movies/delete" : "/series/delete", { method: "POST", body: { ids: [...libSel.ids], delete_files: files } });
     closeModal(); toast(`Deleted ${r.removed} ${libSel.kind === "movie" ? "movie" : "show"}${r.removed === 1 ? "" : "s"}${files ? " and their files" : ""}`); route();
@@ -477,7 +498,7 @@ async function renderShow(id) {
   libraryInfo("tv", s.tmdb_id);
 }
 async function rescan(path) {
-  const rename = confirm("Also rename the files to your TRaSH naming scheme?\n\nOK = rescan and rename, Cancel = rescan only");
+  const rename = await ask("Also rename the files to your TRaSH naming scheme?", "Rescan and rename", "Rescan only");
   await guard(async () => { const r = await api(`${path}?rename=${rename}`, { method: "POST" }); toast(`Found ${r.files} file(s)`); route(); });
 }
 async function seasonSearch(id, sn) { toast("Searching season " + sn + "…"); await guard(async () => { const r = await api(`/series/${id}/search?season=${sn}`, { method: "POST" }); toast(`${r.filter((x) => x.accepted).length} acceptable releases`); route(); }); }
@@ -652,7 +673,7 @@ async function discBulkAdd() {
   const note = !search ? "They won't be searched until you search for them." : picks.length > NOW
     ? `The first ${NOW} are searched right away; the rest are picked up by the backlog search (10 an hour) so your indexer's API limit isn't used up at once. Downloads only start when the download disk has room.`
     : "Each one is searched right away.";
-  if (!confirm(`${addLabel()} ${picks.length.toLocaleString()} ${kindWord} to the ${tier === "uhd" ? "4K" : tier === "both" ? "1080p and 4K" : "1080p"} library?\n\n${note}`)) return;
+  if (!await ask(`${addLabel()} ${picks.length.toLocaleString()} ${kindWord} to the ${tier === "uhd" ? "4K" : tier === "both" ? "1080p and 4K" : "1080p"} library?\n\n${note}`)) return;
   const bulk = $("#dbulk"), prog = $("#dprog");
   bulk.disabled = true;
   let done = 0, failed = 0;
@@ -746,7 +767,7 @@ async function renderCollections() {
 }
 async function editColl(id, body) { await guard(() => api("/collections/" + id, { method: "PUT", body })); }
 async function refreshColl(id) { await guard(async () => { const r = await api(`/collections/${id}/refresh`, { method: "POST" }); toast(r.added ? `Added ${r.added} new movie(s)` : "Nothing new"); route(); }); }
-async function delColl(id) { if (confirm("Stop tracking this collection? Its movies stay in your library.")) await guard(async () => { await api("/collections/" + id, { method: "DELETE" }); route(); }); }
+async function delColl(id) { if (await ask("Stop tracking this collection? Its movies stay in your library.")) await guard(async () => { await api("/collections/" + id, { method: "DELETE" }); route(); }); }
 
 // ----------------------------------------------------------- hallmark ---
 async function renderHallmark() {
@@ -855,7 +876,16 @@ async function nzbUpload() {
 async function pauseDl(p) { await guard(async () => { await api("/downloader/" + (p ? "pause" : "resume"), { method: "POST" }); route(); }); }
 async function runTask(n) { await guard(async () => { await api("/tasks/" + n, { method: "POST" }); toast("Started " + n); }); }
 async function retryImport(id) { await guard(async () => { await api(`/queue/${id}/retry-import`, { method: "POST" }); toast("Imported"); route(); }); }
-async function rmDl(id) { if (!confirm("Remove download?")) return; const bl = confirm("Blocklist this release and search for another?"); await guard(async () => { await api(`/queue/${id}?blocklist=${bl}`, { method: "DELETE" }); route(); }); }
+function rmDl(id) {
+  modal(`<h3>Remove this download?</h3><p>It's stopped and deleted from the download queue.</p>
+    <label><input type="checkbox" id="rmbl"> Blocklist this release and search for another</label>
+    <div class="toolbar" style="justify-content:flex-end"><button onclick="closeModal()">Cancel</button><button class="danger" id="rmgo">Remove</button></div>`);
+  $("#rmgo").onclick = () => guard(async () => {
+    $("#rmgo").disabled = true;
+    await api(`/queue/${id}?blocklist=${$("#rmbl").checked}`, { method: "DELETE" });
+    closeModal(); toast("Removed"); route();
+  });
+}
 async function unblock(id) { await guard(async () => { await api("/blocklist/" + id, { method: "DELETE" }); route(); }); }
 
 // ----------------------------------------------------------- settings ---
@@ -924,14 +954,14 @@ async function renderBackup(el) {
   $("#rsgo").onclick = () => guard(async () => {
     const f = $("#rsfile").files[0];
     if (!f) throw new Error("Choose a backup file (.zip) first");
-    if (!confirm(`Replace everything in this Omniarr with the backup ${f.name}?\n\nWhat's here now is saved first as a before-restore backup.`)) return;
+    if (!await ask(`Replace everything in this Omniarr with the backup ${f.name}?\n\nWhat's here now is saved first as a before-restore backup.`)) return;
     $("#rsgo").disabled = true; $("#rsprog").textContent = "Restoring…";
     try {
       const r = await fetch("/api/restore", { method: "POST", headers: { "Content-Type": "application/zip" }, body: f });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.detail || r.statusText);
       const c = d.counts || {};
-      alert(`Restored the backup from ${d.created || "?"}: ${c.movies ?? "?"} movies, ${c.series ?? "?"} shows, ${c.indexers ?? "?"} indexers, ${c.users ?? "?"} users.`
+      await tell(`Restored the backup from ${d.created || "?"}: ${c.movies ?? "?"} movies, ${c.series ?? "?"} shows, ${c.indexers ?? "?"} indexers, ${c.users ?? "?"} users.`
         + (d.missing_folders && d.missing_folders.length ? `\n\nThese folders don't exist in this container: ${d.missing_folders.join(", ")}. Check the container's /data mapping.` : "")
         + "\n\nSign in with your account from the old server.");
       location.hash = "#/movies"; location.reload();
@@ -1008,7 +1038,7 @@ async function testServer(body, btn) {
   btn.disabled = false; btn.textContent = t;
 }
 async function editServer(id, body) { await guard(() => api("/usenet-servers/" + id, { method: "PUT", body })); }
-async function delServer(id) { if (confirm("Delete this server?")) await guard(async () => { await api("/usenet-servers/" + id, { method: "DELETE" }); route(); }); }
+async function delServer(id) { if (await ask("Delete this server?")) await guard(async () => { await api("/usenet-servers/" + id, { method: "DELETE" }); route(); }); }
 async function copyServers(btn) {
   btn.disabled = true;
   await guard(async () => { const r = await api("/usenet-servers/copy", { method: "POST" }); toast(r.added ? `Copied ${r.added} server(s)` : r.found ? "Those servers are already here" : "No servers found in the other NZBGet"); route(); });
@@ -1032,7 +1062,7 @@ async function pickFolder(input) {
     body.querySelectorAll(".folder").forEach((b) => (b.onclick = () => draw(b.dataset.p)));
     $("#fuse").onclick = () => { input.value = d.path; input.dispatchEvent(new Event("input")); closeModal(); toast("Folder chosen — click Save to keep it"); };
     $("#fnew").onclick = () => guard(async () => {
-      const name = prompt(`New folder inside ${d.path}:`);
+      const name = await askText(`New folder inside ${d.path}:`);
       if (!name) return;
       const r = await api("/fs/mkdir", { method: "POST", body: { path: d.path, name } });
       await draw(r.path);
@@ -1136,7 +1166,7 @@ function editIx(id) {
 }
 async function toggleIx(id, on) { await guard(() => api("/indexers/" + id, { method: "PUT", body: { enabled: on } })); }
 async function testIx(id) { await guard(async () => { const r = await api(`/indexers/${id}/test`, { method: "POST" }); toast(r.ok ? "OK — " + r.message : r.message, !r.ok); }); }
-async function delIx(id) { if (confirm("Delete indexer?")) await guard(async () => { await api("/indexers/" + id, { method: "DELETE" }); route(); }); }
+async function delIx(id) { if (await ask("Delete indexer?")) await guard(async () => { await api("/indexers/" + id, { method: "DELETE" }); route(); }); }
 
 async function renderProfiles(el, s) {
   const tp = await api("/trash/profiles");
@@ -1261,7 +1291,7 @@ function drawMatch(i) {
 }
 async function fixMatch(i) {
   const c = window._imp[i];
-  const term = prompt("Search for:", c.match ? c.match.title : c.title);
+  const term = await askText("Search for:", c.match ? c.match.title : c.title);
   if (!term) return;
   const res = await guard(() => api(`/lookup/${c.kind === "movie" ? "movie" : "series"}?term=${encodeURIComponent(term)}`));
   if (!res) return;
@@ -1363,13 +1393,13 @@ async function approveReq(id, btn) {
   refreshBadge(); route();
 }
 async function declineReq(id) {
-  const note = prompt("Reason for declining (optional, shown to the user):");
+  const note = await askText("Reason for declining (optional, shown to the user):");
   if (note === null) return;
   await guard(() => api(`/requests/${id}/decline`, { method: "POST", body: { note } }));
   refreshBadge(); route();
 }
 async function cancelReq(id) {
-  if (!confirm(isAdmin() ? "Remove this request from the list? (Anything already added stays in the library.)" : "Cancel this request?")) return;
+  if (!await ask(isAdmin() ? "Remove this request from the list? (Anything already added stays in the library.)" : "Cancel this request?")) return;
   await guard(() => api("/requests/" + id, { method: "DELETE" }));
   refreshBadge(); route();
 }
@@ -1401,10 +1431,10 @@ async function renderUsers(el) {
 }
 async function editUser(id, body) { await guard(async () => { await api("/users/" + id, { method: "PUT", body }); toast("Saved"); }); route(); }
 async function resetPw(id, name) {
-  const pw = prompt(`New password for ${name} (at least 8 characters):`);
+  const pw = await askText(`New password for ${name} (at least 8 characters):`, "", "password");
   if (pw) await guard(async () => { await api("/users/" + id, { method: "PUT", body: { password: pw } }); toast("Password set — they'll need to log in again"); });
 }
-async function delUser(id, name) { if (confirm(`Delete ${name}? Their requests stay in the list.`)) await guard(async () => { await api("/users/" + id, { method: "DELETE" }); route(); }); }
+async function delUser(id, name) { if (await ask(`Delete ${name}? Their requests stay in the list.`)) await guard(async () => { await api("/users/" + id, { method: "DELETE" }); route(); }); }
 
 // ---------------------------------------------------- login / accounts ---
 function renderAuth(mode) {

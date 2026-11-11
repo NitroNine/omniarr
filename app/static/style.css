@@ -183,3 +183,5 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: 0; }
 .catlist summary { cursor: pointer; }
 .catlist summary label, .catlist label.sub { cursor: pointer; }
 .catlist label.sub { display: block; padding-left: 26px; font-size: 13px; }
+.ask { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding: 80px 16px; z-index: 40; }
+.ask .modal-body { max-width: 480px; }
