@@ -84,3 +84,22 @@ def test_old_log_lines_scrubbed(env):
     db.ex("INSERT INTO events(level, message) VALUES('warn', ?)", ("failed 'https://n/api?t=get&apikey=LEAK&id=1'",))
     db._migrate(db.connect())
     assert "LEAK" not in db.one("SELECT message FROM events ORDER BY id DESC")["message"]
+
+
+def test_backlog_searches_every_new_title(env, monkeypatch):
+    """Unreleased titles at the front of the backlog don't crowd out new adds; re-searches stay capped."""
+    for i in range(40):  # 15 unreleased, 25 new and never searched
+        db.ex("INSERT INTO movies (tmdb_id, title, release_date) VALUES (?,?,?)",
+              (1000 + i, f"M{i}", "2099-01-01" if i < 15 else "2020-01-01"))
+    for i in range(12):  # searched two days ago
+        db.ex("INSERT INTO movies (tmdb_id, title, release_date, last_search) VALUES (?,?,?,datetime('now','-2 days'))",
+              (2000 + i, f"Old{i}", "2020-01-01"))
+    monkeypatch.setattr(library, "movie_available", lambda m: m["release_date"] < "2050")
+    searched = []
+
+    async def fake(mid, auto_grab=True):
+        searched.append(db.one("SELECT title FROM movies WHERE id=?", (mid,))["title"])
+    monkeypatch.setattr(search, "search_movie", fake)
+    asyncio.run(search.missing_search(limit=5))
+    assert sum(not t.startswith("Old") for t in searched) == 25
+    assert sum(t.startswith("Old") for t in searched) == 5

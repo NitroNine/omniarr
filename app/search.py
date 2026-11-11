@@ -206,10 +206,11 @@ async def _rss_sync() -> int:
 
 
 async def missing_search(limit: int = 10) -> None:
-    """Periodic backlog search, a few items at a time so indexer API limits are respected."""
+    """Periodic backlog search. Titles never searched yet (new adds whose first search was held)
+    always go; re-searches are capped at `limit` per run. newznab paces the requests."""
     for m in db.q("SELECT * FROM movies WHERE monitored=1 AND (last_search IS NULL OR last_search < datetime('now','-1 day')) "
-                  "ORDER BY last_search IS NOT NULL, last_search LIMIT ?", (limit * 3,)):
-        if limit <= 0:
+                  "ORDER BY last_search IS NOT NULL, last_search"):
+        if limit <= 0 and m["last_search"]:
             break
         if not library.movie_available(m) or decision.active_download_for("movie", m["id"]):
             continue
@@ -222,7 +223,8 @@ async def missing_search(limit: int = 10) -> None:
             return
         except Exception as e:  # noqa: BLE001
             db.log(f"Search for {m['title']} failed: {e}", "warn")
-        limit -= 1
+        if m["last_search"]:
+            limit -= 1
     eps = [e for e in library.wanted_episodes()
            if not e.get("last_search") or e["last_search"] < db.one("SELECT datetime('now','-1 day') t")["t"]]
     seen: set = set()
