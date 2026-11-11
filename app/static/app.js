@@ -224,17 +224,18 @@ async function renderMovies() {
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Movies <span class="muted small">(${movies.length})</span></h2>
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
     <select id="statf"><option value="">Any status</option><option value="missing">Missing</option><option value="have">Downloaded</option></select>
+    <label class="small" title="Only titles out at home or on TV, so Omniarr can search for them now"><input type="checkbox" id="outf"> Already out only</label>
     <a href="#/collections"><button>Collections</button></a>
     <a href="#/add"><button class="primary">Add movie</button></a></div><div class="grid" id="g"></div>`;
   const draw = () => {
-    const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, st = $("#statf").value;
-    $("#g").innerHTML = movies.filter((vs) => (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((m) => m.tier === t))
+    const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, st = $("#statf").value, out = $("#outf").checked;
+    $("#g").innerHTML = movies.filter((vs) => (!out || vs[0].available) && (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((m) => m.tier === t))
         && (!st || (st === "have" ? vs.some((m) => m.file_path) : vs.some((m) => !m.file_path && m.monitored))))
       .map((vs) => { const m = vs[0]; return `<div class="card" onclick="location.hash='#/movie/${m.id}'">${poster(m.poster, m.title)}
         <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
         <div class="chips"><span class="chip">${m.year || ""}</span>${vs.map(movieVerChip).join("")}</div></div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
   };
-  ["flt", "tierf", "statf"].forEach((id) => $("#" + id).addEventListener("input", draw));
+  ["flt", "tierf", "statf", "outf"].forEach((id) => $("#" + id).addEventListener("input", draw));
   draw();
 }
 
@@ -306,15 +307,16 @@ async function renderSeries() {
   const series = groupVersions(await api("/series"), (s) => (s.tmdb_id ? "tmdb" + s.tmdb_id : "tvdb" + s.tvdb_id));
   view.innerHTML = `<div class="toolbar"><h2 class="grow">TV <span class="muted small">(${series.length})</span></h2>
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
+    <label class="small" title="Only titles out at home or on TV, so Omniarr can search for them now"><input type="checkbox" id="outf"> Already out only</label>
     <a href="#/add"><button class="primary">Add series</button></a></div><div class="grid" id="g"></div>`;
   const draw = () => {
-    const f = $("#flt").value.toLowerCase(), t = $("#tierf").value;
-    $("#g").innerHTML = series.filter((vs) => (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((s) => s.tier === t)))
+    const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, out = $("#outf").checked;
+    $("#g").innerHTML = series.filter((vs) => (!out || vs.some((v) => v.aired > 0)) && (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((s) => s.tier === t)))
       .map((vs) => { const s = vs[0]; return `<div class="card" onclick="location.hash='#/show/${s.id}'">${poster(s.poster, s.title)}
         <div class="meta"><div class="title" title="${esc(s.title)}">${esc(s.title)}</div>
         <div class="chips">${vs.map((v) => `<span class="chip ${v.have >= v.aired && v.aired ? "ok" : ""}">${TIER_LABEL[v.tier]} · ${v.have}/${v.aired}</span>`).join("")}${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}</div></div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
   };
-  ["flt", "tierf"].forEach((id) => $("#" + id).addEventListener("input", draw));
+  ["flt", "tierf", "outf"].forEach((id) => $("#" + id).addEventListener("input", draw));
   draw();
 }
 

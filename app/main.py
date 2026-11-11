@@ -69,7 +69,10 @@ async def scheduler():
             ("missing", int(s["search_interval_minutes"]) * 60, search.missing_search),
         ]
         for name, every, fn in jobs:
-            if every > 0 and now - _last_run.get(name, 0) >= every:
+            resume = name == "missing" and newznab.resume_at and now >= newznab.resume_at  # held searches go now
+            if resume:
+                newznab.resume_at = 0.0
+            if resume or (every > 0 and now - _last_run.get(name, 0) >= every):
                 if name in ("rss", "missing") and not trash.ensure_loaded().loaded:
                     continue
                 asyncio.create_task(_job(name, fn))
@@ -842,6 +845,7 @@ def list_movies():
         "SELECT movie_id, status, progress FROM downloads WHERE kind='movie' AND status IN ('queued','downloading','importing')")}
     for r in rows:
         r["download"] = active.get(r["id"])
+        r["available"] = library.movie_available(r)
     return rows
 
 

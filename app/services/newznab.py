@@ -47,6 +47,7 @@ class _Gate:
 MIN_INTERVAL = 1.0  # seconds between requests to the same indexer
 MAX_INTERVAL = 5.0
 MAX_BACKOFF = 900.0
+resume_at = 0.0  # when the last 429 pause ends: the scheduler re-runs the backlog search then
 _gates: dict[str, _Gate] = {}
 
 
@@ -93,6 +94,8 @@ async def _request(url: str, params: dict | None = None, timeout: float = 45) ->
             g.backoff = min(MAX_BACKOFF, max(60.0, g.backoff * 2))
             pause = _retry_after(r) or g.backoff
             g.until = time.time() + pause
+            global resume_at
+            resume_at = max(resume_at, g.until + 5)
             g.interval = min(MAX_INTERVAL, g.interval * 1.5)  # and go a bit slower afterwards
             db.log(f"Indexer {host} said \"too many requests\" (429). Pausing it for {round(pause)} s, "
                    f"then one request every {g.interval:.1f} s.", "warn")

@@ -29,6 +29,7 @@ def net(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
     monkeypatch.setattr(newznab, "MIN_INTERVAL", 0.2)
     newznab._gates.clear()
+    newznab.resume_at = 0.0
     db.ex("UPDATE indexers SET url='http://idx.test', apikey='SECRET'")
     yield state
     newznab._gates.clear()
@@ -50,6 +51,7 @@ def test_429_pauses_indexer_and_hides_key(env, net):
     with pytest.raises(newznab.IndexerBusy) as e:
         asyncio.run(newznab._query(ix, {"t": "search", "q": "x"}))
     assert 115 <= e.value.until - time.time() <= 121
+    assert newznab.resume_at == e.value.until + 5  # the backlog search re-runs once the pause ends
     n = len(net["times"])
     with pytest.raises(newznab.IndexerBusy):  # paused: doesn't even ask
         asyncio.run(newznab.fetch_nzb("http://idx.test/api?t=get&id=1&apikey=SECRET"))
