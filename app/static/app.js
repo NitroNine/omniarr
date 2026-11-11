@@ -240,13 +240,16 @@ async function libraryInfo(kind, tmdbId) {
 }
 
 // ------------------------------------------------------------- movies ---
-async function renderMovies() {
-  const movies = groupVersions(await api("/movies"), (m) => m.tmdb_id);
-  view.innerHTML = `<div class="toolbar"><h2 class="grow">Movies <span class="muted small">(${movies.length})</span></h2>
+async function renderMovies(sub) {  // #/movies leaves out the Christmas movies; #/movies/christmas is only those
+  const xmas = sub === "christmas";
+  const all = groupVersions(await api("/movies"), (m) => m.tmdb_id);
+  const movies = all.filter((vs) => !!vs[0].christmas === xmas), others = all.length - movies.length;
+  view.innerHTML = `<div class="toolbar"><h2 class="grow">${xmas ? "Christmas movies" : "Movies"} <span class="muted small">(${movies.length})</span></h2>
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
     <select id="statf"><option value="">Any status</option><option value="missing">Missing</option><option value="have">Downloaded</option></select>
     ${sortSelect("movie")}
     <label class="small" title="Only titles out at home or on TV, so Omniarr can search for them now"><input type="checkbox" id="outf"> Already out only</label>
+    <a href="${xmas ? "#/movies" : "#/movies/christmas"}"><button>${xmas ? "← Movies" : "Christmas movies"} (${others})</button></a>
     <a href="#/collections"><button>Collections</button></a><button id="selbtn" class="admin-only">Select</button>
     <a href="#/add"><button class="primary">Add movie</button></a></div>${selBar()}<div class="grid" id="g"></div>`;
   const draw = () => {
