@@ -60,3 +60,15 @@ def test_series_bulk_delete(client):
     db.insert("episodes", {"series_id": sid, "season": 1, "episode": 1, "title": "Pilot"})
     assert client.post("/api/series/delete", json={"ids": [sid]}).json()["removed"] == 1
     assert not db.q("SELECT 1 FROM series") and not db.q("SELECT 1 FROM episodes")
+
+
+def test_bulk_monitor(client, monkeypatch):
+    _fake(monkeypatch)
+    a = asyncio.run(library.add_movie(1, "hd"))
+    asyncio.run(library.add_movie(1, "uhd"))
+    b = asyncio.run(library.add_movie(2, "hd"))
+    assert client.post("/api/movies/monitor", json={"ids": [a["id"]], "monitored": False}).json() == {"changed": 2}
+    assert {(m["tmdb_id"], m["monitored"]) for m in db.q("SELECT tmdb_id, monitored FROM movies")} == {(1, 0), (2, 1)}
+    sid = db.insert("series", {"tvdb_id": 1, "tmdb_id": 9, "title": "Show", "tier": "hd", "folder": "Show", "monitored": 1})
+    client.post("/api/series/monitor", json={"ids": [sid], "monitored": False})
+    assert db.one("SELECT monitored FROM series WHERE id=?", (sid,))["monitored"] == 0

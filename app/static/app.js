@@ -244,7 +244,8 @@ async function renderMovies() {
 const libSel = { on: false, ids: new Set(), kind: "movie" };
 function selBar() {
   return `<div class="toolbar selbar" id="libsel" style="display:none"><button class="small" id="lsall">Select all</button><button class="small" id="lsnone">Clear</button>
-    <button class="small danger" id="lsdel" disabled>Delete selected</button><span class="small muted" id="lsprog"></span></div>`;
+    <select id="lsact" disabled><option value="">With selected…</option><option value="monitor">Monitor</option><option value="unmonitor">Unmonitor</option><option value="delete">Delete…</option></select>
+    <span class="small muted" id="lscount">Nothing selected</span></div>`;
 }
 function libPick(id) { return libSel.on ? `<label class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-id="${id}" ${libSel.ids.has(id) ? "checked" : ""} onchange="libToggle(${id}, this.checked)"></label>` : ""; }
 function libCard(card, href) {
@@ -253,9 +254,9 @@ function libCard(card, href) {
 }
 function libToggle(id, on) { on ? libSel.ids.add(id) : libSel.ids.delete(id); libCount(); }
 function libCount() {
-  const b = $("#lsdel"); if (!b) return;
+  const b = $("#lsact"); if (!b) return;
   const n = libSel.ids.size, what = libSel.kind === "movie" ? "movie" : "show";
-  b.disabled = !n; b.textContent = n ? `Delete ${n} ${what}${n === 1 ? "" : "s"}` : "Delete selected";
+  b.disabled = !n; $("#lscount").textContent = n ? `${n} ${what}${n === 1 ? "" : "s"} selected` : "Nothing selected";
 }
 function libSelect(kind, draw) {
   libSel.on = false; libSel.ids = new Set(); libSel.kind = kind;
@@ -266,7 +267,15 @@ function libSelect(kind, draw) {
   };
   $("#lsall").onclick = () => { view.querySelectorAll("#g .card").forEach((c) => libSel.ids.add(+c.dataset.id)); draw(); libCount(); };
   $("#lsnone").onclick = () => { libSel.ids.clear(); draw(); libCount(); };
-  $("#lsdel").onclick = () => libDelete();
+  $("#lsact").onchange = () => {
+    const a = $("#lsact").value; $("#lsact").value = "";
+    if (a === "delete") libDelete();
+    else if (a) guard(async () => {
+      const on = a === "monitor", n = libSel.ids.size, what = libSel.kind === "movie" ? "movie" : "show";
+      await api(libSel.kind === "movie" ? "/movies/monitor" : "/series/monitor", { method: "POST", body: { ids: [...libSel.ids], monitored: on } });
+      toast(`${on ? "Monitoring" : "Stopped monitoring"} ${n} ${what}${n === 1 ? "" : "s"}`); route();
+    });
+  };
 }
 function libDelete() {
   const n = libSel.ids.size, what = libSel.kind === "movie" ? (n === 1 ? "movie" : "movies") : (n === 1 ? "show" : "shows");

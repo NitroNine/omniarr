@@ -1072,6 +1072,33 @@ async def _bulk_delete(kind: str, body: BulkDelete) -> dict:
     return {"removed": len(titles), "versions": len(ids)}
 
 
+class BulkMonitor(BaseModel):
+    ids: list[int]  # any version's id: every version of the title changes
+    monitored: bool
+
+
+def _bulk_monitor(kind: str, body: BulkMonitor) -> dict:
+    table = "movies" if kind == "movie" else "series"
+    ids: set[int] = set()
+    for i in body.ids:
+        item = db.one(f"SELECT * FROM {table} WHERE id=?", (i,))
+        if item:
+            ids |= {v["id"] for v in library.versions(kind, item)}
+    for i in ids:
+        db.update(table, i, {"monitored": int(body.monitored)})
+    return {"changed": len(ids)}
+
+
+@app.post("/api/movies/monitor")
+def monitor_movies(body: BulkMonitor):
+    return _bulk_monitor("movie", body)
+
+
+@app.post("/api/series/monitor")
+def monitor_series_bulk(body: BulkMonitor):
+    return _bulk_monitor("tv", body)
+
+
 @app.post("/api/movies/delete")
 async def delete_movies(body: BulkDelete):
     return await _bulk_delete("movie", body)
