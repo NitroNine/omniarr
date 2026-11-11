@@ -285,6 +285,7 @@ async def process_downloads() -> None:
                 else:
                     await import_episodes(dl, src)
                 await _cleanup_source(src)
+                downloader.remove_nzb_copy(h.get("NZBFilename") or "")
                 db.ex("UPDATE downloads SET status='imported', message=NULL, updated=datetime('now') WHERE id=?", (dl["id"],))
             except Exception as e:  # noqa: BLE001
                 db.ex("UPDATE downloads SET status='import_failed', message=?, updated=datetime('now') WHERE id=?",

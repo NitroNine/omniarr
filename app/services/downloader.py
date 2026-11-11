@@ -27,7 +27,7 @@ USERNAME = "omniarr"
 _proc: subprocess.Popen | None = None
 _written: str | None = None  # config text NZBGet was last started/reloaded with
 _cleaned = 0.0  # when old .nzb copies were last removed
-NZB_KEEP_DAYS = 7
+NZB_KEEP_DAYS = 2
 
 
 def builtin() -> bool:
@@ -236,8 +236,8 @@ def stop() -> None:
 
 
 def clean_nzb_dir(days: int = NZB_KEEP_DAYS) -> int:
-    """NZBGet keeps a copy of every .nzb it was given (NzbDir, *.queued / *.nzb). Its queue lives in QueueDir, so
-    copies older than a week only take space (~0.5 MB each). Returns how many were removed."""
+    """NZBGet keeps a copy of every .nzb it was given (NzbDir, *.queued / *.nzb). Imported downloads have theirs
+    removed right away (remove_nzb_copy); this catches the rest (failed or removed downloads) after 2 days."""
     d = os.path.join(conf_dir(), "nzb")
     if not os.path.isdir(d):
         return 0
@@ -251,6 +251,26 @@ def clean_nzb_dir(days: int = NZB_KEEP_DAYS) -> int:
                 n += 1
         except OSError:
             pass
+    return n
+
+
+def remove_nzb_copy(nzb_filename: str) -> int:
+    """Delete NZBGet's saved copy of one .nzb (NzbDir/<name>.nzb.queued, or .nzb.2.queued etc. for repeats) once
+    its download has been imported. Only for the built-in downloader, whose NzbDir is ours."""
+    if not builtin() or not nzb_filename:
+        return 0
+    base = os.path.basename(nzb_filename)
+    d = os.path.join(conf_dir(), "nzb")
+    if not base or not os.path.isdir(d):
+        return 0
+    n = 0
+    for f in os.listdir(d):
+        if f == base or (f.startswith(base) and ".queued" in f[len(base):]):
+            try:
+                os.remove(os.path.join(d, f))
+                n += 1
+            except OSError:
+                pass
     return n
 
 

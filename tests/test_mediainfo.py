@@ -66,7 +66,7 @@ def test_old_nzb_copies_are_removed(env):
     old, new = os.path.join(d, "old.nzb.queued"), os.path.join(d, "new.nzb.queued")
     for p in (old, new):
         open(p, "w").close()
-    os.utime(old, (time.time() - 8 * 86400,) * 2)
+    os.utime(old, (time.time() - 3 * 86400,) * 2)
     assert downloader.clean_nzb_dir() == 1
     assert sorted(os.listdir(d)) == ["new.nzb.queued"]
 
@@ -74,3 +74,13 @@ def test_old_nzb_copies_are_removed(env):
 def test_nzbget_logs_without_detail_or_debug(env):
     o = downloader.options()
     assert o["DetailTarget"] == "none" and o["DebugTarget"] == "none" and o["WriteLog"] == "rotate"
+
+
+def test_imported_nzb_copy_removed(env):
+    d = os.path.join(downloader.conf_dir(), "nzb")
+    os.makedirs(d, exist_ok=True)
+    for f in ("Movie.2026.1080p.nzb.queued", "Movie.2026.1080p.nzb.2.queued", "Other.2026.nzb.queued"):
+        open(os.path.join(d, f), "w").close()
+    assert downloader.remove_nzb_copy("Movie.2026.1080p.nzb") == 2
+    assert os.listdir(d) == ["Other.2026.nzb.queued"]
+    assert downloader.remove_nzb_copy("") == 0
