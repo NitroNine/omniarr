@@ -457,7 +457,7 @@ async function renderProvider(pid) {
   const { providers } = await api("/providers");
   const prov = providers.find((p) => p.id === pid) || { name: "Service", kinds: ["movie", "tv"] };
   if (!prov.kinds.includes(disc.kind)) disc.kind = prov.kinds[0];
-  disc.page = 1;
+  disc.page = 1; disc.sel = new Set(); disc.pid = pid; disc.more = false; disc.total = 0;
   view.innerHTML = `<div class="toolbar"><div class="prov-head grow">${prov.logo ? `<img src="${esc(prov.logo)}" alt="">` : ""}<h2 style="margin:0">${esc(prov.name)}</h2><span class="muted small" id="dcount"></span></div>
     <a href="#/discover"><button>All services</button></a></div>
     <div class="toolbar"><div class="tabs2" style="margin:0">${["movie", "tv"].filter((k) => prov.kinds.includes(k)).map((k) => `<button data-k="${k}" class="${disc.kind === k ? "active" : ""}">${k === "movie" ? "Movies" : "TV shows"}</button>`).join("")}</div>
@@ -467,6 +467,8 @@ async function renderProvider(pid) {
       <label>${addLabel()} for <select id="dtier">${tierOptions()}</select></label>
       <select id="dmon" title="TV: which episodes to monitor"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option></select>
       <label class="small"><input type="checkbox" id="dsearch" checked> Search on add</label></div>
+    <div class="toolbar selbar"><button class="small" id="dall">Select all</button><button class="small" id="dnone">Clear</button>
+      <button class="small primary" id="dbulk" disabled>${addLabel()} selected</button><span class="small muted" id="dprog"></span></div>
     <div class="grid" id="dg"></div><div class="toolbar" style="justify-content:center;margin-top:16px"><button id="dmore">Load more</button></div>`;
   $("#dsort").value = disc.sort;
   const showMon = () => { $("#dmon").style.display = disc.kind === "tv" ? "" : "none"; if ($("#dorigw")) $("#dorigw").style.display = disc.kind === "tv" ? "" : "none"; };
@@ -476,17 +478,69 @@ async function renderProvider(pid) {
     const d = await api(`/providers/${pid}/${disc.kind}?page=${disc.page}&sort=${disc.sort}&originals=${disc.kind === "tv" && disc.originals}`);
     window._disc = reset ? d.results : [...(window._disc || []), ...d.results];
     $("#dcount").textContent = `${d.total_results.toLocaleString()} ${disc.kind === "movie" ? "movies" : "shows"}`;
-    $("#dg").innerHTML = window._disc.map((r, i) => `<div class="card" onclick="location.hash='${titleHref(disc.kind, r.tmdb_id)}'" title="${esc(r.overview)}">${poster(r.poster, r.title)}
+    disc.total = d.total_results; disc.more = d.page < d.total_pages;
+    $("#dg").innerHTML = window._disc.map((r, i) => `<div class="card" onclick="location.hash='${titleHref(disc.kind, r.tmdb_id)}'" title="${esc(r.overview)}">${r.library_id ? "" : `<label class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-id="${r.tmdb_id}" ${disc.sel.has(r.tmdb_id) ? "checked" : ""} onchange="discPick(this)"></label>`}${poster(r.poster, r.title)}
       <div class="meta"><div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
       <div class="chips"><span class="chip">${r.year || "TBA"}</span>${r.rating ? `<span class="chip">★ ${r.rating.toFixed(1)}</span>` : ""}</div>
       ${r.library_id ? '<span class="chip ok">In library</span>' : `<button class="small primary add-btn" onclick="event.stopPropagation();discAdd(${i}, this)">+ ${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted">Nothing found.</p>';
-    $("#dmore").style.display = d.page < d.total_pages ? "" : "none";
+    $("#dmore").style.display = disc.more ? "" : "none";
+    discSelCount();
   };
+  disc.load = load;
   view.querySelectorAll(".tabs2 button").forEach((b) => (b.onclick = () => { disc.kind = b.dataset.k; view.querySelectorAll(".tabs2 button").forEach((x) => x.classList.toggle("active", x === b)); showMon(); guard(() => load(true)); }));
   $("#dsort").onchange = () => { disc.sort = $("#dsort").value; guard(() => load(true)); };
   if ($("#dorig")) $("#dorig").onchange = () => { disc.originals = $("#dorig").checked; guard(() => load(true)); };
   $("#dmore").onclick = () => { disc.page++; guard(() => load(false)); };
+  $("#dall").onclick = () => guard(discSelectAll);
+  $("#dnone").onclick = () => { disc.sel.clear(); view.querySelectorAll("#dg .pick input").forEach((b) => (b.checked = false)); discSelCount(); };
+  $("#dbulk").onclick = () => guard(discBulkAdd);
   await load(true);
+}
+function discPick(box) { box.checked ? disc.sel.add(+box.dataset.id) : disc.sel.delete(+box.dataset.id); discSelCount(); }
+function discSelCount() {
+  const n = disc.sel.size, b = $("#dbulk");
+  if (!b) return;
+  b.disabled = !n; b.textContent = `${addLabel()} selected${n ? ` (${n.toLocaleString()})` : ""}`;
+}
+async function discSelectAll() {
+  if (disc.more && confirm(`Only ${window._disc.length} of ${disc.total.toLocaleString()} are loaded. Load all of them and select everything?\n\nCancel selects just the ones shown.`)) {
+    const prog = $("#dprog");
+    while (disc.more && disc.page < 500) {  // TMDB stops at page 500
+      disc.page++; prog.textContent = `Loading… ${window._disc.length.toLocaleString()} of ${disc.total.toLocaleString()}`;
+      await disc.load(false);
+    }
+    prog.textContent = "";
+  }
+  window._disc.filter((r) => !r.library_id).forEach((r) => disc.sel.add(r.tmdb_id));
+  view.querySelectorAll("#dg .pick input").forEach((b) => (b.checked = true));
+  discSelCount();
+}
+async function discBulkAdd() {
+  const picks = window._disc.filter((r) => disc.sel.has(r.tmdb_id) && !r.library_id);
+  if (!picks.length) return;
+  const search = $("#dsearch").checked, tier = $("#dtier").value, NOW = 20;
+  const kindWord = disc.kind === "movie" ? "movies" : "shows";
+  const note = !search ? "They won't be searched until you search for them." : picks.length > NOW
+    ? `The first ${NOW} are searched right away; the rest are picked up by the backlog search (10 an hour) so your indexer's API limit isn't used up at once. Downloads only start when the download disk has room.`
+    : "Each one is searched right away.";
+  if (!confirm(`${addLabel()} ${picks.length.toLocaleString()} ${kindWord} to the ${tier === "uhd" ? "4K" : tier === "both" ? "1080p and 4K" : "1080p"} library?\n\n${note}`)) return;
+  const bulk = $("#dbulk"), prog = $("#dprog");
+  bulk.disabled = true;
+  let done = 0, failed = 0;
+  for (const [n, r] of picks.entries()) {
+    prog.textContent = `${isAdmin() ? "Adding" : "Requesting"} ${n + 1} of ${picks.length}: ${r.title}`;
+    try {
+      const body = { tmdb_id: r.tmdb_id, tier, search: search && n < NOW };
+      const item = await (disc.kind === "movie" ? addOrRequest("movie", body) : addOrRequest("tv", { ...body, monitor: $("#dmon").value }));
+      r.library_id = item.id || true; disc.sel.delete(r.tmdb_id); done++;
+      const card = view.querySelector(`#dg .pick input[data-id="${r.tmdb_id}"]`)?.closest(".card");
+      if (card) { card.querySelector(".pick")?.remove(); card.querySelector(".add-btn")?.replaceWith(Object.assign(document.createElement("span"), { className: `chip ${item.requested ? "warn" : "ok"}`, textContent: item.requested ? "Requested" : "Added" })); }
+    } catch (e) { failed++; }
+    discSelCount();
+  }
+  prog.textContent = "";
+  toast(`${isAdmin() ? "Added" : "Requested"} ${done} ${kindWord}${failed ? `, ${failed} failed (already in the library or not found)` : ""}`, !!failed);
+  discSelCount();
 }
 async function discAdd(i, btn) {
   const r = window._disc[i];
