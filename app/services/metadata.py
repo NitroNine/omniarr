@@ -559,7 +559,7 @@ async def discover_christmas_all(released: bool = False) -> dict:
 
 
 async def _discover_christmas_all(released: bool) -> dict:
-    """Christmas movies from this year on (English-language ones while english_only is on), from everywhere: TMDB's Christmas/holiday keywords, plus US TV premieres
+    """Christmas movies dated this calendar year (English-language ones while english_only is on), from everywhere: TMDB's Christmas/holiday keywords, plus US TV premieres
     (Hallmark, Lifetime, GAF... often have no keywords yet) with a Christmas word in the title or keywords.
     Each one lists the streaming services it is on."""
     since, today = time.strftime("%Y-01-01"), time.strftime("%Y-%m-%d")
@@ -580,13 +580,14 @@ async def _discover_christmas_all(released: bool) -> dict:
                 if r["id"] not in found or not check:
                     found[r["id"]] = item
             page += 1
-    upto = {"primary_release_date.lte": today} if released else {}
+    until = today if released else time.strftime("%Y-12-31")  # this calendar year only; next year from Jan 1
+    upto = {"primary_release_date.lte": until}
     english = bool(db.setting("english_only"))
     kws = await _xmas_keyword_ids()
     if kws:
         await pages({"with_keywords": kws, "primary_release_date.gte": since, "sort_by": "popularity.desc", **upto}, 40, False)
     await pages({"region": "US", "with_release_type": "6", "release_date.gte": since, "sort_by": "popularity.desc",
-                 **({"release_date.lte": today} if released else {})}, 40, True)  # TV movies are rarely "popular": read them all
+                 "release_date.lte": until}, 40, True)  # TV movies are rarely "popular": read them all
     sem = asyncio.Semaphore(8)
 
     async def keep(r):

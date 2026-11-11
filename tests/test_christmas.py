@@ -80,10 +80,11 @@ def test_christmas_tab_list(env, monkeypatch):
                                                   {"id": 2, "name": "holiday inn"}]}
         if path == "/discover/movie" and "with_keywords" in p:
             assert p["with_keywords"] == "207317|1"
+            assert p["primary_release_date.gte"][5:] == "01-01" and p["primary_release_date.lte"][5:] == "12-31"
             return {"total_pages": 1, "results": [{"id": 10, "title": "Elf Again", "release_date": "2026-11-27", "original_language": "en"},
                                                   {"id": 9, "title": "Das Geheimnis der Weihnacht", "release_date": "2026-12-24", "original_language": "de"}]}
         if path == "/discover/movie":
-            assert p["with_release_type"] == "6"
+            assert p["with_release_type"] == "6" and p["release_date.lte"][5:] == "12-31"
             if p["page"] == 2:
                 return {"total_pages": 2, "results": [{"id": 14, "title": "Obscure Little Christmas", "release_date": "2026-12-01"}]}
             return {"total_pages": 2, "results": [{"id": 11, "title": "Mistletoe and Mimosas", "release_date": "2026-11-15"},
