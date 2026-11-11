@@ -91,6 +91,29 @@ def _size_ok(d: Decision, profile: trash.Profile, runtime: int, n_eps: int = 1) 
         d.reject(f"Too large ({mb_per_min:.1f} MB/min > {mx})")
 
 
+# Best to worst, whatever a profile allows (TRaSH profiles list the qualities they don't allow in no useful order).
+# Movie and TV names for the same thing share a rank.
+_ORDER = [["Remux-2160p", "Bluray-2160p Remux"], ["Bluray-2160p"], ["WEBDL-2160p"], ["WEBRip-2160p"], ["HDTV-2160p"],
+          ["Remux-1080p", "Bluray-1080p Remux"], ["Bluray-1080p"], ["WEBDL-1080p"], ["WEBRip-1080p"], ["HDTV-1080p"],
+          ["Bluray-720p"], ["WEBDL-720p"], ["WEBRip-720p"], ["HDTV-720p"], ["Bluray-576p"], ["Bluray-480p"],
+          ["WEBDL-480p"], ["WEBRip-480p"], ["DVD-R"], ["DVD"], ["SDTV"], ["DVDSCR"], ["REGIONAL"], ["TELECINE"],
+          ["TELESYNC"], ["CAM"], ["WORKPRINT"]]
+_GLOBAL = {name: i for i, names in enumerate(_ORDER) for name in names}
+
+
+def quality_order(quality: str | None, profile: trash.Profile | None = None) -> int | None:
+    """Overall rank of a quality (lower is better), or of a profile group such as "WEB 2160p" (its best member)."""
+    if not quality:
+        return None
+    if quality in _GLOBAL:
+        return _GLOBAL[quality]
+    for item in (profile.items if profile else []):
+        if item["name"] == quality:
+            ranks = [_GLOBAL[q] for q in item.get("items", []) if q in _GLOBAL]
+            return min(ranks) if ranks else None
+    return None
+
+
 def _upgrade_check(d: Decision, profile: trash.Profile, quality: str | None, score: int | None) -> None:
     """Existing file present: only accept real upgrades, until cutoff is reached."""
     if not quality:
@@ -98,6 +121,17 @@ def _upgrade_check(d: Decision, profile: trash.Profile, quality: str | None, sco
     if not (profile.upgrade_allowed and db.setting("upgrades_enabled")):
         d.reject("Already have a file (upgrades disabled)")
         return
+    if profile.quality_rank(quality) is None:
+        # The file is a quality this profile doesn't allow (e.g. a Remux kept in a "Bluray + WEB" library).
+        # Only replace it with something better overall, and never once it's at or above the profile's cutoff.
+        g_cur, g_cut, g_new = quality_order(quality), quality_order(profile.cutoff, profile), quality_order(d.quality)
+        if g_cur is not None:
+            if g_cut is not None and g_cur <= g_cut:
+                d.reject(f"Existing {quality} is already as good as this library's goal ({profile.cutoff})")
+                return
+            if g_new is None or g_new >= g_cur:
+                d.reject(f"Not better than the existing {quality}")
+                return
     cur_rank = profile.quality_rank(quality)
     cur_rank = 999 if cur_rank is None else cur_rank
     cur_score = score or 0

@@ -185,6 +185,12 @@ async def import_movie(dl: dict, source_dir: str) -> None:
     dest = _avoid_sibling(dest, {sib["file_path"]} if sib and sib["file_path"] else set(), movie["tier"])
     name = os.path.splitext(os.path.basename(dest))[0]
     subs = subtitles_for(video)
+    if movie["file_path"] and os.path.exists(movie["file_path"]):
+        from .decision import quality_order
+        old_q, new_q = quality_order(movie.get("file_quality")), quality_order(dl["quality"])
+        if old_q is not None and new_q is not None and new_q > old_q:  # never swap a better file for a worse one
+            raise RuntimeError(f"Not imported: the {dl['quality']} download is lower quality than the "
+                               f"{movie['file_quality']} file already there, which is kept")
     if movie["file_path"] and movie["file_path"] != dest:
         _remove_old(movie["file_path"])
     await asyncio.to_thread(_transfer, video, dest)
@@ -230,6 +236,13 @@ async def import_episodes(dl: dict, source_dir: str) -> None:
         dest = _avoid_sibling(dest, sibling_files, series["tier"])
         name = os.path.splitext(os.path.basename(dest))[0]
         subs = subtitles_for(video) if len(plan) == 1 else []
+        from .decision import quality_order
+        new_q = quality_order(dl["quality"])
+        if new_q is not None and any(e["file_path"] and os.path.exists(e["file_path"]) and quality_order(e.get("file_quality")) is not None
+                                     and new_q > quality_order(e.get("file_quality")) for e in episodes):
+            db.log(f"Kept the better existing file for {series['title']} "
+                   f"S{episodes[0]['season']:02d}E{episodes[0]['episode']:02d}; not replaced by {dl['quality']}", "warn")
+            continue  # never swap a better file for a worse one
         for e in episodes:
             if e["file_path"] and e["file_path"] != dest:
                 _remove_old(e["file_path"])

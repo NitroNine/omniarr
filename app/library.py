@@ -335,8 +335,15 @@ def wanted_episodes(series_id: int | None = None) -> list[dict]:
 
 
 def cutoff_met(profile, quality: str | None, score: int | None) -> bool:
+    """Nothing left to search for. A file of a quality the profile doesn't allow counts when it is at least as good
+    overall as the profile's cutoff (a 4K Remux in a "UHD Bluray + WEB" library is done)."""
     if not quality:
         return False
+    if profile.quality_rank(quality) is None:
+        from .decision import quality_order
+        g_cur, g_cut = quality_order(quality), quality_order(profile.cutoff, profile)
+        if g_cur is not None and g_cut is not None and g_cur <= g_cut:
+            return True
     r = profile.quality_rank(quality)
     r = 999 if r is None else r
     return r <= profile.cutoff_rank() and (score or 0) >= profile.cutoff_format_score
