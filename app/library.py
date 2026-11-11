@@ -326,9 +326,9 @@ def wanted_episodes(series_id: int | None = None) -> list[dict]:
         if not e["file_path"]:
             out.append(e)
         elif upgrades:
-            s = db.one("SELECT tier FROM series WHERE id=?", (e["series_id"],))
+            s = db.one("SELECT tier, profile FROM series WHERE id=?", (e["series_id"],))
             from .decision import profile_for
-            prof = profiles.setdefault(s["tier"], profile_for("tv", s["tier"]))
+            prof = profiles.setdefault((s["tier"], s["profile"]), profile_for("tv", s["tier"], item=s))
             if not cutoff_met(prof, e["file_quality"], e["file_score"]):
                 out.append(e)
     return out

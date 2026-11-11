@@ -188,7 +188,7 @@ async def _rss_sync() -> int:
     for m in movies:
         if m["file_path"]:
             from .decision import profile_for
-            if library.cutoff_met(profile_for("movie", m["tier"]), m["file_quality"], m["file_score"]):
+            if library.cutoff_met(profile_for("movie", m["tier"], item=m), m["file_quality"], m["file_score"]):
                 continue
         for t in filter(None, (m["title"], m.get("original_title"))):
             wanted_movies.setdefault(normalize_title(t), []).append(m)
@@ -245,7 +245,7 @@ async def missing_search(limit: int = 10) -> None:
         if not library.movie_available(m) or decision.active_download_for("movie", m["id"]):
             continue
         if m["file_path"]:
-            if library.cutoff_met(decision.profile_for("movie", m["tier"]), m["file_quality"], m["file_score"]):
+            if library.cutoff_met(decision.profile_for("movie", m["tier"], item=m), m["file_quality"], m["file_score"]):
                 continue
         try:
             await search_movie(m["id"])

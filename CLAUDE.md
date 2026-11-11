@@ -15,6 +15,8 @@ moved to local; this file carries the context over.
 - **1080p vs 4K libraries** ("tier" hd/uhd) for movies and TV, each with its own root folder
   and TRaSH profile; per-library **quality limits** override (allowed qualities, upgrade-until
   cutoff, upgrades on/off, CF score cutoff) in setting `quality_overrides`.
+  A title version can pick its own TRaSH profile (`movies.profile` / `series.profile`, title page Quality menu,
+  `decision.profile_for(..., item=row)`); then only the library's upgrades on/off and score cutoff apply.
 - **Newznab indexers** + **NZBGet** (JSON-RPC); import with TRaSH naming, blocklist + re-search.
   **Built-in downloader** (default, `download_client=builtin`): NZBGet's official Linux release is baked
   into the image at `/opt/nzbget` (pinned version + sha256 in the Dockerfile). `services/downloader.py`
@@ -53,7 +55,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 115 tests
+.venv/bin/pytest -q                       # 117 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

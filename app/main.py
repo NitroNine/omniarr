@@ -949,7 +949,26 @@ def edit_movie(mid: int, body: dict):
         db.update("movies", mid, {"monitored": int(bool(body["monitored"]))})
     if "christmas" in body:
         library.set_christmas(mid, bool(body["christmas"]))
+    if "profile" in body:
+        db.update("movies", mid, {"profile": _check_profile("movie", body["profile"])})
     return get_movie(mid)
+
+
+def _check_profile(kind: str, key: str | None) -> str | None:
+    """A title's own quality profile: a TRaSH profile key, or empty = the library's."""
+    if not key:
+        return None
+    if key not in {p["key"] for p in trash.ensure_loaded().list_profiles(kind)}:
+        raise HTTPException(400, f"Unknown quality profile '{key}'")
+    return key
+
+
+@app.get("/api/profiles/{kind}/{tier}")
+def title_profiles(kind: str, tier: str):
+    """The choices for a title's quality: the library's profile (the default) and every TRaSH profile."""
+    kind = "movie" if kind == "movie" else "tv"
+    lib = db.setting(f"profile_{decision.library_key(kind, tier)}")
+    return {"library": lib, "profiles": trash.ensure_loaded().list_profiles(kind)}
 
 
 @app.delete("/api/movies/{mid}")
@@ -1037,6 +1056,8 @@ def edit_series(sid: int, body: dict):
         db.update("series", sid, {"monitored": int(bool(body["monitored"]))})
     if "series_type" in body:
         db.update("series", sid, {"series_type": body["series_type"]})
+    if "profile" in body:
+        db.update("series", sid, {"profile": _check_profile("tv", body["profile"])})
     return {"ok": True}
 
 
@@ -1151,8 +1172,8 @@ class GrabIn(BaseModel):
 async def manual_grab(body: GrabIn):
     rel = newznab.Release(title=body.title, guid=body.guid, link=body.link, size=body.size,
                           indexer=body.indexer, indexer_id=body.indexer_id)
-    prof = decision.profile_for(body.kind, (db.one(
-        f"SELECT tier FROM {'movies' if body.kind == 'movie' else 'series'} WHERE id=?", (body.item_id,)) or {})["tier"])
+    it = db.one(f"SELECT tier, profile FROM {'movies' if body.kind == 'movie' else 'series'} WHERE id=?", (body.item_id,)) or {}
+    prof = decision.profile_for(body.kind, it["tier"], item=it)
     d = decision.evaluate(rel, body.kind, prof)
     d.episode_ids = body.episode_ids
     if body.kind == "movie":

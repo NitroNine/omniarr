@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS movies (
   release_date TEXT, tier TEXT NOT NULL DEFAULT 'hd', monitored INTEGER DEFAULT 1,
   folder TEXT, file_path TEXT, file_quality TEXT, file_score INTEGER, file_size INTEGER,
   added TEXT DEFAULT CURRENT_TIMESTAMP, last_search TEXT, collection_id INTEGER, collection_name TEXT,
-  digital_release TEXT, physical_release TEXT, last_refresh TEXT, christmas INTEGER DEFAULT 0,
+  digital_release TEXT, physical_release TEXT, last_refresh TEXT, christmas INTEGER DEFAULT 0, profile TEXT,
   UNIQUE(tmdb_id, tier)
 );
 
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS series (
   title TEXT NOT NULL, year INTEGER, overview TEXT, poster TEXT, runtime INTEGER,
   status TEXT, series_type TEXT DEFAULT 'standard', tier TEXT NOT NULL DEFAULT 'hd',
   monitored INTEGER DEFAULT 1, folder TEXT, added TEXT DEFAULT CURRENT_TIMESTAMP,
-  last_refresh TEXT, UNIQUE(tvdb_id, tier), UNIQUE(tmdb_id, tier)
+  last_refresh TEXT, profile TEXT, UNIQUE(tvdb_id, tier), UNIQUE(tmdb_id, tier)
 );
 
 CREATE TABLE IF NOT EXISTS episodes (
@@ -185,6 +185,8 @@ MIGRATIONS = [
     ("movies", "physical_release", "TEXT"),
     ("movies", "last_refresh", "TEXT"),
     ("movies", "christmas", "INTEGER DEFAULT 0"),
+    ("movies", "profile", "TEXT"),  # own TRaSH profile; NULL = the library's
+    ("series", "profile", "TEXT"),
 ]
 
 

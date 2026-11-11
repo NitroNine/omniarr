@@ -45,14 +45,24 @@ def library_key(kind: str, tier: str) -> str:
     return f"{'movies' if kind == 'movie' else 'tv'}_{tier}"
 
 
-def profile_for(kind: str, tier: str, apply_overrides: bool = True) -> trash.Profile:
+def profile_for(kind: str, tier: str, apply_overrides: bool = True, item: dict | None = None) -> trash.Profile:
     """The TRaSH profile for a library, with the user's quality limits applied:
     which qualities are allowed (floor/ceiling), the upgrade-until cutoff,
-    whether upgrades happen at all, and the custom-format score cutoff."""
+    whether upgrades happen at all, and the custom-format score cutoff.
+
+    `item` (a movies / series row) with its own `profile` uses that TRaSH profile instead; of the library's
+    limits only "upgrades on/off" and the score cutoff carry over (the quality lists belong to the library's profile)."""
     s = db.get_settings()
-    key = s[f"profile_{library_key(kind, tier)}"]
-    p = trash.ensure_loaded().build_profile(kind, key, s.get("trash_score_set") or "default")
+    own = (item or {}).get("profile")
+    key = own or s[f"profile_{library_key(kind, tier)}"]
+    st = trash.ensure_loaded()
+    if own and own not in st.profiles[trash._app(kind)]:
+        key = s[f"profile_{library_key(kind, tier)}"]  # that profile is gone from TRaSH: back to the library's
+        own = None
+    p = st.build_profile(kind, key, s.get("trash_score_set") or "default")
     ov = (s.get("quality_overrides") or {}).get(library_key(kind, tier)) or {}
+    if own:
+        ov = {k: v for k, v in ov.items() if k in ("upgrades", "cutoff_score")}
     if not apply_overrides or not ov:
         return p
     import copy
@@ -179,7 +189,7 @@ def _title_matches(parsed_name: str, *titles: str | None) -> bool:
 
 # ----------------------------------------------------------------- movies --
 def decide_movie(movie: dict, releases: list[Release]) -> list[Decision]:
-    profile = profile_for("movie", movie["tier"])
+    profile = profile_for("movie", movie["tier"], item=movie)
     out = []
     for rel in releases:
         d = evaluate(rel, "movie", profile)
@@ -202,7 +212,7 @@ def decide_episodes(series: dict, episodes: list[dict], releases: list[Release])
     """`episodes` = the episodes we're looking for (wanted). Releases are mapped
     onto them; a release covering any non-wanted / already-good episode is
     only accepted if every covered episode benefits."""
-    profile = profile_for("tv", series["tier"])
+    profile = profile_for("tv", series["tier"], item=series)
     all_eps = db.q("SELECT * FROM episodes WHERE series_id=?", (series["id"],))
     by_se = {(e["season"], e["episode"]): e for e in all_eps}
     by_date = {e["air_date"]: e for e in all_eps if e.get("air_date")}

@@ -62,7 +62,7 @@ async def add(filename: str, nzb: bytes, kind: str, item_id: int | None = None) 
     rel = newznab.Release(title=name, guid="manual-" + hashlib.sha1(nzb).hexdigest()[:16], link="",
                           size=nzb_size(nzb), indexer="Manual upload", indexer_id=0)
     if kind == "movie":
-        d = decision.evaluate(rel, "movie", decision.profile_for("movie", item["tier"]))
+        d = decision.evaluate(rel, "movie", decision.profile_for("movie", item["tier"], item=item))
     else:
         all_eps = db.q("SELECT * FROM episodes WHERE series_id=?", (item["id"],))
         d = decision.decide_episodes(item, all_eps, [rel])[0]  # maps the release onto episodes

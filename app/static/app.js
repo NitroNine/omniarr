@@ -382,6 +382,7 @@ async function renderMovie(id) {
     <div class="toolbar admin-only">
       <button class="primary" id="as">Automatic search</button><button id="is">Interactive search</button>
       ${multi ? "" : '<select id="tier" title="Move to the other library"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>'}
+      <select id="qprof" title="Quality profile for this version: the library's, or any TRaSH profile"><option>Quality…</option></select>
       <label><input type="checkbox" id="mon" ${m.monitored ? "checked" : ""}> Monitored</label>
       <label title="Keep it in the Christmas Movies folder (and the christmas download category)"><input type="checkbox" id="xmas" ${m.christmas ? "checked" : ""}> Christmas movie</label>
       <button id="rs">Rescan folder</button>
@@ -392,6 +393,7 @@ async function renderMovie(id) {
     $("#tier").value = m.tier;
     $("#tier").onchange = () => guard(async () => { await api("/movies/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
   }
+  qualitySelect("movie", m);
   $("#mon").onchange = () => guard(() => api("/movies/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
   $("#xmas").onchange = () => guard(async () => { await api("/movies/" + id, { method: "PUT", body: { christmas: $("#xmas").checked } }); toast($("#xmas").checked ? "Moved to the Christmas folder" : "Moved out of the Christmas folder"); route(); });
   $("#as").onclick = () => guard(async () => { $("#as").disabled = true; const r = await api(`/movies/${id}/search`, { method: "POST" }); toast(r.some((x) => x.accepted) ? "Release grabbed" : `No acceptable release (${r.length} found)`); route(); });
@@ -451,6 +453,25 @@ async function renderSeries() {
   draw();
 }
 
+// A title's own quality profile (per version); empty = its library's profile from Settings.
+async function qualitySelect(kind, item) {
+  const sel = $("#qprof");
+  if (!sel || !isAdmin()) return;
+  const d = await api(`/profiles/${kind}/${item.tier}`).catch(() => null);
+  if (!d) return sel.remove();
+  const name = (k) => (d.profiles.find((p) => p.key === k) || { name: k }).name;
+  // the plain profiles first, then Anime / SQP; other-language ones (French, German...) only if already chosen
+  const opt = (p) => `<option value="${esc(p.key)}">Quality: ${esc(p.name)}</option>`;
+  const main = d.profiles.filter((p) => !p.name.startsWith("[") && p.name !== "Base Profile");
+  const more = d.profiles.filter((p) => /^\[(Anime|SQP)\]/.test(p.name) || (p.key === item.profile && !main.includes(p)));
+  sel.innerHTML = `<option value="">Quality: library default (${esc(name(d.library))})</option>`
+    + main.map(opt).join("") + (more.length ? `<optgroup label="More">${more.map(opt).join("")}</optgroup>` : "");
+  sel.value = item.profile || "";
+  sel.onchange = () => guard(async () => {
+    await api(`/${kind === "movie" ? "movies" : "series"}/${item.id}`, { method: "PUT", body: { profile: sel.value } });
+    toast(sel.value ? `Quality set to ${name(sel.value)}. Searches use it from now on` : "Back to the library's quality");
+  });
+}
 async function renderShow(id) {
   const s = await api("/series/" + id);
   window._item = s;
@@ -467,6 +488,7 @@ async function renderShow(id) {
     ${multi ? `<p class="small"><b>Showing the ${TIER_LABEL[s.tier]} version.</b> Episodes, searches and monitoring below are for this version only.</p>` : ""}
     <div class="toolbar admin-only"><button class="primary" id="as">Search all missing</button><button id="rf">Refresh episode list</button>
       ${multi ? "" : '<select id="tier" title="Move to the other library"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>'}
+      <select id="qprof" title="Quality profile for this version: the library's, or any TRaSH profile"><option>Quality…</option></select>
       <select id="stype"><option value="standard">Standard</option><option value="daily">Daily</option><option value="anime">Anime</option></select>
       <label><input type="checkbox" id="mon" ${s.monitored ? "checked" : ""}> Monitored</label>
       <button id="rs">Rescan folder</button>
@@ -488,6 +510,7 @@ async function renderShow(id) {
     $("#tier").value = s.tier;
     $("#tier").onchange = () => guard(async () => { await api("/series/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
   }
+  qualitySelect("tv", s);
   $("#stype").onchange = () => guard(() => api("/series/" + id, { method: "PUT", body: { series_type: $("#stype").value } }));
   $("#mon").onchange = () => guard(() => api("/series/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
   $("#as").onclick = () => guard(async () => { $("#as").disabled = true; const r = await api(`/series/${id}/search`, { method: "POST" }); toast(`${r.filter((x) => x.accepted).length} acceptable releases found`); route(); });

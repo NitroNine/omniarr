@@ -234,7 +234,7 @@ async def rescan_movie(movie_id: int, rename: bool = False) -> dict:
         db.update("movies", movie_id, {"file_path": None, "file_quality": None, "file_score": None, "file_size": None})
         return {"files": 0}
     video = max(files, key=os.path.getsize)
-    profile = decision.profile_for("movie", movie["tier"])
+    profile = decision.profile_for("movie", movie["tier"], item=movie)
     quality, score, cfs = await detect(video, "movie", profile)
     if rename:
         rel = parse(os.path.splitext(os.path.basename(video))[0])
@@ -262,7 +262,7 @@ async def rescan_series(series_id: int, rename: bool = False) -> dict:
             if prev is None or os.path.getsize(f) > os.path.getsize(prev):
                 found[e["id"]] = f
         groups[f] = matched
-    profile = decision.profile_for("tv", series["tier"])
+    profile = decision.profile_for("tv", series["tier"], item=series)
     with_files = 0
     for f, episodes in groups.items():
         episodes = [e for e in episodes if found.get(e["id"]) == f]
@@ -333,7 +333,7 @@ async def import_one(item: dict) -> dict:
             res = await rescan_movie(m["id"], rename=rename or loose)
             movie = db.one("SELECT * FROM movies WHERE id=?", (m["id"],))
             if item.get("search") and movie["monitored"] and library.movie_available(movie) and not library.cutoff_met(
-                    decision.profile_for("movie", movie["tier"]), movie["file_quality"], movie["file_score"]):
+                    decision.profile_for("movie", movie["tier"], item=movie), movie["file_quality"], movie["file_score"]):
                 asyncio.create_task(search.search_movie(m["id"]))
             db.log(f"Library import: {m['title']} [{library.TIER_NAMES[m['tier']]}] ({res.get('quality') or 'no file'})")
         return first
