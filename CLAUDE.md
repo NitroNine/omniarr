@@ -45,7 +45,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 69 tests
+.venv/bin/pytest -q                       # 70 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

@@ -116,3 +116,34 @@ def test_daily_limit_pauses_till_midnight(env, net):
     assert 60 <= e.value.until - time.time() <= 3600
     msg = db.one("SELECT message FROM events WHERE message LIKE '%429%'")["message"]
     assert "Try again after midnight" in msg and "SECRET" not in msg
+
+
+def test_grab_falls_back_to_other_indexer(env, monkeypatch):
+    """Best release is on an indexer that refuses downloads today: take the next one from another indexer."""
+    from types import SimpleNamespace as NS
+    db.ex("INSERT INTO movies (tmdb_id, title, release_date) VALUES (1, 'Heat', '1995-12-15')")
+    mid = db.one("SELECT id FROM movies")["id"]
+    ds = [NS(accepted=True, release=NS(link=f"http://{h}/api?t=get&id=1", indexer=h), to_dict=dict)
+          for h in ("busy.test", "other.test")]
+
+    async def none(_):
+        return []
+    monkeypatch.setattr(newznab, "search_movie", none)
+    monkeypatch.setattr(search.decision, "decide_movie", lambda m, r: ds)
+    monkeypatch.setattr(search.decision, "active_download_for", lambda k, i: False)
+    tried = []
+
+    async def grab(d, kind, movie_id=None):
+        tried.append(d.release.indexer)
+        if d.release.indexer == "busy.test":
+            raise newznab.IndexerBusy("busy.test", time.time() + 60)
+        return 1
+    monkeypatch.setattr(search, "grab", grab)
+    asyncio.run(search.search_movie(mid))
+    assert tried == ["busy.test", "other.test"]
+    assert db.one("SELECT last_search FROM movies")["last_search"]
+    ds.pop()  # only the busy indexer has it: no stamp, raise so it's retried later
+    db.ex("UPDATE movies SET last_search=NULL")
+    with pytest.raises(newznab.IndexerBusy):
+        asyncio.run(search.search_movie(mid))
+    assert db.one("SELECT last_search FROM movies")["last_search"] is None

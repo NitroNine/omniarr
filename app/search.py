@@ -78,8 +78,20 @@ async def search_movie(movie_id: int, auto_grab: bool = True) -> list[dict]:
     releases = await newznab.search_movie(movie)
     decisions = decision.decide_movie(movie, releases)
     if auto_grab and decisions and decisions[0].accepted and not decision.active_download_for("movie", movie_id):
-        await grab(decisions[0], "movie", movie_id=movie_id)  # NoSpace leaves last_search alone
-        db.update("movies", movie_id, {"last_search": db.one("SELECT datetime('now') t")["t"]})
+        busy = None
+        for d in [d for d in decisions if d.accepted]:  # best first; a paused indexer's copy gives way to another's
+            if newznab.paused_until(d.release.link):
+                busy = busy or newznab.IndexerBusy(d.release.indexer, newznab.paused_until(d.release.link))
+                continue
+            try:
+                await grab(d, "movie", movie_id=movie_id)  # NoSpace leaves last_search alone
+            except newznab.IndexerBusy as e:
+                busy = e
+                continue
+            db.update("movies", movie_id, {"last_search": db.one("SELECT datetime('now') t")["t"]})
+            break
+        else:
+            raise busy  # every acceptable release is on a paused indexer: search again when it's back
     else:
         db.update("movies", movie_id, {"last_search": db.one("SELECT datetime('now') t")["t"]})
         if auto_grab:
@@ -127,19 +139,27 @@ async def search_series(series_id: int, season: int | None = None, episode_id: i
 
 async def _grab_best_for_episodes(series: dict, decisions: list[decision.Decision]) -> None:
     taken: set[int] = set()
+    busy = None
     # prefer season packs when they're the best option, then fill in singles
     for d in sorted([d for d in decisions if d.accepted], key=lambda x: (x.sort_key(), -len(x.episode_ids))):
         if taken.intersection(d.episode_ids):
             continue
         if any(decision.active_download_for("tv", eid) for eid in d.episode_ids):
             continue
+        if newznab.paused_until(d.release.link):
+            busy = busy or newznab.IndexerBusy(d.release.indexer, newznab.paused_until(d.release.link))
+            continue
         try:
             await grab(d, "tv", series_id=series["id"])
             taken.update(d.episode_ids)
+        except newznab.IndexerBusy as e:
+            busy = e  # try the next release, maybe from another indexer
         except HOLD:
             raise
         except Exception as e:  # noqa: BLE001
             db.log(f"Grab failed for {d.release.title}: {e}", "warn")
+    if busy and any(not taken.intersection(d.episode_ids) for d in decisions if d.accepted):
+        raise busy  # some episodes only on a paused indexer: leave them for the next search
 
 
 # ------------------------------------------------------------------- RSS --
