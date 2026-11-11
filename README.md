@@ -219,7 +219,7 @@ Then choose the import options:
 
 Folder names are always kept. A loose movie file gets its own TRaSH-named folder.
 
-Quality is read from the file name, falling back to the folder name, and then to ffprobe for the resolution. Every file is scored with the library's TRaSH custom formats.
+Quality is read from the file name, falling back to the folder name, and then to MediaInfo (the file itself) for the resolution. Every file is scored with the library's TRaSH custom formats.
 
 Each movie and show page also has **Rescan folder** (optionally renaming the files) for changes you've made on disk.
 
@@ -275,7 +275,7 @@ app/
   requests_.py     user requests, approval / auto-approval
   collections_.py  TMDB collections / keyword universes, auto-adding new entries
   scanner.py       library import: scan root folders, match, detect existing files
-  services/        TMDB, Newznab, NZBGet, ffprobe
+  services/        TMDB, Newznab, NZBGet, MediaInfo
   static/          web UI (no build step)
 tests/             unit + end-to-end tests (fake indexer / NZBGet)
 unraid/omniarr.xml Unraid template

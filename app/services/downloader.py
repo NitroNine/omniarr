@@ -13,6 +13,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import time
 
 from .. import db
 
@@ -25,6 +26,8 @@ USERNAME = "omniarr"
 
 _proc: subprocess.Popen | None = None
 _written: str | None = None  # config text NZBGet was last started/reloaded with
+_cleaned = 0.0  # when old .nzb copies were last removed
+NZB_KEEP_DAYS = 7
 
 
 def builtin() -> bool:
@@ -128,6 +131,8 @@ def options() -> dict[str, str]:
         "NzbDirInterval": "0",
         "DownloadRate": str(rate),
         "WriteLog": "rotate", "RotateLog": "3",
+        # per-article detail and debug lines made the daily log ~650 MB; keep info, warnings and errors
+        "DetailTarget": "none", "DebugTarget": "none",
         "UMask": "1000",  # keep the container's umask
     }
     for i, cat in enumerate((s["nzbget_category_movies"] or "movies", s["nzbget_category_tv"] or "tv"), 1):
@@ -230,9 +235,31 @@ def stop() -> None:
     _proc = None
 
 
+def clean_nzb_dir(days: int = NZB_KEEP_DAYS) -> int:
+    """NZBGet keeps a copy of every .nzb it was given (NzbDir, *.queued / *.nzb). Its queue lives in QueueDir, so
+    copies older than a week only take space (~0.5 MB each). Returns how many were removed."""
+    d = os.path.join(conf_dir(), "nzb")
+    if not os.path.isdir(d):
+        return 0
+    cutoff = time.time() - days * 86400
+    n = 0
+    for f in os.listdir(d):
+        path = os.path.join(d, f)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
 async def ensure() -> None:
     """Start, stop, restart or reconfigure the built-in downloader to match the settings."""
-    global _written
+    global _written, _cleaned
+    if time.time() - _cleaned > 6 * 3600:
+        _cleaned = time.time()
+        await asyncio.to_thread(clean_nzb_dir)
     if not builtin() or not installed():
         if running():
             await asyncio.to_thread(stop)
