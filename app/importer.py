@@ -36,6 +36,36 @@ def video_files(root: str) -> list[str]:
     return out
 
 
+_FIRST_RAR = re.compile(r"\.rar$", re.I)
+_LATER_PART = re.compile(r"\.part0*(?:[2-9]|\d{2,})\.rar$", re.I)  # .part02.rar etc.: not the first volume
+
+
+def _unrar_cmd() -> str | None:
+    bundled = os.path.join(downloader.APP_DIR, "unrar")
+    return bundled if os.access(bundled, os.X_OK) else shutil.which("unrar")
+
+
+async def unpack_nested(root: str) -> bool:
+    """Some uploads wrap a whole release folder (its own .rar/.r00… set) in the outer archive. NZBGet
+    unpacks one layer only, which leaves RARs and no video. Unpack those inner sets in place."""
+    cmd = _unrar_cmd()
+    if not cmd or not os.path.isdir(root):
+        return False
+    firsts = [os.path.join(dp, f) for dp, _dn, fns in os.walk(root) for f in sorted(fns)
+              if _FIRST_RAR.search(f) and not _LATER_PART.search(f) and "/sample" not in dp.lower()]
+    done = False
+    for rar in firsts:
+        proc = await asyncio.create_subprocess_exec(cmd, "x", "-o+", "-y", "-idq", rar, os.path.dirname(rar) + os.sep,
+                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        _out, err = await proc.communicate()
+        if proc.returncode == 0:
+            done = True
+            db.log(f"Unpacked nested archive {os.path.basename(rar)}")
+        else:
+            db.log(f"Unpacking {os.path.basename(rar)} failed: {err.decode(errors='replace').strip()[:200]}", "warn")
+    return done
+
+
 def _transfer(src: str, dst: str) -> None:
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     mode = db.setting("import_mode")
@@ -141,6 +171,8 @@ def episode_file_name(series: dict, episodes: list[dict], rel, quality: str, cf_
 async def import_movie(dl: dict, source_dir: str) -> None:
     movie = db.one("SELECT * FROM movies WHERE id=?", (dl["movie_id"],))
     files = video_files(source_dir)
+    if not files and await unpack_nested(source_dir):
+        files = video_files(source_dir)
     if not files:
         raise RuntimeError(f"No video files found in {source_dir}")
     video = max(files, key=os.path.getsize)
@@ -168,6 +200,8 @@ async def import_episodes(dl: dict, source_dir: str) -> None:
     ep_ids = json.loads(dl["episode_ids"] or "[]")
     eps = db.q(f"SELECT * FROM episodes WHERE id IN ({','.join('?' * len(ep_ids))})", tuple(ep_ids)) if ep_ids else []
     files = video_files(source_dir)
+    if not files and await unpack_nested(source_dir):
+        files = video_files(source_dir)
     if not files:
         raise RuntimeError(f"No video files found in {source_dir}")
     all_by_se = {(e["season"], e["episode"]): e

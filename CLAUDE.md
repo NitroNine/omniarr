@@ -21,7 +21,7 @@ moved to local; this file carries the context over.
   renders `/config/nzbget/nzbget.conf` from its template + Omniarr settings (table `usenet_servers`,
   `download_dir` empty = template's `/downloads` mount if present, else `/data/usenet`, speed limit), runs `nzbget -s` on 127.0.0.1:16789 with a
   generated password, restarts it if it dies, `reload`s on settings changes. Grabs are refused (`search.NoSpace`, HTTP 507) unless NZBGet's
-  free space covers 2x (queue + release) + `download_min_free_gb`; disk-full failures (FAILURE/MOVE, WARNING/SPACE, or
+  free space covers 2x (queue + release) + `download_min_free_gb`; Import unpacks a nested RAR set (release folder inside the outer archive) with the bundled unrar (`importer.unpack_nested`); disk-full failures (FAILURE/MOVE, WARNING/SPACE, or
   near-zero free) are not blocklisted (`importer.space_failure`). Indexer HTTP goes through `newznab._request`:
   one request at a time per host, 1 s apart; a 429 pauses that host (`IndexerBusy`, Retry-After, "after midnight" = hourly retries, or 60 s doubling to
   15 min) and slows it further. Indexer `priority`: searches ask the lowest number first, backups only while nothing acceptable turned up (`newznab._fan_out(enough=…)`); RSS asks all; a grab skips releases on paused indexers. `search.HOLD` = NoSpace/IndexerBusy: stop grabbing, keep items wanted. API keys are
@@ -45,7 +45,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 71 tests
+.venv/bin/pytest -q                       # 73 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised
