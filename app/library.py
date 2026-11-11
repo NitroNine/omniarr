@@ -79,17 +79,48 @@ def season_folder_name(season: int) -> str:
     return naming.safe(naming.render(fmt, {"season": season}))
 
 
-def christmas_folder() -> str:
-    return (db.setting("christmas_folder") or "").strip().strip("/")
+# The Christmas folder (setting christmas_folder) is either a full path, e.g. /data/Christmas Movies: its own root
+# next to the movies folder (movies.folder is then just the title's folder name), or a name, e.g. "Christmas Movies":
+# a folder inside the movies folder (movies.folder is then "Christmas Movies/<title folder>"). Empty = no separation.
+def _cf(value: str | None = None) -> str:
+    v = (db.setting("christmas_folder") if value is None else value) or ""
+    v = v.strip()
+    return v.rstrip("/") if v.startswith("/") else v.strip("/")
 
 
-def _in_christmas(folder: str) -> bool:
-    cf = christmas_folder()
+def christmas_root(value: str | None = None) -> str:
+    """The separate Christmas root folder, or '' when Christmas movies sit inside the movies folder."""
+    cf = _cf(value)
+    return cf if cf.startswith("/") else ""
+
+
+def christmas_folder(value: str | None = None) -> str:
+    """The Christmas subfolder inside the movies folder, or '' when it is a separate root (or off)."""
+    cf = _cf(value)
+    return "" if cf.startswith("/") else cf
+
+
+def _in_christmas(folder: str, value: str | None = None) -> bool:
+    cf = christmas_folder(value)
     return bool(cf) and (folder or "").startswith(cf + "/")
 
 
+def _base_folder(folder: str, value: str | None = None) -> str:
+    return folder[len(christmas_folder(value)) + 1:] if _in_christmas(folder, value) else folder
+
+
+def _folder_for(base: str, on: bool, value: str | None = None) -> str:
+    cf = christmas_folder(value)
+    return f"{cf}/{base}" if on and cf else base
+
+
+def _dir_for(folder: str, on: bool, value: str | None = None) -> str:
+    root = christmas_root(value) if on and christmas_root(value) else root_for("movie")
+    return os.path.join(root, folder)
+
+
 def movie_dir(movie: dict) -> str:
-    return os.path.join(root_for("movie", movie["tier"]), movie["folder"])
+    return _dir_for(movie["folder"], bool(movie.get("christmas")))
 
 
 def series_dir(series: dict) -> str:
@@ -115,8 +146,8 @@ async def add_movie(tmdb_id: int, tier: str, monitored: bool = True, folder: str
     if folder:
         christmas = christmas or _in_christmas(folder)
     m["folder"] = folder or (other["folder"] if other else None) or movie_folder_name(m)
-    if christmas and christmas_folder() and not _in_christmas(m["folder"]):
-        m["folder"] = f"{christmas_folder()}/{m['folder']}"
+    if christmas and not other:
+        m["folder"] = _folder_for(_base_folder(m["folder"]), True)
     m["christmas"] = int(christmas)
     m["id"] = db.insert("movies", m)
     db.log(f"Added movie {m['title']} ({m.get('year')}) [{TIER_NAMES[tier]}]")
@@ -342,13 +373,19 @@ def set_christmas(movie_id: int, on: bool) -> dict:
     m = db.one("SELECT * FROM movies WHERE id=?", (movie_id,))
     if not m:
         raise ValueError("No such movie")
-    cf = christmas_folder()
+    _move_movie(m, on, None, None)
+    return db.one("SELECT * FROM movies WHERE id=?", (movie_id,))
+
+
+def _move_movie(m: dict, on: bool, old_value: str | None, new_value: str | None) -> bool:
+    """Move a movie's folder (shared by both versions) to where `on` and the Christmas setting put it, and update
+    folder / file_path. old_value / new_value: the christmas_folder setting before / after (None = current)."""
     old_rel = m["folder"]
-    base = old_rel[len(cf) + 1:] if _in_christmas(old_rel) else old_rel
-    new_rel = f"{cf}/{base}" if on and cf else base
-    root = root_for("movie")
-    old, new = os.path.join(root, old_rel), os.path.join(root, new_rel)
-    if os.path.normpath(old) != os.path.normpath(new) and os.path.exists(old):
+    old = _dir_for(old_rel, bool(m.get("christmas")), old_value)
+    new_rel = _folder_for(_base_folder(old_rel, old_value), on, new_value)
+    new = _dir_for(new_rel, on, new_value)
+    moved = os.path.normpath(old) != os.path.normpath(new)
+    if moved and os.path.exists(old):
         if os.path.exists(new):
             raise ValueError(f"{new} already exists")
         os.makedirs(os.path.dirname(new), exist_ok=True)
@@ -358,9 +395,26 @@ def set_christmas(movie_id: int, on: bool) -> dict:
         if fp and os.path.normpath(fp).startswith(os.path.normpath(old) + os.sep):
             fp = os.path.join(new, os.path.relpath(fp, old))
         db.update("movies", v["id"], {"christmas": int(on), "folder": new_rel, "file_path": fp})
-    if old_rel != new_rel:
-        db.log(f"Moved {m['title']} {'into' if on else 'out of'} {cf or 'the Christmas folder'}")
-    return db.one("SELECT * FROM movies WHERE id=?", (movie_id,))
+    if moved:
+        db.log(f"Moved {m['title']} to {os.path.dirname(new)}")
+    return moved
+
+
+def relocate_christmas(old_value: str, new_value: str) -> dict:
+    """The Christmas folder setting changed: move every Christmas movie from the old place to the new one."""
+    moved, errors, seen = 0, [], set()
+    for m in db.q("SELECT * FROM movies WHERE christmas=1 ORDER BY id"):
+        if m["tmdb_id"] in seen:
+            continue
+        seen.add(m["tmdb_id"])
+        try:
+            moved += _move_movie(m, True, old_value, new_value)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{m['title']}: {e}")
+            db.log(f"Couldn't move {m['title']} to the new Christmas folder: {e}", "warn")
+    if moved:
+        db.log(f"Moved {moved} Christmas movie(s) to {christmas_root(new_value) or christmas_folder(new_value) or 'the movies folder'}")
+    return {"moved": moved, "errors": errors}
 
 
 def delete_version(kind: str, item_id: int, delete_files: bool = False) -> None:

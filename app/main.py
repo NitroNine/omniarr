@@ -331,7 +331,16 @@ def get_settings():
 @app.put("/api/settings")
 async def put_settings(values: dict):
     values = {k: v for k, v in values.items() if not (k in SECRET_KEYS and v == "********") and not k.startswith("_")}
+    old_xmas = db.setting("christmas_folder") or ""
+    if "christmas_folder" in values:
+        v = (values["christmas_folder"] or "").strip()
+        if v.startswith("/") and os.path.normpath(v) == os.path.normpath(db.setting("root_movies") or ""):
+            raise ValueError("The Christmas folder can't be the movies folder itself")
     db.save_settings(values)
+    if "christmas_folder" in values and (values["christmas_folder"] or "") != old_xmas:
+        r = await asyncio.to_thread(library.relocate_christmas, old_xmas, values["christmas_folder"] or "")
+        if r["errors"]:
+            db.log("Some Christmas movies weren't moved: " + "; ".join(r["errors"][:5]), "warn")
     asyncio.create_task(_job("downloader", downloader.ensure))
     return get_settings()
 

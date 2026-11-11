@@ -761,6 +761,7 @@ const SECTIONS = {
   roots: { title: "Root folders", fields: [
     ["root_movies", "Movies folder", "folder", "Every movie gets its own folder in here. When you have both versions, the 1080p and 4K files sit side by side in it."],
     ["root_tv", "TV folder", "folder", "Every show gets its own folder in here, with 1080p and 4K episodes side by side."],
+    ["christmas_folder", "Christmas movies folder", "folder", "Where Christmas movies go (the Christmas and Hallmark tabs, or \"Christmas movie\" on a movie's page). A full path, e.g. /data/Christmas Movies, keeps them apart from the movies folder; a plain name, e.g. Christmas Movies, is a folder inside it. Changing it moves the Christmas movies you already have."],
   ] },
   schedule: { title: "Schedule", fields: [
     ["rss_interval_minutes", "RSS sync (minutes)", "number"], ["search_interval_minutes", "Backlog search (minutes)", "number", "Searches up to 10 missing items per run, each at most once a day."],
@@ -1172,7 +1173,7 @@ async function startImport() {
   const sel = [...document.querySelectorAll(".isel:checked")].map((x) => window._imp[+x.dataset.i]).filter((c) => c.match);
   if (!sel.length) throw new Error("Select at least one matched item");
   const opts = { rename: $("#iren").checked, monitor: $("#imon").value, search: $("#isearch").checked };
-  const items = sel.map((c) => ({ kind: c.kind, tier: c.tier, folder: c.folder, loose: c.loose, id: c.kind === "movie" ? c.match.tmdb_id : null, tvdb_id: c.kind === "tv" ? c.match.tvdb_id : null, tmdb_id: c.kind === "tv" ? c.match.tmdb_id : null, ...opts }));
+  const items = sel.map((c) => ({ kind: c.kind, tier: c.tier, folder: c.folder, loose: c.loose, christmas: !!c.christmas, id: c.kind === "movie" ? c.match.tmdb_id : null, tvdb_id: c.kind === "tv" ? c.match.tvdb_id : null, tmdb_id: c.kind === "tv" ? c.match.tmdb_id : null, ...opts }));
   await api("/import", { method: "POST", body: { items } });
   toast(`Importing ${items.length} item(s)…`);
   pollImport();

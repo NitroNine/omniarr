@@ -67,6 +67,16 @@ def scan(kind: str) -> list[dict]:
     root = library.root_for(kind)
     roots = {os.path.normpath(root): ["auto"]} if root and os.path.isdir(root) else {}
     out = []
+    xroot = library.christmas_root() if kind == "movie" else ""
+    if xroot and os.path.isdir(xroot):  # a separate Christmas folder: its movies are imported as Christmas movies
+        xknown = {r["folder"] for r in db.q("SELECT folder FROM movies WHERE christmas=1")}
+        for entry in sorted(os.listdir(xroot), key=str.lower):
+            path = os.path.join(xroot, entry)
+            if entry.startswith((".", "@")) or entry in xknown or not os.path.isdir(path):
+                continue
+            n, size = _dir_stats(path)
+            out.append({"kind": kind, "tier": "auto", "folder": entry, "path": path, "loose": False, "christmas": True,
+                        "files": n, "size": size, **parse_folder(entry)})
     for root, tiers in roots.items():
         tier = tiers[0]
         entries = sorted(os.listdir(root), key=str.lower)
@@ -299,7 +309,8 @@ async def import_one(item: dict) -> dict:
     quality found in the folder (shared 1080p/4K root folder)."""
     kind, tier, folder = item["kind"], item["tier"], item["folder"]
     rename = bool(item.get("rename"))
-    src_root = library.root_for(kind)
+    xmas = bool(item.get("christmas")) and kind == "movie" and bool(library.christmas_root())
+    src_root = library.christmas_root() if xmas else library.root_for(kind)
     tiers = await tiers_in(os.path.join(src_root, folder)) if tier == "auto" else library.tiers_of(tier)
     from . import search
     if kind == "movie":
@@ -309,7 +320,7 @@ async def import_one(item: dict) -> dict:
         first = None
         for t in [x for x in tiers if x not in have]:
             m = await library.add_movie(tmdb_id, t, item.get("monitor", "all") != "none",
-                                        folder=None if loose else folder)
+                                        folder=None if loose else folder, christmas=xmas)
             if loose and first is None:  # a video file sitting directly in the root: give it a folder
                 src = os.path.join(src_root, folder)
                 dest_dir = library.movie_dir(m)

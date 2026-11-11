@@ -101,3 +101,50 @@ def test_christmas_tab_list(env, monkeypatch):
     r = asyncio.run(metadata.discover_christmas_all())
     assert [x["title"] for x in r["results"]] == ["Obscure Little Christmas", "Elf Again", "Mistletoe and Mimosas"]
     assert r["results"][2]["services"] == ["Hallmark+ Amazon Channel"]
+
+
+def test_separate_christmas_root_and_relocate(env, monkeypatch):
+    _fake_details(monkeypatch)
+    root = db.setting("root_movies")
+    sep = os.path.join(os.path.dirname(root), "Christmas Movies")
+    # start inside the movies folder, with a file
+    m = asyncio.run(library.add_movie(8, "hd", christmas=True))
+    d = library.movie_dir(m)
+    os.makedirs(d)
+    f = os.path.join(d, "Home Alone (1990).mkv")
+    open(f, "w").close()
+    db.update("movies", m["id"], {"file_path": f})
+    # switch the setting to a separate folder: the movie moves there
+    r = library.relocate_christmas("Christmas Movies", sep)
+    db.save_settings({"christmas_folder": sep})
+    m = db.one("SELECT * FROM movies WHERE id=?", (m["id"],))
+    assert r["moved"] == 1 and m["folder"] == "Home Alone (1990) {tmdb-8}"
+    assert library.movie_dir(m) == os.path.join(sep, "Home Alone (1990) {tmdb-8}")
+    assert os.path.isfile(os.path.join(sep, "Home Alone (1990) {tmdb-8}", "Home Alone (1990).mkv"))
+    assert m["file_path"].startswith(sep + os.sep) and not os.path.exists(d)
+    # new Christmas adds go straight there; unticking moves back into the movies folder
+    n = asyncio.run(library.add_movie(7, "hd", christmas=True))
+    assert library.movie_dir(n) == os.path.join(sep, "Merry Little Mix-Up (2026) {tmdb-7}")
+    m = library.set_christmas(m["id"], False)
+    assert m["file_path"] == os.path.join(root, "Home Alone (1990) {tmdb-8}", "Home Alone (1990).mkv")
+
+
+def test_scan_separate_christmas_root(env):
+    root = db.setting("root_movies")
+    sep = os.path.join(os.path.dirname(root), "Xmas")
+    db.save_settings({"christmas_folder": sep})
+    os.makedirs(os.path.join(sep, "Elf (2003)"))
+    open(os.path.join(sep, "Elf (2003)", "Elf.mkv"), "w").close()
+    rows = scanner.scan("movie")
+    assert [(r["folder"], r.get("christmas")) for r in rows] == [("Elf (2003)", True)]
+
+
+def test_settings_change_moves_movies(client, monkeypatch):
+    _fake_details(monkeypatch)
+    root = db.setting("root_movies")
+    m = asyncio.run(library.add_movie(7, "hd", christmas=True))
+    os.makedirs(library.movie_dir(m))
+    sep = os.path.join(os.path.dirname(root), "Christmas Movies")
+    assert client.put("/api/settings", json={"christmas_folder": sep}).status_code == 200
+    assert os.path.isdir(os.path.join(sep, "Merry Little Mix-Up (2026) {tmdb-7}"))
+    assert client.put("/api/settings", json={"christmas_folder": root}).status_code == 400
