@@ -113,7 +113,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "download_dir": "",
     "download_speed_limit": 0,  # built-in: KB/s, 0 = unlimited
     "download_min_free_gb": 20,
-    "english_only": True,  # skip releases naming another language, MULTI or dual audio
+    "english_only": True,
+    # Hallmark Christmas tab: auto-add new Hallmark Christmas movies (hallmark.py)
+    "hallmark_auto": False,
+    "hallmark_tier": "hd",
+    "hallmark_seen": "[]",  # TMDB ids already added (or skipped because they were in the library): never re-added
+    "hallmark_last_sync": "",  # skip releases naming another language, MULTI or dual audio
     "failed_retry_limit": 3,  # immediate re-searches after failed downloads, per item per day (0 = no limit)  # don't grab when the download disk would drop below this
     "_downloader_password": "",  # built-in: generated, localhost-only control password
     # external NZBGet

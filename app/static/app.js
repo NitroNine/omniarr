@@ -81,7 +81,7 @@ function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 // ------------------------------------------------------------- router ---
-const routes = { title: renderTitle, requests: (sub) => renderRequests(sub), discover: renderDiscover, collections: renderCollections, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
+const routes = { title: renderTitle, requests: (sub) => renderRequests(sub), discover: renderDiscover, collections: renderCollections, hallmark: renderHallmark, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
 const ADMIN_PAGES = ["settings", "activity", "import"];
 async function route() {
   let [, name = "movies", arg, ...rest] = location.hash.split("/");
@@ -622,6 +622,29 @@ async function renderCollections() {
 async function editColl(id, body) { await guard(() => api("/collections/" + id, { method: "PUT", body })); }
 async function refreshColl(id) { await guard(async () => { const r = await api(`/collections/${id}/refresh`, { method: "POST" }); toast(r.added ? `Added ${r.added} new movie(s)` : "Nothing new"); route(); }); }
 async function delColl(id) { if (confirm("Stop tracking this collection? Its movies stay in your library.")) await guard(async () => { await api("/collections/" + id, { method: "DELETE" }); route(); }); }
+
+// ----------------------------------------------------------- hallmark ---
+async function renderHallmark() {
+  view.innerHTML = '<p class="muted">Looking up this year\'s Hallmark Christmas movies…</p>';
+  const d = await api("/hallmark");
+  const today = new Date().toISOString().slice(0, 10);
+  const status = (m) => m.has_file ? '<span class="chip ok">Downloaded</span>'
+    : m.library_id ? (m.airs && m.airs > today ? `<span class="chip">Airs ${esc(m.airs)}</span>` : '<span class="chip warn">Wanted</span>')
+    : `<span class="chip">${m.date && m.date > today ? "Airs " + esc(m.date) : "Not added"}</span>`;
+  view.innerHTML = `<div class="toolbar"><h2 class="grow">Hallmark Christmas ${new Date().getFullYear()} <span class="muted small">(${d.movies.length})</span></h2>
+    <label class="small"><input type="checkbox" id="hauto" ${d.auto ? "checked" : ""}> Add &amp; download automatically</label>
+    <select id="htier">${["hd", "uhd", "both"].map((v) => `<option value="${v}" ${d.tier === v ? "selected" : ""}>${TIER_LABEL[v]}</option>`).join("")}</select>
+    <button id="hsync">Check now</button></div>
+    <p class="small muted">New Hallmark Christmas movies on ${esc(d.services.join(", ") || "Hallmark services")} are added to Movies as TMDB lists them,
+      and downloaded once they've aired. Checked every 6 hours${d.last_sync ? `, last ${esc(d.last_sync)}` : ""}. A movie you remove from the library isn't added again.</p>
+    <div class="grid">${d.movies.map((m) => `<div class="card" onclick="location.hash='${m.library_id ? `#/movie/${m.library_id}` : `#/title/movie/${m.tmdb_id}`}'">${poster(m.poster, m.title)}
+      <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
+      <div class="chips">${m.tiers.map(tierChip).join("")}${status(m)}</div></div></div>`).join("") || '<p class="muted">None listed yet.</p>'}</div>`;
+  const save = (body) => guard(async () => { const r = await api("/hallmark", { method: "PUT", body }); if (r.added && r.added.length) toast(`Added ${r.added.length}: ${r.added.join(", ")}`); renderHallmark(); });
+  $("#hauto").addEventListener("change", (e) => save({ auto: e.target.checked }));
+  $("#htier").addEventListener("change", (e) => save({ tier: e.target.value }));
+  $("#hsync").addEventListener("click", () => guard(async () => { $("#hsync").disabled = true; const r = await api("/hallmark/sync", { method: "POST" }); toast(r.added.length ? `Added ${r.added.length}: ${r.added.join(", ")}` : "Nothing new"); renderHallmark(); }));
+}
 
 // ----------------------------------------------------------- activity ---
 async function renderActivity(sub = "queue") {

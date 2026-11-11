@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, backup, collections_, db, requests_, decision, importer, library, manual_nzb, scanner, search, trash
+from . import auth, backup, collections_, db, hallmark, requests_, decision, importer, library, manual_nzb, scanner, search, trash
 from .services import downloader, metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
@@ -73,7 +73,8 @@ async def scheduler():
             ("movie_refresh", 3600, library.refresh_due_movies),
             ("rss", int(s["rss_interval_minutes"]) * 60, search.rss_sync),
             ("missing", int(s["search_interval_minutes"]) * 60, search.missing_search),
-            ("backup", 3600, _auto_backup),  # makes one a day (backup.auto_backup skips if the last is recent)
+            ("backup", 3600, _auto_backup),
+            ("hallmark", 3600, hallmark.sync_due),  # every 6 h while Hallmark auto-add is on  # makes one a day (backup.auto_backup skips if the last is recent)
         ]
         if backup.restoring:  # the database is being swapped
             await asyncio.sleep(2)
@@ -832,6 +833,36 @@ async def refresh_collection(cid: int):
 def delete_collection(cid: int):
     db.ex("DELETE FROM collections WHERE id=?", (cid,))  # movies stay in the library
     return {"ok": True}
+
+
+# --------------------------------------------------------- Hallmark tab --
+class HallmarkIn(BaseModel):
+    auto: bool | None = None
+    tier: str | None = None
+
+
+@app.get("/api/hallmark")
+async def hallmark_page():
+    return await hallmark.page()
+
+
+@app.put("/api/hallmark")
+async def hallmark_settings(body: HallmarkIn):
+    upd = {}
+    if body.tier is not None:
+        library.tiers_of(body.tier)
+        upd["hallmark_tier"] = body.tier
+    if body.auto is not None:
+        upd["hallmark_auto"] = body.auto
+    db.save_settings(upd)
+    if body.auto:  # turning it on adds what's there now
+        return await hallmark.sync()
+    return {"added": []}
+
+
+@app.post("/api/hallmark/sync")
+async def hallmark_sync():
+    return await hallmark.sync(force=True)
 
 
 class AddMovie(BaseModel):

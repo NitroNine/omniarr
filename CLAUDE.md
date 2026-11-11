@@ -27,6 +27,7 @@ moved to local; this file carries the context over.
   15 min) and slows it further. Indexer `priority`: searches ask the lowest number first, backups only while nothing acceptable turned up (`newznab._fan_out(enough=…)`); RSS asks all; a grab skips releases on paused indexers. `search.HOLD` = NoSpace/IndexerBusy: stop grabbing, keep items wanted. API keys are
   redacted in errors and `db.log`. Old installs with an
   NZBGet password migrate to `external`.
+- **Hallmark tab** (`app/hallmark.py`, `#/hallmark`): Christmas movies from this year on across TMDB's Hallmark providers (`metadata.discover_christmas`); with `hallmark_auto` on, job `hallmark` adds new ones every 6 h in `hallmark_tier` and they download once aired; added ids go in `hallmark_seen` so removed ones stay removed.
 - **English only** (setting `english_only`, default on): `parser.not_english` rejects releases whose tags after the title name another language or MULTI/Multi-Audio/Dual Audio/DL/dubbed.
 - **Manual .nzb upload** (Activity → Upload NZB, `app/manual_nzb.py`, `POST /api/nzb`): Movie/TV choice, title + version
   guessed from the release name (or picked), episodes mapped from SxxEyy; goes through `search.grab(nzb=…)` and normal import.
@@ -51,7 +52,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 93 tests
+.venv/bin/pytest -q                       # 96 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised
