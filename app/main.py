@@ -9,11 +9,11 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, collections_, db, requests_, decision, importer, library, manual_nzb, scanner, search, trash
+from . import auth, backup, collections_, db, requests_, decision, importer, library, manual_nzb, scanner, search, trash
 from .services import downloader, metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
@@ -40,6 +40,10 @@ async def _job(name: str, coro_fn):
     finally:
         _running[name] = False
         _last_run[name] = time.time()
+
+
+async def _auto_backup():
+    await asyncio.to_thread(backup.auto_backup)
 
 
 async def _refresh_all_series():
@@ -69,7 +73,11 @@ async def scheduler():
             ("movie_refresh", 3600, library.refresh_due_movies),
             ("rss", int(s["rss_interval_minutes"]) * 60, search.rss_sync),
             ("missing", int(s["search_interval_minutes"]) * 60, search.missing_search),
+            ("backup", 3600, _auto_backup),  # makes one a day (backup.auto_backup skips if the last is recent)
         ]
+        if backup.restoring:  # the database is being swapped
+            await asyncio.sleep(2)
+            continue
         for name, every, fn in jobs:
             resume = name == "missing" and newznab.resume_at and now >= newznab.resume_at  # held searches go now
             if resume:
@@ -1023,6 +1031,44 @@ async def manual_grab(body: GrabIn):
     if body.kind == "movie":
         return {"id": await search.grab(d, "movie", movie_id=body.item_id)}
     return {"id": await search.grab(d, "tv", series_id=body.item_id)}
+
+
+# ------------------------------------------------------- backup / restore --
+@app.get("/api/backup")
+async def download_backup():
+    name, data = await asyncio.to_thread(backup.make_backup)
+    return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.get("/api/backups")
+def list_backups():
+    return backup.list_backups()
+
+
+@app.get("/api/backups/{name}")
+def get_stored_backup(name: str):
+    try:
+        data = backup.stored(name)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from None
+    return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/api/backups/now")
+async def backup_now():
+    path = await asyncio.to_thread(backup.auto_backup, True)
+    return {"name": os.path.basename(path)} if path else {"name": None}
+
+
+@app.post("/api/restore")
+async def restore_backup(request: Request):
+    data = await request.body()
+    if len(data) > 2 * 1024 ** 3:
+        raise HTTPException(413, "That file is too big to be an Omniarr backup")
+    try:
+        return await backup.restore(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
 
 
 class NzbIn(BaseModel):

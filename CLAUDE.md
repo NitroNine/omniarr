@@ -29,6 +29,9 @@ moved to local; this file carries the context over.
   NZBGet password migrate to `external`.
 - **Manual .nzb upload** (Activity → Upload NZB, `app/manual_nzb.py`, `POST /api/nzb`): Movie/TV choice, title + version
   guessed from the release name (or picked), episodes mapped from SxxEyy; goes through `search.grab(nzb=…)` and normal import.
+- **Backup / restore** (`app/backup.py`, Settings → Backup): .zip = SQLite online-backup snapshot of omniarr.db +
+  NZBGet queue + manifest; daily auto backup to /config/backups (keep 7); restore stops NZBGet, saves
+  `before-restore-*.zip`, swaps the DB (migrations run), the scheduler pauses meanwhile (`backup.restoring`). Media not included.
 - **Title pages** `#/title/{movie|tv}/{tmdb_id}` (`/api/info/…`, `metadata.movie_info/tv_info`, 6 h cache):
   cast, crew, release dates (cinema/digital/disc per `streaming_region`, else US), trailer, streaming.
   Movies are only searched once `library.available_date` (first digital/disc/TV-premiere date, else cinema + 90 d) passes;
@@ -47,7 +50,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 78 tests
+.venv/bin/pytest -q                       # 82 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

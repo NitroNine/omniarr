@@ -724,7 +724,7 @@ const SECTIONS = {
 };
 async function renderSettings(sub = "general") {
   const s = await api("/settings");
-  const tabs = { general: "Metadata", downloads: "Downloads", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", users: "Users", naming: "Naming (TRaSH)", schedule: "Schedule" };
+  const tabs = { general: "Metadata", downloads: "Downloads", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", users: "Users", naming: "Naming (TRaSH)", schedule: "Schedule", backup: "Backup" };
   view.innerHTML = `<h2>Settings</h2><div class="tabs2">${Object.entries(tabs).map(([k, v]) => `<button class="${k === sub ? "active" : ""}" onclick="location.hash='#/settings/${k}'">${v}</button>`).join("")}</div><div id="set" class="panel"></div>`;
   const el = $("#set");
   if (SECTIONS[sub]) {
@@ -743,6 +743,44 @@ async function renderSettings(sub = "general") {
   else if (sub === "limits") await renderLimits(el);
   else if (sub === "users") await renderUsers(el);
   else if (sub === "naming") await renderNaming(el, s);
+  else if (sub === "backup") await renderBackup(el);
+}
+// ------------------------------------------------------ backup / restore --
+async function renderBackup(el) {
+  const list = await api("/backups");
+  el.innerHTML = `<h3>Back up</h3>
+    <p>A backup holds everything Omniarr knows: your movies and shows (and where their files are), episodes, settings,
+    indexers, Usenet servers, users, requests, download history, the blocklist, and NZBGet's queue so unfinished downloads carry on.
+    It does <b>not</b> hold the video files themselves. Those stay in your media share; copy that share to the new server separately.</p>
+    <p class="small muted">The file contains your indexer API keys and Usenet password, so keep it somewhere private.</p>
+    <div class="toolbar"><a href="/api/backup" download><button class="primary">Download backup</button></a><button id="bknow">Save a backup on the server now</button></div>
+    <h3>Saved on the server</h3>
+    <p class="small muted">Omniarr saves one automatically every day in <code>/config/backups</code> (your appdata folder) and keeps the last 7.
+    Before a restore it also saves what it's replacing, as <i>before-restore-…</i>.</p>
+    ${list.length ? `<div class="table-wrap"><table><tr><th>File</th><th>Made</th><th>Size</th><th></th></tr>${list.map((b) => `<tr><td>${esc(b.name)}</td><td class="small">${esc(b.created)}</td><td class="small">${size(b.size)}</td>
+      <td><a href="/api/backups/${encodeURIComponent(b.name)}" download><button class="small">Download</button></a></td></tr>`).join("")}</table></div>` : '<p class="muted">None yet.</p>'}
+    <h3>Restore</h3>
+    <p>On the new server: install Omniarr with the same folder mappings (<code>/data</code> for media, <code>/downloads</code>) and
+    the media copied over, sign in, then restore the backup here. Everything in this Omniarr is replaced by the backup's contents,
+    and you'll sign in again with the old server's account.</p>
+    <div class="toolbar"><input type="file" id="rsfile" accept=".zip,application/zip"><button class="danger" id="rsgo">Restore</button><span class="small muted" id="rsprog"></span></div>`;
+  $("#bknow").onclick = () => guard(async () => { const r = await api("/backups/now", { method: "POST" }); toast(`Saved ${r.name}`); renderBackup(el); });
+  $("#rsgo").onclick = () => guard(async () => {
+    const f = $("#rsfile").files[0];
+    if (!f) throw new Error("Choose a backup file (.zip) first");
+    if (!confirm(`Replace everything in this Omniarr with the backup ${f.name}?\n\nWhat's here now is saved first as a before-restore backup.`)) return;
+    $("#rsgo").disabled = true; $("#rsprog").textContent = "Restoring…";
+    try {
+      const r = await fetch("/api/restore", { method: "POST", headers: { "Content-Type": "application/zip" }, body: f });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || r.statusText);
+      const c = d.counts || {};
+      alert(`Restored the backup from ${d.created || "?"}: ${c.movies ?? "?"} movies, ${c.series ?? "?"} shows, ${c.indexers ?? "?"} indexers, ${c.users ?? "?"} users.`
+        + (d.missing_folders && d.missing_folders.length ? `\n\nThese folders don't exist in this container: ${d.missing_folders.join(", ")}. Check the container's /data mapping.` : "")
+        + "\n\nSign in with your account from the old server.");
+      location.hash = "#/movies"; location.reload();
+    } finally { $("#rsgo").disabled = false; $("#rsprog").textContent = ""; }
+  });
 }
 // ---------------------------------------------------- downloads (settings) --
 function formRows(fields, s) {
