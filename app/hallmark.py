@@ -88,8 +88,10 @@ async def page() -> dict:
     for m in db.q("SELECT id, tmdb_id, tier, file_path, monitored, release_date, digital_release, physical_release "
                   "FROM movies"):
         lib.setdefault(m["tmdb_id"], []).append(m)
+    seen = _seen()
     for r in rows:
         vs = lib.get(r["tmdb_id"], [])
+        r["removed"] = not vs and r["tmdb_id"] in seen  # added once, then removed: auto-add leaves it out
         r["library_id"] = vs[0]["id"] if vs else None
         r["has_file"] = any(v["file_path"] for v in vs)
         r["tiers"] = [v["tier"] for v in vs]

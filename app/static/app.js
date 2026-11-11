@@ -793,12 +793,22 @@ async function refreshColl(id) { await guard(async () => { const r = await api(`
 async function delColl(id) { if (await ask("Stop tracking this collection? Its movies stay in your library.")) await guard(async () => { await api("/collections/" + id, { method: "DELETE" }); route(); }); }
 
 // ----------------------------------------------------------- hallmark ---
+async function hallmarkAddBack(tmdbId, btn) {
+  btn.disabled = true;
+  await guard(async () => {
+    const r = await api("/movies", { method: "POST", body: { tmdb_id: tmdbId, tier: $("#htier").value, christmas: true, search: true } });
+    toast(`Added ${r.title} back`); renderHallmark();
+  });
+  btn.disabled = false;
+}
 async function renderHallmark() {
   view.innerHTML = '<p class="muted">Looking up this year\'s Hallmark Christmas movies…</p>';
   const d = await api("/hallmark");
   const today = new Date().toISOString().slice(0, 10);
   const status = (m) => m.has_file ? '<span class="chip ok">Downloaded</span>'
     : m.library_id ? (m.airs && m.airs > today ? `<span class="chip">Airs ${esc(m.airs)}</span>` : '<span class="chip warn">Wanted</span>')
+    : m.removed ? `<span class="chip" title="You removed it from the library, so it isn't added again automatically">Removed</span>
+        <button class="small" onclick="event.stopPropagation();hallmarkAddBack(${m.tmdb_id}, this)">Add back</button>`
     : `<span class="chip">${m.date && m.date > today ? "Airs " + esc(m.date) : "Not added"}</span>`;
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Hallmark Christmas ${new Date().getFullYear()} <span class="muted small">(${d.movies.length})</span></h2>
     <label class="small"><input type="checkbox" id="hauto" ${d.auto ? "checked" : ""}> Add &amp; download automatically</label>

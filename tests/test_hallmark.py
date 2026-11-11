@@ -61,3 +61,15 @@ def test_api(client, monkeypatch):
     assert r.status_code == 200 and len(r.json()["added"]) == 3
     assert client.put("/api/hallmark", json={"tier": "8k"}).status_code == 400
     assert client.get("/api/hallmark").json()["auto"] is True
+
+
+def test_removed_shows_and_can_be_added_back(client, monkeypatch):
+    _fake(monkeypatch, [])
+    client.put("/api/hallmark", json={"auto": True, "tier": "hd"})
+    db.ex("DELETE FROM movies WHERE tmdb_id=2")
+    m = next(x for x in client.get("/api/hallmark").json()["movies"] if x["tmdb_id"] == 2)
+    assert m["removed"] and not m["library_id"]
+    r = client.post("/api/movies", json={"tmdb_id": 2, "tier": "hd", "christmas": True, "search": False})
+    assert r.status_code == 200 and r.json()["christmas"] == 1
+    m = next(x for x in client.get("/api/hallmark").json()["movies"] if x["tmdb_id"] == 2)
+    assert not m["removed"] and m["library_id"]
