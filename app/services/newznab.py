@@ -76,7 +76,7 @@ def _retry_after(r: httpx.Response) -> float | None:
 def _error_text(r: httpx.Response) -> str:
     """The indexer's own explanation, e.g. nzbs.in: "Too many API requests. Slow down. Try again after midnight." """
     m = re.search(r"<error[^>]*>([^<]{1,200})</error>|description=\"([^\"]{1,200})\"", r.text or "")
-    return redact((m.group(1) or m.group(2)).strip()) if m else ""
+    return redact((m.group(1) or m.group(2)).strip().rstrip(".")) if m else ""
 
 
 def _until_midnight() -> float:
