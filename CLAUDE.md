@@ -27,6 +27,8 @@ moved to local; this file carries the context over.
   15 min) and slows it further. Indexer `priority`: searches ask the lowest number first, backups only while nothing acceptable turned up (`newznab._fan_out(enough=…)`); RSS asks all; a grab skips releases on paused indexers. `search.HOLD` = NoSpace/IndexerBusy: stop grabbing, keep items wanted. API keys are
   redacted in errors and `db.log`. Old installs with an
   NZBGet password migrate to `external`.
+- **Manual .nzb upload** (Activity → Upload NZB, `app/manual_nzb.py`, `POST /api/nzb`): Movie/TV choice, title + version
+  guessed from the release name (or picked), episodes mapped from SxxEyy; goes through `search.grab(nzb=…)` and normal import.
 - **Title pages** `#/title/{movie|tv}/{tmdb_id}` (`/api/info/…`, `metadata.movie_info/tv_info`, 6 h cache):
   cast, crew, release dates (cinema/digital/disc per `streaming_region`, else US), trailer, streaming.
   Movies are only searched once `library.available_date` (first digital/disc/TV-premiere date, else cinema + 90 d) passes;
@@ -45,7 +47,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 73 tests
+.venv/bin/pytest -q                       # 78 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

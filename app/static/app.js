@@ -620,7 +620,7 @@ async function delColl(id) { if (confirm("Stop tracking this collection? Its mov
 // ----------------------------------------------------------- activity ---
 async function renderActivity(sub = "queue") {
   view.innerHTML = `<div class="tabs2">${["queue", "history", "events", "blocklist"].map((t) => `<button class="${t === sub ? "active" : ""}" onclick="location.hash='#/activity/${t}'">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
-    <span class="grow"></span><button onclick="runTask('rss')">Run RSS sync</button><button onclick="runTask('missing')">Search missing</button><button onclick="runTask('downloads')">Check downloads</button></div><div id="act"></div>`;
+    <span class="grow"></span><button onclick="runTask('rss')">Run RSS sync</button><button onclick="runTask('missing')">Search missing</button><button onclick="runTask('downloads')">Check downloads</button><button class="primary" onclick="nzbUpload()">Upload NZB</button></div><div id="act"></div>`;
   const el = $("#act");
   if (sub === "queue") {
     const st = await api("/downloader/status").catch(() => null);
@@ -645,6 +645,59 @@ async function renderActivity(sub = "queue") {
   }
 }
 routes.activity = (sub) => renderActivity(sub || "queue");
+
+// ---- manual .nzb upload: pick Movie or TV, the title is detected from the file name (or chosen) ----
+async function nzbUpload() {
+  modal(`<h2>Upload NZB</h2><div class="form" id="nzbf">
+    <label>NZB file(s)</label><input type="file" id="nzbfile" accept=".nzb,application/x-nzb" multiple>
+    <label>Type</label><select id="nzbkind"><option value="movie">Movie</option><option value="tv">TV</option></select>
+    <label>Title</label><select id="nzbitem"><option value="">Detect from file name</option></select>
+    <span></span><div id="nzbguess" class="small muted">Choose a file. Its name decides the title, version (1080p or 4K) and episodes; the title must already be in your library.</div>
+    <span></span><div class="toolbar"><button class="primary" id="nzbgo">Download</button><button onclick="closeModal()">Cancel</button><span class="small muted" id="nzbprog"></span></div></div>`);
+  const lists = {};
+  const fill = async () => {
+    const kind = $("#nzbkind").value;
+    lists[kind] = lists[kind] || await api(kind === "movie" ? "/movies" : "/series");
+    $("#nzbitem").innerHTML = '<option value="">Detect from file name</option>' + [...lists[kind]]
+      .sort((a, b) => a.title.localeCompare(b.title) || a.tier.localeCompare(b.tier))
+      .map((r) => `<option value="${r.id}">${esc(r.title)}${r.year && !String(r.title).includes(r.year) ? ` (${r.year})` : ""} · ${TIER_LABEL[r.tier]}</option>`).join("");
+    guess();
+  };
+  const guess = async () => {
+    const files = [...$("#nzbfile").files], kind = $("#nzbkind").value, el = $("#nzbguess");
+    if (!files.length || $("#nzbitem").value) return;
+    const rows = await Promise.all(files.map(async (f) => {
+      const g = await api(`/nzb/guess?kind=${kind}&name=${encodeURIComponent(f.name)}`).catch(() => ({}));
+      const it = g.item_id && (lists[kind] || []).find((r) => r.id === g.item_id);
+      return `${esc(f.name)} → ${it ? `<b>${esc(it.title)}</b> · ${TIER_LABEL[it.tier]}` : '<span class="rej">not recognised, pick the title</span>'}`;
+    }));
+    el.innerHTML = rows.join("<br>");
+  };
+  $("#nzbkind").onchange = () => guard(fill);
+  $("#nzbfile").onchange = () => {
+    const f = $("#nzbfile").files[0];  // a name like "Show.S01E02…" means TV
+    if (f && /\bS\d{1,2}(E\d{1,3})?\b/i.test(f.name.replace(/[._]/g, " ")) && $("#nzbkind").value !== "tv") { $("#nzbkind").value = "tv"; guard(fill); } else guard(guess);
+  };
+  $("#nzbitem").onchange = () => { if (!$("#nzbitem").value) guard(guess); else $("#nzbguess").textContent = "All chosen files go to this title."; };
+  $("#nzbgo").onclick = () => guard(async () => {
+    const files = [...$("#nzbfile").files];
+    if (!files.length) throw new Error("Choose an .nzb file first");
+    const kind = $("#nzbkind").value, item = $("#nzbitem").value, ok = [], bad = [];
+    $("#nzbgo").disabled = true;
+    for (const [i, f] of files.entries()) {
+      $("#nzbprog").textContent = `Sending ${i + 1} of ${files.length}…`;
+      const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.onerror = rej; r.readAsDataURL(f); });
+      try {
+        const r = await api("/nzb", { method: "POST", body: { name: f.name, data, kind, item_id: item ? +item : null } });
+        ok.push(`${r.title} (${r.quality})`);
+      } catch (e) { bad.push(`${f.name}: ${e.message}`); }
+    }
+    $("#nzbgo").disabled = false; $("#nzbprog").textContent = "";
+    if (bad.length) { $("#nzbguess").innerHTML = (ok.length ? `Sent: ${ok.map(esc).join(", ")}<br>` : "") + bad.map((b) => `<span class="rej">${esc(b)}</span>`).join("<br>"); return; }
+    closeModal(); toast(`Sent to the downloader: ${ok.join(", ")}`); renderActivity("queue");
+  });
+  await fill();
+}
 async function pauseDl(p) { await guard(async () => { await api("/downloader/" + (p ? "pause" : "resume"), { method: "POST" }); route(); }); }
 async function runTask(n) { await guard(async () => { await api("/tasks/" + n, { method: "POST" }); toast("Started " + n); }); }
 async function retryImport(id) { await guard(async () => { await api(`/queue/${id}/retry-import`, { method: "POST" }); toast("Imported"); route(); }); }

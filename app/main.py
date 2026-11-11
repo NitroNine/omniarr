@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import time
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, collections_, db, requests_, decision, importer, library, scanner, search, trash
+from . import auth, collections_, db, requests_, decision, importer, library, manual_nzb, scanner, search, trash
 from .services import downloader, metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
@@ -1022,6 +1023,28 @@ async def manual_grab(body: GrabIn):
     if body.kind == "movie":
         return {"id": await search.grab(d, "movie", movie_id=body.item_id)}
     return {"id": await search.grab(d, "tv", series_id=body.item_id)}
+
+
+class NzbIn(BaseModel):
+    name: str
+    data: str  # the .nzb file, base64
+    kind: str
+    item_id: int | None = None
+
+
+@app.post("/api/nzb")
+async def upload_nzb(body: NzbIn):
+    try:
+        nzb = base64.b64decode(body.data, validate=False)
+        return await manual_nzb.add(body.name, nzb, body.kind, body.item_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.get("/api/nzb/guess")
+def guess_nzb(kind: str, name: str):
+    item = manual_nzb.guess(kind, manual_nzb.release_name(name, b""))
+    return {"item_id": item["id"] if item else None}
 
 
 @app.get("/api/queue")

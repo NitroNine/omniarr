@@ -52,10 +52,13 @@ async def check_space(size: int) -> None:
         raise NoSpace(msg)
 
 
-async def grab(d: decision.Decision, kind: str, movie_id: int | None = None, series_id: int | None = None) -> int:
+async def grab(d: decision.Decision, kind: str, movie_id: int | None = None, series_id: int | None = None,
+               nzb: bytes | None = None) -> int:
+    """Send a release to NZBGet. `nzb` = the file itself (manual upload) instead of fetching it from the indexer."""
     rel = d.release
     await check_space(rel.size)
-    nzb = await newznab.fetch_nzb(rel.link)
+    if nzb is None:
+        nzb = await newznab.fetch_nzb(rel.link)
     s = db.get_settings()
     cat = s["nzbget_category_movies"] if kind == "movie" else s["nzbget_category_tv"]
     dupe_key = f"omniarr-movie-{movie_id}" if kind == "movie" else f"omniarr-tv-{series_id}-{'-'.join(map(str, d.episode_ids))}"
