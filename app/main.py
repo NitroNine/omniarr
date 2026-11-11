@@ -903,9 +903,12 @@ def list_movies():
     rows = db.q("SELECT * FROM movies ORDER BY title")
     active = {r["movie_id"]: r for r in db.q(
         "SELECT movie_id, status, progress FROM downloads WHERE kind='movie' AND status IN ('queued','downloading','importing')")}
+    got = {r["movie_id"]: r["t"] for r in db.q(
+        "SELECT movie_id, MAX(updated) t FROM downloads WHERE kind='movie' AND status='imported' GROUP BY movie_id")}
     for r in rows:
         r["download"] = active.get(r["id"])
         r["available"] = library.movie_available(r)
+        r["downloaded"] = got.get(r["id"])  # for "Recently downloaded"
     return rows
 
 
@@ -995,7 +998,11 @@ async def add_series(body: AddSeries):
 def list_series():
     rows = db.q("""SELECT s.*,
         (SELECT COUNT(*) FROM episodes e WHERE e.series_id=s.id AND e.season>0 AND e.air_date<=date('now')) AS aired,
-        (SELECT COUNT(*) FROM episodes e WHERE e.series_id=s.id AND e.file_path IS NOT NULL) AS have
+        (SELECT COUNT(*) FROM episodes e WHERE e.series_id=s.id AND e.file_path IS NOT NULL) AS have,
+        (SELECT MAX(air_date) FROM episodes e WHERE e.series_id=s.id AND e.air_date<=date('now')) AS last_aired,
+        (SELECT MIN(air_date) FROM episodes e WHERE e.series_id=s.id AND e.air_date>date('now')) AS next_airing,
+        (SELECT SUM(file_size) FROM episodes e WHERE e.series_id=s.id AND e.file_path IS NOT NULL) AS size,
+        (SELECT MAX(d.updated) FROM downloads d WHERE d.kind='tv' AND d.series_id=s.id AND d.status='imported') AS downloaded
         FROM series s ORDER BY title""")
     return rows
 

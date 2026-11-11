@@ -224,20 +224,70 @@ async function renderMovies() {
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Movies <span class="muted small">(${movies.length})</span></h2>
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
     <select id="statf"><option value="">Any status</option><option value="missing">Missing</option><option value="have">Downloaded</option></select>
+    ${sortSelect("movie")}
     <label class="small" title="Only titles out at home or on TV, so Omniarr can search for them now"><input type="checkbox" id="outf"> Already out only</label>
     <a href="#/collections"><button>Collections</button></a><button id="selbtn" class="admin-only">Select</button>
     <a href="#/add"><button class="primary">Add movie</button></a></div>${selBar()}<div class="grid" id="g"></div>`;
   const draw = () => {
     const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, st = $("#statf").value, out = $("#outf").checked;
-    $("#g").innerHTML = movies.filter((vs) => (!out || vs[0].available) && (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((m) => m.tier === t))
+    $("#g").innerHTML = sortGroups("movie", movies).filter((vs) => (!out || vs[0].available) && (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((m) => m.tier === t))
         && (!st || (st === "have" ? vs.some((m) => m.file_path) : vs.some((m) => !m.file_path && m.monitored))))
       .map((vs) => { const m = vs[0]; return `<div class="card" data-id="${m.id}" onclick="libCard(this, '#/movie/${m.id}')">${libPick(m.id)}${poster(m.poster, m.title)}
         <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
-        <div class="chips"><span class="chip">${m.year || ""}</span>${vs.map(movieVerChip).join("")}</div></div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
+        <div class="chips"><span class="chip">${m.year || ""}</span>${vs.map(movieVerChip).join("")}</div>${sortNote("movie", vs)}</div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
   };
-  ["flt", "tierf", "statf", "outf"].forEach((id) => $("#" + id).addEventListener("input", draw));
+  ["flt", "tierf", "statf", "outf", "sortf"].forEach((id) => $("#" + id).addEventListener("input", draw));
   libSelect("movie", draw);
   draw();
+}
+
+// Sorting on the Movies / TV grids (remembered per page in this browser)
+const SORTS = {
+  movie: [["title", "Title A–Z"], ["added", "Recently added"], ["downloaded", "Recently downloaded"],
+    ["release", "Release date (newest)"], ["release_old", "Release date (oldest)"], ["size", "Size on disk"]],
+  tv: [["title", "Title A–Z"], ["added", "Recently added"], ["downloaded", "Recently downloaded"], ["last_aired", "Latest episode aired"],
+    ["next_airing", "Next episode airing"], ["missing", "Most episodes missing"], ["size", "Size on disk"]],
+};
+function sortSelect(kind) {
+  let cur = "title"; try { cur = localStorage.getItem("sort-" + kind) || "title"; } catch (e) { /* storage blocked */ }
+  return `<select id="sortf" title="Sort">${SORTS[kind].map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+}
+function sortGroups(kind, groups) {
+  const by = ($("#sortf") || {}).value || "title";
+  try { localStorage.setItem("sort-" + kind, by); } catch (e) { /* storage blocked */ }
+  const max = (vs, k) => vs.reduce((a, v) => (v[k] && v[k] > a ? v[k] : a), "");
+  const sum = (vs, k) => vs.reduce((a, v) => a + (v[k] || 0), 0);
+  const key = {
+    added: (vs) => max(vs, "added"), downloaded: (vs) => max(vs, "downloaded"), last_aired: (vs) => max(vs, "last_aired"),
+    release: (vs) => vs[0].release_date || "", release_old: (vs) => vs[0].release_date || "",
+    size: (vs) => sum(vs, kind === "movie" ? "file_size" : "size"),
+    missing: (vs) => Math.max(...vs.map((v) => (v.aired || 0) - (v.have || 0))),
+    next_airing: (vs) => vs.map((v) => v.next_airing).filter(Boolean).sort()[0] || "",
+  }[by];
+  const out = [...groups];
+  if (!key) return out;  // title: the server's order
+  const asc = by === "release_old" || by === "next_airing";
+  return out.sort((a, b) => {
+    const x = key(a), y = key(b), empty = (v) => v === "" || v === 0;
+    if (empty(x) !== empty(y)) return empty(x) ? 1 : -1;  // titles without a value go last
+    return (x < y ? -1 : x > y ? 1 : 0) * (asc ? 1 : -1) || a[0].title.localeCompare(b[0].title);
+  });
+}
+
+function sortNote(kind, vs) {  // the value the grid is sorted by, under the title
+  const by = ($("#sortf") || {}).value || "title", d = (s) => (s || "").slice(0, 10);
+  const max = (k) => vs.reduce((a, v) => (v[k] && v[k] > a ? v[k] : a), "");
+  const txt = {
+    added: () => max("added") && "Added " + d(max("added")),
+    downloaded: () => max("downloaded") && "Downloaded " + d(max("downloaded")),
+    release: () => vs[0].release_date && "Released " + d(vs[0].release_date), release_old: () => vs[0].release_date && "Released " + d(vs[0].release_date),
+    last_aired: () => max("last_aired") && "Last aired " + d(max("last_aired")),
+    next_airing: () => { const n = vs.map((v) => v.next_airing).filter(Boolean).sort()[0]; return n && "Next " + d(n); },
+    missing: () => { const n = Math.max(...vs.map((v) => (v.aired || 0) - (v.have || 0))); return n > 0 && `${n} missing`; },
+    size: () => { const n = vs.reduce((a, v) => a + (v[kind === "movie" ? "file_size" : "size"] || 0), 0); return n > 0 && size(n); },
+  }[by];
+  const t = txt && txt();
+  return t ? `<div class="small muted" style="margin-top:3px">${esc(t)}</div>` : "";
 }
 
 // Select mode on the Movies / TV grids: pick titles (or Select all of what the filters show) and delete them.
@@ -364,17 +414,18 @@ async function renderSeries() {
   const series = groupVersions(await api("/series"), (s) => (s.tmdb_id ? "tmdb" + s.tmdb_id : "tvdb" + s.tvdb_id));
   view.innerHTML = `<div class="toolbar"><h2 class="grow">TV <span class="muted small">(${series.length})</span></h2>
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
+    ${sortSelect("tv")}
     <label class="small" title="Only titles out at home or on TV, so Omniarr can search for them now"><input type="checkbox" id="outf"> Already out only</label>
     <button id="selbtn" class="admin-only">Select</button>
     <a href="#/add"><button class="primary">Add series</button></a></div>${selBar()}<div class="grid" id="g"></div>`;
   const draw = () => {
     const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, out = $("#outf").checked;
-    $("#g").innerHTML = series.filter((vs) => (!out || vs.some((v) => v.aired > 0)) && (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((s) => s.tier === t)))
+    $("#g").innerHTML = sortGroups("tv", series).filter((vs) => (!out || vs.some((v) => v.aired > 0)) && (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((s) => s.tier === t)))
       .map((vs) => { const s = vs[0]; return `<div class="card" data-id="${s.id}" onclick="libCard(this, '#/show/${s.id}')">${libPick(s.id)}${poster(s.poster, s.title)}
         <div class="meta"><div class="title" title="${esc(s.title)}">${esc(s.title)}</div>
-        <div class="chips">${vs.map((v) => `<span class="chip ${v.have >= v.aired && v.aired ? "ok" : ""}">${TIER_LABEL[v.tier]} · ${v.have}/${v.aired}</span>`).join("")}${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}</div></div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
+        <div class="chips">${vs.map((v) => `<span class="chip ${v.have >= v.aired && v.aired ? "ok" : ""}">${TIER_LABEL[v.tier]} · ${v.have}/${v.aired}</span>`).join("")}${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}</div>${sortNote("tv", vs)}</div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
   };
-  ["flt", "tierf", "outf"].forEach((id) => $("#" + id).addEventListener("input", draw));
+  ["flt", "tierf", "outf", "sortf"].forEach((id) => $("#" + id).addEventListener("input", draw));
   libSelect("tv", draw);
   draw();
 }
