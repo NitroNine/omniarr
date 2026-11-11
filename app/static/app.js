@@ -225,18 +225,64 @@ async function renderMovies() {
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
     <select id="statf"><option value="">Any status</option><option value="missing">Missing</option><option value="have">Downloaded</option></select>
     <label class="small" title="Only titles out at home or on TV, so Omniarr can search for them now"><input type="checkbox" id="outf"> Already out only</label>
-    <a href="#/collections"><button>Collections</button></a>
-    <a href="#/add"><button class="primary">Add movie</button></a></div><div class="grid" id="g"></div>`;
+    <a href="#/collections"><button>Collections</button></a><button id="selbtn" class="admin-only">Select</button>
+    <a href="#/add"><button class="primary">Add movie</button></a></div>${selBar()}<div class="grid" id="g"></div>`;
   const draw = () => {
     const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, st = $("#statf").value, out = $("#outf").checked;
     $("#g").innerHTML = movies.filter((vs) => (!out || vs[0].available) && (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((m) => m.tier === t))
         && (!st || (st === "have" ? vs.some((m) => m.file_path) : vs.some((m) => !m.file_path && m.monitored))))
-      .map((vs) => { const m = vs[0]; return `<div class="card" onclick="location.hash='#/movie/${m.id}'">${poster(m.poster, m.title)}
+      .map((vs) => { const m = vs[0]; return `<div class="card" data-id="${m.id}" onclick="libCard(this, '#/movie/${m.id}')">${libPick(m.id)}${poster(m.poster, m.title)}
         <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
         <div class="chips"><span class="chip">${m.year || ""}</span>${vs.map(movieVerChip).join("")}</div></div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
   };
   ["flt", "tierf", "statf", "outf"].forEach((id) => $("#" + id).addEventListener("input", draw));
+  libSelect("movie", draw);
   draw();
+}
+
+// Select mode on the Movies / TV grids: pick titles (or Select all of what the filters show) and delete them.
+const libSel = { on: false, ids: new Set(), kind: "movie" };
+function selBar() {
+  return `<div class="toolbar selbar" id="libsel" style="display:none"><button class="small" id="lsall">Select all</button><button class="small" id="lsnone">Clear</button>
+    <button class="small danger" id="lsdel" disabled>Delete selected</button><span class="small muted" id="lsprog"></span></div>`;
+}
+function libPick(id) { return libSel.on ? `<label class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-id="${id}" ${libSel.ids.has(id) ? "checked" : ""} onchange="libToggle(${id}, this.checked)"></label>` : ""; }
+function libCard(card, href) {
+  if (!libSel.on) { location.hash = href; return; }
+  const box = card.querySelector(".pick input"); box.checked = !box.checked; libToggle(+card.dataset.id, box.checked);
+}
+function libToggle(id, on) { on ? libSel.ids.add(id) : libSel.ids.delete(id); libCount(); }
+function libCount() {
+  const b = $("#lsdel"); if (!b) return;
+  const n = libSel.ids.size, what = libSel.kind === "movie" ? "movie" : "show";
+  b.disabled = !n; b.textContent = n ? `Delete ${n} ${what}${n === 1 ? "" : "s"}` : "Delete selected";
+}
+function libSelect(kind, draw) {
+  libSel.on = false; libSel.ids = new Set(); libSel.kind = kind;
+  $("#selbtn").onclick = () => {
+    libSel.on = !libSel.on; libSel.ids.clear();
+    $("#selbtn").textContent = libSel.on ? "Done" : "Select"; $("#selbtn").classList.toggle("primary", libSel.on);
+    $("#libsel").style.display = libSel.on ? "" : "none"; draw(); libCount();
+  };
+  $("#lsall").onclick = () => { view.querySelectorAll("#g .card").forEach((c) => libSel.ids.add(+c.dataset.id)); draw(); libCount(); };
+  $("#lsnone").onclick = () => { libSel.ids.clear(); draw(); libCount(); };
+  $("#lsdel").onclick = () => libDelete();
+}
+function libDelete() {
+  const n = libSel.ids.size, what = libSel.kind === "movie" ? (n === 1 ? "movie" : "movies") : (n === 1 ? "show" : "shows");
+  modal(`<h3>Delete ${n} ${what}?</h3>
+    <p>They're removed from Omniarr (both the 1080p and 4K versions), and any of their downloads still in the queue are cancelled.</p>
+    <label><input type="checkbox" id="ldfiles"> Also delete their files from disk</label>
+    <p class="small muted">Leave this unticked to keep the files where they are (they can be brought back with Import).</p>
+    <div class="toolbar" style="justify-content:flex-end"><button onclick="closeModal()">Cancel</button><button class="danger" id="ldgo">Delete ${n} ${what}</button></div>`);
+  $("#ldfiles").onchange = () => { $("#ldgo").textContent = $("#ldfiles").checked ? `Delete ${n} ${what} and their files` : `Delete ${n} ${what}`; };
+  $("#ldgo").onclick = () => guard(async () => {
+    const files = $("#ldfiles").checked;
+    if (files && !confirm(`Permanently delete the files of ${n} ${what}? This can't be undone.`)) return;
+    $("#ldgo").disabled = true; $("#ldgo").textContent = "Deleting…";
+    const r = await api(libSel.kind === "movie" ? "/movies/delete" : "/series/delete", { method: "POST", body: { ids: [...libSel.ids], delete_files: files } });
+    closeModal(); toast(`Deleted ${r.removed} ${libSel.kind === "movie" ? "movie" : "show"}${r.removed === 1 ? "" : "s"}${files ? " and their files" : ""}`); route();
+  });
 }
 
 async function renderMovie(id) {
@@ -310,15 +356,17 @@ async function renderSeries() {
   view.innerHTML = `<div class="toolbar"><h2 class="grow">TV <span class="muted small">(${series.length})</span></h2>
     <input id="flt" placeholder="Filter…"><select id="tierf"><option value="">All tiers</option><option value="hd">1080p</option><option value="uhd">4K</option></select>
     <label class="small" title="Only titles out at home or on TV, so Omniarr can search for them now"><input type="checkbox" id="outf"> Already out only</label>
-    <a href="#/add"><button class="primary">Add series</button></a></div><div class="grid" id="g"></div>`;
+    <button id="selbtn" class="admin-only">Select</button>
+    <a href="#/add"><button class="primary">Add series</button></a></div>${selBar()}<div class="grid" id="g"></div>`;
   const draw = () => {
     const f = $("#flt").value.toLowerCase(), t = $("#tierf").value, out = $("#outf").checked;
     $("#g").innerHTML = series.filter((vs) => (!out || vs.some((v) => v.aired > 0)) && (!f || vs[0].title.toLowerCase().includes(f)) && (!t || vs.some((s) => s.tier === t)))
-      .map((vs) => { const s = vs[0]; return `<div class="card" onclick="location.hash='#/show/${s.id}'">${poster(s.poster, s.title)}
+      .map((vs) => { const s = vs[0]; return `<div class="card" data-id="${s.id}" onclick="libCard(this, '#/show/${s.id}')">${libPick(s.id)}${poster(s.poster, s.title)}
         <div class="meta"><div class="title" title="${esc(s.title)}">${esc(s.title)}</div>
         <div class="chips">${vs.map((v) => `<span class="chip ${v.have >= v.aired && v.aired ? "ok" : ""}">${TIER_LABEL[v.tier]} · ${v.have}/${v.aired}</span>`).join("")}${s.status ? `<span class="chip">${esc(s.status)}</span>` : ""}</div></div></div>`; }).join("") || '<p class="muted">Nothing here yet.</p>';
   };
   ["flt", "tierf", "outf"].forEach((id) => $("#" + id).addEventListener("input", draw));
+  libSelect("tv", draw);
   draw();
 }
 

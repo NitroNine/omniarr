@@ -1041,6 +1041,47 @@ def monitor_episodes(body: dict):
     return {"ok": True}
 
 
+class BulkDelete(BaseModel):
+    ids: list[int]  # any version's id: the whole title (1080p and 4K) is removed
+    delete_files: bool = False
+
+
+async def _bulk_delete(kind: str, body: BulkDelete) -> dict:
+    table = "movies" if kind == "movie" else "series"
+    col = "movie_id" if kind == "movie" else "series_id"
+    ids: set[int] = set()
+    for i in body.ids:
+        item = db.one(f"SELECT * FROM {table} WHERE id=?", (i,))
+        if item:
+            ids |= {v["id"] for v in library.versions(kind, item)}
+    for dl in db.q(f"SELECT * FROM downloads WHERE {col} IN ({','.join('?' * len(ids))}) "
+                   "AND status IN ('queued','downloading','importing','import_failed')", tuple(ids)) if ids else []:
+        try:
+            await nzbget.delete(dl["nzbget_id"])
+        except Exception:  # noqa: BLE001
+            pass
+        db.ex("UPDATE downloads SET status='failed', message='Removed with the title', updated=datetime('now') "
+              "WHERE id=?", (dl["id"],))
+    titles = set()
+    # 4K first: with a shared folder, the last version removed takes the folder with it
+    for i in sorted(ids, key=lambda x: (db.one(f"SELECT tier FROM {table} WHERE id=?", (x,)) or {}).get("tier") != "uhd"):
+        row = db.one(f"SELECT title FROM {table} WHERE id=?", (i,))
+        if row:
+            titles.add(row["title"])
+            await asyncio.to_thread(library.delete_version, kind, i, body.delete_files)
+    return {"removed": len(titles), "versions": len(ids)}
+
+
+@app.post("/api/movies/delete")
+async def delete_movies(body: BulkDelete):
+    return await _bulk_delete("movie", body)
+
+
+@app.post("/api/series/delete")
+async def delete_series_bulk(body: BulkDelete):
+    return await _bulk_delete("tv", body)
+
+
 @app.delete("/api/series/{sid}")
 def delete_series(sid: int, delete_files: bool = False):
     """Removes this version; the other version (if any) and its files stay."""
