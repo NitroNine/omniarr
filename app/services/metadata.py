@@ -559,7 +559,7 @@ async def discover_christmas_all(released: bool = False) -> dict:
 
 
 async def _discover_christmas_all(released: bool) -> dict:
-    """Christmas movies from this year on, from everywhere: TMDB's Christmas/holiday keywords, plus US TV premieres
+    """Christmas movies from this year on (English-language ones while english_only is on), from everywhere: TMDB's Christmas/holiday keywords, plus US TV premieres
     (Hallmark, Lifetime, GAF... often have no keywords yet) with a Christmas word in the title or keywords.
     Each one lists the streaming services it is on."""
     since, today = time.strftime("%Y-01-01"), time.strftime("%Y-%m-%d")
@@ -571,6 +571,8 @@ async def _discover_christmas_all(released: bool) -> dict:
             d = await _tmdb("/discover/movie", page=page, include_adult="false", **params)
             total = d.get("total_pages", 1)
             for r in d.get("results", []):
+                if english and r.get("original_language") not in (None, "", "en"):
+                    continue
                 date = r.get("release_date") or None
                 item = {"tmdb_id": r["id"], "title": r.get("title"), "year": _year(date), "overview": r.get("overview"),
                         "rating": r.get("vote_average"), "date": date,
@@ -579,11 +581,12 @@ async def _discover_christmas_all(released: bool) -> dict:
                     found[r["id"]] = item
             page += 1
     upto = {"primary_release_date.lte": today} if released else {}
+    english = bool(db.setting("english_only"))
     kws = await _xmas_keyword_ids()
     if kws:
-        await pages({"with_keywords": kws, "primary_release_date.gte": since, "sort_by": "popularity.desc", **upto}, 15, False)
+        await pages({"with_keywords": kws, "primary_release_date.gte": since, "sort_by": "popularity.desc", **upto}, 40, False)
     await pages({"region": "US", "with_release_type": "6", "release_date.gte": since, "sort_by": "popularity.desc",
-                 **({"release_date.lte": today} if released else {})}, 15, True)
+                 **({"release_date.lte": today} if released else {})}, 40, True)  # TV movies are rarely "popular": read them all
     sem = asyncio.Semaphore(8)
 
     async def keep(r):

@@ -80,10 +80,13 @@ def test_christmas_tab_list(env, monkeypatch):
                                                   {"id": 2, "name": "holiday inn"}]}
         if path == "/discover/movie" and "with_keywords" in p:
             assert p["with_keywords"] == "207317|1"
-            return {"total_pages": 1, "results": [{"id": 10, "title": "Elf Again", "release_date": "2026-11-27"}]}
+            return {"total_pages": 1, "results": [{"id": 10, "title": "Elf Again", "release_date": "2026-11-27", "original_language": "en"},
+                                                  {"id": 9, "title": "Das Geheimnis der Weihnacht", "release_date": "2026-12-24", "original_language": "de"}]}
         if path == "/discover/movie":
             assert p["with_release_type"] == "6"
-            return {"total_pages": 1, "results": [{"id": 11, "title": "Mistletoe and Mimosas", "release_date": "2026-11-15"},
+            if p["page"] == 2:
+                return {"total_pages": 2, "results": [{"id": 14, "title": "Obscure Little Christmas", "release_date": "2026-12-01"}]}
+            return {"total_pages": 2, "results": [{"id": 11, "title": "Mistletoe and Mimosas", "release_date": "2026-11-15"},
                                                   {"id": 12, "title": "A Lifetime Thriller", "release_date": "2026-11-14"}]}
         if path.endswith("/keywords"):
             return {"keywords": []}
@@ -95,5 +98,5 @@ def test_christmas_tab_list(env, monkeypatch):
     monkeypatch.setattr(metadata, "_tmdb", tmdb)
     metadata._info_cache.clear()
     r = asyncio.run(metadata.discover_christmas_all())
-    assert [x["title"] for x in r["results"]] == ["Elf Again", "Mistletoe and Mimosas"]
-    assert r["results"][1]["services"] == ["Hallmark+ Amazon Channel"]
+    assert [x["title"] for x in r["results"]] == ["Obscure Little Christmas", "Elf Again", "Mistletoe and Mimosas"]
+    assert r["results"][2]["services"] == ["Hallmark+ Amazon Channel"]
