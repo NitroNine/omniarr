@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
 import time
@@ -753,7 +754,9 @@ async def provider_titles(pid: int, kind: str, page: int = 1, sort: str = "popul
     if kind not in ("movie", "tv"):
         raise HTTPException(400)
     prov = next((p for p in await metadata.watch_providers() if p["id"] == pid), None)
-    if christmas and kind == "movie":
+    if pid == 0 and kind == "movie":  # the Christmas tab: every service
+        data = await metadata.discover_christmas_all(released)
+    elif christmas and kind == "movie":
         data = await metadata.discover_christmas(pid, prov["name"] if prov else "", sort, released)
     else:
         data = await metadata.discover(kind, pid, page, sort, prov["name"] if (originals and prov) else None, released)
@@ -761,8 +764,11 @@ async def provider_titles(pid: int, kind: str, page: int = 1, sort: str = "popul
         have = {r["tmdb_id"]: r["id"] for r in db.q("SELECT id, tmdb_id FROM movies")}
     else:
         have = {r["tmdb_id"]: r["id"] for r in db.q("SELECT id, tmdb_id FROM series WHERE tmdb_id IS NOT NULL")}
+    hm = set(json.loads(db.setting("hallmark_seen") or "[]")) if pid == 0 else set()
     for r in data["results"]:
         r["library_id"] = have.get(r["tmdb_id"])
+        if pid == 0:  # Christmas tab: what the Hallmark tab covers
+            r["hallmark"] = r["tmdb_id"] in hm or any("hallmark" in s.lower() for s in r.get("services", []))
     data["provider"] = prov
     return data
 
@@ -870,12 +876,13 @@ class AddMovie(BaseModel):
     tier: str = "hd"
     monitored: bool = True
     search: bool = True
+    christmas: bool = False  # into the Christmas folder
 
 
 @app.post("/api/movies")
 async def add_movie(body: AddMovie):
     """tier: hd | uhd | both. Adds the versions that aren't in the library yet."""
-    added = await library.add_movie_tiers(body.tmdb_id, body.tier, body.monitored)
+    added = await library.add_movie_tiers(body.tmdb_id, body.tier, body.monitored, christmas=body.christmas)
     for m in added:
         if body.search and body.monitored and library.movie_available(m):
             asyncio.create_task(_job(f"search-movie-{m['id']}", lambda mid=m["id"]: search.search_movie(mid)))
@@ -928,6 +935,8 @@ def edit_movie(mid: int, body: dict):
         library.change_tier("movie", mid, body["tier"])
     if "monitored" in body:
         db.update("movies", mid, {"monitored": int(bool(body["monitored"]))})
+    if "christmas" in body:
+        library.set_christmas(mid, bool(body["christmas"]))
     return get_movie(mid)
 
 

@@ -79,6 +79,15 @@ def season_folder_name(season: int) -> str:
     return naming.safe(naming.render(fmt, {"season": season}))
 
 
+def christmas_folder() -> str:
+    return (db.setting("christmas_folder") or "").strip().strip("/")
+
+
+def _in_christmas(folder: str) -> bool:
+    cf = christmas_folder()
+    return bool(cf) and (folder or "").startswith(cf + "/")
+
+
 def movie_dir(movie: dict) -> str:
     return os.path.join(root_for("movie", movie["tier"]), movie["folder"])
 
@@ -88,9 +97,11 @@ def series_dir(series: dict) -> str:
 
 
 # ----------------------------------------------------------------- movies --
-async def add_movie(tmdb_id: int, tier: str, monitored: bool = True, folder: str | None = None) -> dict:
+async def add_movie(tmdb_id: int, tier: str, monitored: bool = True, folder: str | None = None,
+                    christmas: bool = False) -> dict:
     """Add one version (tier) of a movie. `folder` keeps an existing folder name (library
-    import) instead of TRaSH naming; a second version reuses the first one's folder."""
+    import) instead of TRaSH naming; a second version reuses the first one's folder.
+    `christmas` puts it in the Christmas folder (setting christmas_folder) inside the movies folder."""
     if tier not in TIERS:
         raise ValueError("tier must be 'hd' or 'uhd'")
     existing = db.one("SELECT * FROM movies WHERE tmdb_id=? AND tier=?", (tmdb_id, tier))
@@ -99,13 +110,20 @@ async def add_movie(tmdb_id: int, tier: str, monitored: bool = True, folder: str
     other = db.one("SELECT * FROM movies WHERE tmdb_id=?", (tmdb_id,))
     m = await metadata.movie_details(tmdb_id)
     m.update(tier=tier, monitored=int(monitored))
+    if other:
+        christmas = bool(other.get("christmas"))
+    if folder:
+        christmas = christmas or _in_christmas(folder)
     m["folder"] = folder or (other["folder"] if other else None) or movie_folder_name(m)
+    if christmas and christmas_folder() and not _in_christmas(m["folder"]):
+        m["folder"] = f"{christmas_folder()}/{m['folder']}"
+    m["christmas"] = int(christmas)
     m["id"] = db.insert("movies", m)
     db.log(f"Added movie {m['title']} ({m.get('year')}) [{TIER_NAMES[tier]}]")
     return m
 
 
-async def add_movie_tiers(tmdb_id: int, tier: str, monitored: bool = True) -> list[dict]:
+async def add_movie_tiers(tmdb_id: int, tier: str, monitored: bool = True, christmas: bool = False) -> list[dict]:
     """Add every requested version that isn't in the library yet ('both' = 1080p and 4K)."""
     wanted = tiers_of(tier)
     have = {r["tier"] for r in db.q("SELECT tier FROM movies WHERE tmdb_id=?", (tmdb_id,))}
@@ -113,7 +131,7 @@ async def add_movie_tiers(tmdb_id: int, tier: str, monitored: bool = True) -> li
     if not todo:
         title = db.one("SELECT title FROM movies WHERE tmdb_id=?", (tmdb_id,))["title"]
         raise ValueError(f"{title} is already in your library in {' and '.join(TIER_NAMES[t] for t in wanted)}")
-    return [await add_movie(tmdb_id, t, monitored) for t in todo]
+    return [await add_movie(tmdb_id, t, monitored, christmas=christmas) for t in todo]
 
 
 async def refresh_movie(movie_id: int) -> None:
@@ -316,6 +334,33 @@ def change_tier(kind: str, item_id: int, tier: str) -> None:
                 db.update("episodes", e["id"], {"file_path": e["file_path"].replace(old, new, 1)})
     db.update(table, item_id, {"tier": tier})
     db.log(f"Moved {item['title']} to the {TIER_NAMES[tier]} library")
+
+
+def set_christmas(movie_id: int, on: bool) -> dict:
+    """Mark a movie (both versions) as a Christmas movie or not, moving its folder into or out of the
+    Christmas folder."""
+    m = db.one("SELECT * FROM movies WHERE id=?", (movie_id,))
+    if not m:
+        raise ValueError("No such movie")
+    cf = christmas_folder()
+    old_rel = m["folder"]
+    base = old_rel[len(cf) + 1:] if _in_christmas(old_rel) else old_rel
+    new_rel = f"{cf}/{base}" if on and cf else base
+    root = root_for("movie")
+    old, new = os.path.join(root, old_rel), os.path.join(root, new_rel)
+    if os.path.normpath(old) != os.path.normpath(new) and os.path.exists(old):
+        if os.path.exists(new):
+            raise ValueError(f"{new} already exists")
+        os.makedirs(os.path.dirname(new), exist_ok=True)
+        shutil.move(old, new)
+    for v in versions("movie", m):
+        fp = v["file_path"]
+        if fp and os.path.normpath(fp).startswith(os.path.normpath(old) + os.sep):
+            fp = os.path.join(new, os.path.relpath(fp, old))
+        db.update("movies", v["id"], {"christmas": int(on), "folder": new_rel, "file_path": fp})
+    if old_rel != new_rel:
+        db.log(f"Moved {m['title']} {'into' if on else 'out of'} {cf or 'the Christmas folder'}")
+    return db.one("SELECT * FROM movies WHERE id=?", (movie_id,))
 
 
 def delete_version(kind: str, item_id: int, delete_files: bool = False) -> None:

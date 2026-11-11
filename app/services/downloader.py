@@ -135,7 +135,10 @@ def options() -> dict[str, str]:
         "DetailTarget": "none", "DebugTarget": "none",
         "UMask": "1000",  # keep the container's umask
     }
-    for i, cat in enumerate((s["nzbget_category_movies"] or "movies", s["nzbget_category_tv"] or "tv"), 1):
+    cats = [s["nzbget_category_movies"] or "movies", s["nzbget_category_tv"] or "tv"]
+    if s.get("nzbget_category_christmas"):
+        cats.append(s["nzbget_category_christmas"])
+    for i, cat in enumerate(cats, 1):
         opts[f"Category{i}.Name"] = cat
         opts[f"Category{i}.Unpack"] = "yes"
     for i, sv in enumerate(servers(), 1):

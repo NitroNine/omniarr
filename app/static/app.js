@@ -81,7 +81,7 @@ function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 // ------------------------------------------------------------- router ---
-const routes = { title: renderTitle, requests: (sub) => renderRequests(sub), discover: renderDiscover, collections: renderCollections, hallmark: renderHallmark, import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
+const routes = { title: renderTitle, requests: (sub) => renderRequests(sub), discover: renderDiscover, collections: renderCollections, hallmark: renderHallmark, christmas: () => renderProvider(0), import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
 const ADMIN_PAGES = ["settings", "activity", "import"];
 async function route() {
   let [, name = "movies", arg, ...rest] = location.hash.split("/");
@@ -257,6 +257,7 @@ async function renderMovie(id) {
       <button class="primary" id="as">Automatic search</button><button id="is">Interactive search</button>
       ${multi ? "" : '<select id="tier" title="Move to the other library"><option value="hd">1080p library</option><option value="uhd">4K library</option></select>'}
       <label><input type="checkbox" id="mon" ${m.monitored ? "checked" : ""}> Monitored</label>
+      <label title="Keep it in the Christmas Movies folder (and the christmas download category)"><input type="checkbox" id="xmas" ${m.christmas ? "checked" : ""}> Christmas movie</label>
       <button id="rs">Rescan folder</button>
       <button class="danger" id="del">${multi ? `Remove ${TIER_LABEL[m.tier]} version` : "Delete"}</button></div>
     </div></div></div><div id="tinfo"></div>
@@ -266,6 +267,7 @@ async function renderMovie(id) {
     $("#tier").onchange = () => guard(async () => { await api("/movies/" + id, { method: "PUT", body: { tier: $("#tier").value } }); toast("Library changed"); route(); });
   }
   $("#mon").onchange = () => guard(() => api("/movies/" + id, { method: "PUT", body: { monitored: $("#mon").checked } }));
+  $("#xmas").onchange = () => guard(async () => { await api("/movies/" + id, { method: "PUT", body: { christmas: $("#xmas").checked } }); toast($("#xmas").checked ? "Moved to the Christmas folder" : "Moved out of the Christmas folder"); route(); });
   $("#as").onclick = () => guard(async () => { $("#as").disabled = true; const r = await api(`/movies/${id}/search`, { method: "POST" }); toast(r.some((x) => x.accepted) ? "Release grabbed" : `No acceptable release (${r.length} found)`); route(); });
   $("#is").onclick = () => interactive("movie", id, `/movies/${id}/search?interactive=true`);
   $("#rs").onclick = () => rescan(`/movies/${id}/rescan`);
@@ -457,11 +459,14 @@ async function renderDiscover(pid) {
 const disc = { kind: "movie", sort: "popular", originals: false, page: 1 };
 async function renderProvider(pid) {
   const { providers } = await api("/providers");
-  const prov = providers.find((p) => p.id === pid) || { name: "Service", kinds: ["movie", "tv"] };
+  const all = pid === 0;  // the Christmas tab: Christmas movies on every service
+  const prov = all ? { name: `Christmas movies ${new Date().getFullYear()}`, kinds: ["movie"] }
+    : providers.find((p) => p.id === pid) || { name: "Service", kinds: ["movie", "tv"] };
   if (!prov.kinds.includes(disc.kind)) disc.kind = prov.kinds[0];
   disc.page = 1; disc.sel = new Set(); disc.pid = pid; disc.more = false; disc.total = 0;
   view.innerHTML = `<div class="toolbar"><div class="prov-head grow">${prov.logo ? `<img src="${esc(prov.logo)}" alt="">` : ""}<h2 style="margin:0">${esc(prov.name)}</h2><span class="muted small" id="dcount"></span></div>
-    <a href="#/discover"><button>All services</button></a></div>
+    ${all ? `<label class="small" title="Hallmark movies have their own tab"><input type="checkbox" id="dnohm" ${disc.noHallmark !== false ? "checked" : ""}> Hide Hallmark</label><select id="dsvc"><option value="">Every service</option></select>` : '<a href="#/discover"><button>All services</button></a>'}</div>
+    ${all ? '<p class="small muted">Christmas movies from this year on, wherever they are (streaming, TV premieres, cinemas). Anything you add goes into the Christmas Movies folder.</p>' : ""}
     <div class="toolbar"><div class="tabs2" style="margin:0">${["movie", "tv"].filter((k) => prov.kinds.includes(k)).map((k) => `<button data-k="${k}" class="${disc.kind === k ? "active" : ""}">${k === "movie" ? "Movies" : "TV shows"}</button>`).join("")}</div>
       <select id="dsort"><option value="popular">Most popular</option><option value="newest">Newest</option><option value="rating">Top rated</option><option value="title">A–Z</option></select>
       <label id="dxmasw" title="Christmas movies from this year on: tagged Christmas on TMDB, a Christmas word in the title, or (Hallmark) premiering in the Countdown to Christmas season"><input type="checkbox" id="dxmas" ${disc.christmas ? "checked" : ""}> Christmas movies (${new Date().getFullYear()} on)</label>
@@ -475,17 +480,27 @@ async function renderProvider(pid) {
       <button class="small primary" id="dbulk" disabled>${addLabel()} selected</button><span class="small muted" id="dprog"></span></div>
     <div class="grid" id="dg"></div><div class="toolbar" style="justify-content:center;margin-top:16px"><button id="dmore">Load more</button></div>`;
   $("#dsort").value = disc.sort;
-  const showMon = () => { $("#dmon").style.display = disc.kind === "tv" ? "" : "none"; $("#dxmasw").style.display = disc.kind === "movie" ? "" : "none"; if ($("#dorigw")) $("#dorigw").style.display = disc.kind === "tv" ? "" : "none"; };
+  if (all) { disc.kind = "movie"; $("#dsort").style.display = "none"; }
+  const showMon = () => { $("#dmon").style.display = disc.kind === "tv" ? "" : "none"; $("#dxmasw").style.display = disc.kind === "movie" && !all ? "" : "none"; if ($("#dorigw")) $("#dorigw").style.display = disc.kind === "tv" ? "" : "none"; };
   showMon();
   const load = async (reset) => {
-    if (reset) { disc.page = 1; $("#dg").innerHTML = '<p class="muted">Loading…</p>'; }
+    if (reset) { disc.page = 1; $("#dg").innerHTML = `<p class="muted">${all ? "Finding Christmas movies on every service… (the first time takes up to a minute)" : "Loading…"}</p>`; }
     const d = await api(`/providers/${pid}/${disc.kind}?page=${disc.page}&sort=${disc.sort}&originals=${disc.kind === "tv" && disc.originals}&released=${!!disc.released}&christmas=${disc.kind === "movie" && !!disc.christmas}`);
     window._disc = reset ? d.results : [...(window._disc || []), ...d.results];
     $("#dcount").textContent = `${d.total_results.toLocaleString()} ${disc.kind === "movie" ? "movies" : "shows"}`;
+    if (all && $("#dsvc")) {
+      const svcs = [...new Set(window._disc.flatMap((r) => r.services || []))].sort(), cur = $("#dsvc").value;
+      $("#dsvc").innerHTML = `<option value="">Every service</option><option value="-">Not streaming yet</option>${svcs.map((s) => `<option ${s === cur ? "selected" : ""}>${esc(s)}</option>`).join("")}`;
+      $("#dsvc").value = cur;
+      const f = cur; if (f) window._disc = window._disc.filter((r) => f === "-" ? !(r.services || []).length : (r.services || []).includes(f));
+      if (disc.noHallmark !== false) window._disc = window._disc.filter((r) => !r.hallmark);
+      $("#dcount").textContent = `${window._disc.length} movies`;
+    }
     disc.total = d.total_results; disc.more = d.page < d.total_pages;
     $("#dg").innerHTML = window._disc.map((r, i) => `<div class="card" onclick="location.hash='${titleHref(disc.kind, r.tmdb_id)}'" title="${esc(r.overview)}">${r.library_id ? "" : `<label class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-id="${r.tmdb_id}" ${disc.sel.has(r.tmdb_id) ? "checked" : ""} onchange="discPick(this)"></label>`}${poster(r.poster, r.title)}
       <div class="meta"><div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
-      <div class="chips"><span class="chip">${r.year || "TBA"}</span>${r.rating ? `<span class="chip">★ ${r.rating.toFixed(1)}</span>` : ""}</div>
+      <div class="chips"><span class="chip">${all ? esc(r.date || "TBA") : r.year || "TBA"}</span>${r.rating ? `<span class="chip">★ ${r.rating.toFixed(1)}</span>` : ""}</div>
+      ${all ? `<div class="small muted" style="margin:2px 0 4px">${esc((r.services || []).join(", ") || "Not streaming yet")}</div>` : ""}
       ${r.library_id ? '<span class="chip ok">In library</span>' : `<button class="small primary add-btn" onclick="event.stopPropagation();discAdd(${i}, this)">+ ${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted">Nothing found.</p>';
     $("#dmore").style.display = disc.more ? "" : "none";
     discSelCount();
@@ -493,6 +508,8 @@ async function renderProvider(pid) {
   disc.load = load;
   view.querySelectorAll(".tabs2 button").forEach((b) => (b.onclick = () => { disc.kind = b.dataset.k; view.querySelectorAll(".tabs2 button").forEach((x) => x.classList.toggle("active", x === b)); showMon(); guard(() => load(true)); }));
   $("#dsort").onchange = () => { disc.sort = $("#dsort").value; guard(() => load(true)); };
+  if ($("#dsvc")) $("#dsvc").onchange = () => { disc.sel.clear(); guard(() => load(true)); };
+  if ($("#dnohm")) $("#dnohm").onchange = () => { disc.noHallmark = $("#dnohm").checked; disc.sel.clear(); guard(() => load(true)); };
   if ($("#dorig")) $("#dorig").onchange = () => { disc.originals = $("#dorig").checked; guard(() => load(true)); };
   $("#dmore").onclick = () => { disc.page++; guard(() => load(false)); };
   $("#dxmas").onchange = () => {
@@ -534,7 +551,7 @@ async function discBulkAdd() {
   for (const [n, r] of picks.entries()) {
     prog.textContent = `${isAdmin() ? "Adding" : "Requesting"} ${n + 1} of ${picks.length}: ${r.title}`;
     try {
-      const body = { tmdb_id: r.tmdb_id, tier, search: search && n < NOW };
+      const body = { tmdb_id: r.tmdb_id, tier, search: search && n < NOW, christmas: disc.pid === 0 || !!disc.christmas };
       const item = await (disc.kind === "movie" ? addOrRequest("movie", body) : addOrRequest("tv", { ...body, monitor: $("#dmon").value }));
       r.library_id = item.id || true; disc.sel.delete(r.tmdb_id); done++;
       const card = view.querySelector(`#dg .pick input[data-id="${r.tmdb_id}"]`)?.closest(".card");
@@ -552,7 +569,7 @@ async function discAdd(i, btn) {
   await guard(async () => {
     const tier = $("#dtier").value, search = $("#dsearch").checked;
     const item = disc.kind === "movie"
-      ? await addOrRequest("movie", { tmdb_id: r.tmdb_id, tier, search })
+      ? await addOrRequest("movie", { tmdb_id: r.tmdb_id, tier, search, christmas: disc.pid === 0 || !!disc.christmas })
       : await addOrRequest("tv", { tmdb_id: r.tmdb_id, tier, monitor: $("#dmon").value, search });
     r.library_id = item.id;
     btn.outerHTML = item.requested ? '<span class="chip warn">Requested</span>' : '<span class="chip ok">Added</span>';
@@ -635,7 +652,7 @@ async function renderHallmark() {
     <label class="small"><input type="checkbox" id="hauto" ${d.auto ? "checked" : ""}> Add &amp; download automatically</label>
     <select id="htier">${["hd", "uhd", "both"].map((v) => `<option value="${v}" ${d.tier === v ? "selected" : ""}>${TIER_LABEL[v]}</option>`).join("")}</select>
     <button id="hsync">Check now</button></div>
-    <p class="small muted">New Hallmark Christmas movies on ${esc(d.services.join(", ") || "Hallmark services")} are added to Movies as TMDB lists them,
+    <p class="small muted">New Hallmark Christmas movies on ${esc(d.services.join(", ") || "Hallmark services")} are added to Movies (in the Christmas Movies folder) as TMDB lists them,
       and downloaded once they've aired. Checked every 6 hours${d.last_sync ? `, last ${esc(d.last_sync)}` : ""}. A movie you remove from the library isn't added again.</p>
     <div class="grid">${d.movies.map((m) => `<div class="card" onclick="location.hash='${m.library_id ? `#/movie/${m.library_id}` : `#/title/movie/${m.tmdb_id}`}'">${poster(m.poster, m.title)}
       <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>

@@ -61,6 +61,9 @@ async def grab(d: decision.Decision, kind: str, movie_id: int | None = None, ser
         nzb = await newznab.fetch_nzb(rel.link)
     s = db.get_settings()
     cat = s["nzbget_category_movies"] if kind == "movie" else s["nzbget_category_tv"]
+    if kind == "movie" and s.get("nzbget_category_christmas") and \
+            (db.one("SELECT christmas FROM movies WHERE id=?", (movie_id,)) or {}).get("christmas"):
+        cat = s["nzbget_category_christmas"]
     dupe_key = f"omniarr-movie-{movie_id}" if kind == "movie" else f"omniarr-tv-{series_id}-{'-'.join(map(str, d.episode_ids))}"
     nzb_id = await nzbget.add(nzb, rel.title, cat, dupe_key=dupe_key, dupe_score=d.score)
     dl_id = db.insert("downloads", {

@@ -69,8 +69,13 @@ def scan(kind: str) -> list[dict]:
     out = []
     for root, tiers in roots.items():
         tier = tiers[0]
-        for entry in sorted(os.listdir(root), key=str.lower):
-            if entry.startswith((".", "@")) or entry in known:
+        entries = sorted(os.listdir(root), key=str.lower)
+        cf = library.christmas_folder() if kind == "movie" else ""
+        if cf and os.path.isdir(os.path.join(root, cf)):  # Christmas movies sit one level down
+            entries = [e for e in entries if e != cf.split("/")[0]] + \
+                [f"{cf}/{e}" for e in sorted(os.listdir(os.path.join(root, cf)), key=str.lower)]
+        for entry in entries:
+            if os.path.basename(entry).startswith((".", "@")) or entry in known:
                 continue
             path = os.path.join(root, entry)
             loose = os.path.isfile(path)
@@ -79,7 +84,7 @@ def scan(kind: str) -> list[dict]:
             if not loose and not os.path.isdir(path):
                 continue
             n, size = (1, os.path.getsize(path)) if loose else _dir_stats(path)
-            info = parse_folder(os.path.splitext(entry)[0] if loose else entry)
+            info = parse_folder(os.path.splitext(os.path.basename(entry))[0] if loose else os.path.basename(entry))
             out.append({"kind": kind, "tier": tier, "folder": entry, "path": path, "loose": loose,
                         "files": n, "size": size, **info})
     return out

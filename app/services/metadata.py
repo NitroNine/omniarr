@@ -141,8 +141,8 @@ async def _cached(key: str, fn):
         return hit[1]
     val = await fn()
     _info_cache[key] = (time.time() + 6 * 3600, val)
-    if len(_info_cache) > 500:
-        for k in sorted(_info_cache, key=lambda k: _info_cache[k][0])[:100]:
+    if len(_info_cache) > 3000:  # Christmas lists look up keywords / services of a few hundred titles
+        for k in sorted(_info_cache, key=lambda k: _info_cache[k][0])[:500]:
             _info_cache.pop(k, None)
     return val
 
@@ -525,4 +525,77 @@ async def discover_christmas(provider_id: int, provider_name: str, sort: str = "
             return await is_christmas(r, hallmark)
     keep = await asyncio.gather(*(check(r) for r in found))
     results = [r for r, k in zip(found, keep) if k]
+    return {"page": 1, "total_pages": 1, "total_results": len(results), "results": results}
+
+
+async def _xmas_keyword_ids() -> str:
+    """TMDB keyword ids for Christmas / holiday ("christmas", "christmas movie", "holiday"...), OR-ed for discover."""
+    async def find():
+        ids = []
+        for q in ("christmas", "holiday"):
+            for page in (1, 2):
+                d = await _tmdb("/search/keyword", query=q, page=page)
+                ids += [k["id"] for k in d.get("results", []) if _xmas_keyword(k.get("name", ""))]
+                if page >= d.get("total_pages", 1):
+                    break
+        return "|".join(str(i) for i in dict.fromkeys(ids))
+    return await _cached("xmas-keywords", find)
+
+
+async def services_for(tmdb_id: int) -> list[str]:
+    """Subscription streaming services a movie is on in the streaming region."""
+    region = _region()
+    d = await _cached(f"wp:{tmdb_id}", lambda: _tmdb(f"/movie/{tmdb_id}/watch/providers"))
+    us = (d.get("results") or {}).get(region) or {}
+    names = [p["provider_name"] for p in us.get("flatrate", []) + us.get("free", []) + us.get("ads", [])]
+    if db.setting("streaming_hide_ads"):
+        names = [n for n in names if not has_ads(n)]
+    return list(dict.fromkeys(names))
+
+
+async def discover_christmas_all(released: bool = False) -> dict:
+    return await _cached(f"xmas-all:{_region()}:{released}:{time.strftime('%Y-%m-%d')}",
+                         lambda: _discover_christmas_all(released))
+
+
+async def _discover_christmas_all(released: bool) -> dict:
+    """Christmas movies from this year on, from everywhere: TMDB's Christmas/holiday keywords, plus US TV premieres
+    (Hallmark, Lifetime, GAF... often have no keywords yet) with a Christmas word in the title or keywords.
+    Each one lists the streaming services it is on."""
+    since, today = time.strftime("%Y-01-01"), time.strftime("%Y-%m-%d")
+    found: dict[int, dict] = {}
+
+    async def pages(params: dict, limit: int, check: bool):
+        page, total = 1, 1
+        while page <= min(total, limit):
+            d = await _tmdb("/discover/movie", page=page, include_adult="false", **params)
+            total = d.get("total_pages", 1)
+            for r in d.get("results", []):
+                date = r.get("release_date") or None
+                item = {"tmdb_id": r["id"], "title": r.get("title"), "year": _year(date), "overview": r.get("overview"),
+                        "rating": r.get("vote_average"), "date": date,
+                        "poster": TMDB_IMG + r["poster_path"] if r.get("poster_path") else None, "_check": check}
+                if r["id"] not in found or not check:
+                    found[r["id"]] = item
+            page += 1
+    upto = {"primary_release_date.lte": today} if released else {}
+    kws = await _xmas_keyword_ids()
+    if kws:
+        await pages({"with_keywords": kws, "primary_release_date.gte": since, "sort_by": "popularity.desc", **upto}, 15, False)
+    await pages({"region": "US", "with_release_type": "6", "release_date.gte": since, "sort_by": "popularity.desc",
+                 **({"release_date.lte": today} if released else {})}, 15, True)
+    sem = asyncio.Semaphore(8)
+
+    async def keep(r):
+        async with sem:
+            if r.pop("_check") and not await is_christmas(r, False):
+                return False
+            try:
+                r["services"] = await services_for(r["tmdb_id"])
+            except Exception:  # noqa: BLE001
+                r["services"] = []
+            return True
+    rows = list(found.values())
+    ok = await asyncio.gather(*(keep(r) for r in rows))
+    results = sorted((r for r, k in zip(rows, ok) if k), key=lambda r: r.get("date") or "9999", reverse=True)
     return {"page": 1, "total_pages": 1, "total_results": len(results), "results": results}

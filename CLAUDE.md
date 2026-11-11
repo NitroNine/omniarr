@@ -28,6 +28,7 @@ moved to local; this file carries the context over.
   redacted in errors and `db.log`. Old installs with an
   NZBGet password migrate to `external`.
 - **Hallmark tab** (`app/hallmark.py`, `#/hallmark`): Christmas movies from this year on across TMDB's Hallmark providers (`metadata.discover_christmas`); with `hallmark_auto` on, job `hallmark` adds new ones every 6 h in `hallmark_tier` and they download once aired; added ids go in `hallmark_seen` so removed ones stay removed.
+- **Christmas** (`movies.christmas`, setting `christmas_folder` = "Christmas Movies" inside root_movies): added from the Christmas/Hallmark tabs or the movie page switch (`library.set_christmas` moves the folder); NZBGet category `nzbget_category_christmas`; scanner looks one level into it. Christmas tab = `#/christmas` → `renderProvider(0)` → `metadata.discover_christmas_all` (keywords + US TV premieres, with services), Hide Hallmark.
 - **English only** (setting `english_only`, default on): `parser.not_english` rejects releases whose tags after the title name another language or MULTI/Multi-Audio/Dual Audio/DL/dubbed.
 - **Manual .nzb upload** (Activity → Upload NZB, `app/manual_nzb.py`, `POST /api/nzb`): Movie/TV choice, title + version
   guessed from the release name (or picked), episodes mapped from SxxEyy; goes through `search.grab(nzb=…)` and normal import.
@@ -52,7 +53,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 96 tests
+.venv/bin/pytest -q                       # 101 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

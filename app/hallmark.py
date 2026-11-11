@@ -57,7 +57,7 @@ async def sync(force: bool = False) -> dict:
             continue
         if tid not in have:
             try:
-                added += await library.add_movie_tiers(tid, tier)
+                added += await library.add_movie_tiers(tid, tier, christmas=True)
             except Exception as e:  # noqa: BLE001
                 db.log(f"Hallmark Christmas: couldn't add {r.get('title')}: {e}", "warn")
                 continue

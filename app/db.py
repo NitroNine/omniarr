@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS movies (
   release_date TEXT, tier TEXT NOT NULL DEFAULT 'hd', monitored INTEGER DEFAULT 1,
   folder TEXT, file_path TEXT, file_quality TEXT, file_score INTEGER, file_size INTEGER,
   added TEXT DEFAULT CURRENT_TIMESTAMP, last_search TEXT, collection_id INTEGER, collection_name TEXT,
-  digital_release TEXT, physical_release TEXT, last_refresh TEXT,
+  digital_release TEXT, physical_release TEXT, last_refresh TEXT, christmas INTEGER DEFAULT 0,
   UNIQUE(tmdb_id, tier)
 );
 
@@ -116,6 +116,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "english_only": True,
     # Hallmark Christmas tab: auto-add new Hallmark Christmas movies (hallmark.py)
     "hallmark_auto": False,
+    # Christmas movies live in this folder inside the movies folder (empty = with the other movies)
+    "christmas_folder": "Christmas Movies",
     "hallmark_tier": "hd",
     "hallmark_seen": "[]",  # TMDB ids already added (or skipped because they were in the library): never re-added
     "hallmark_last_sync": "",  # skip releases naming another language, MULTI or dual audio
@@ -127,6 +129,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "nzbget_password": "",
     "nzbget_category_movies": "movies",
     "nzbget_category_tv": "tv",
+    "nzbget_category_christmas": "christmas",  # movies marked Christmas download into their own category
     # root folders: one for movies, one for TV. 1080p and 4K versions of a title share its folder.
     "root_movies": "/data/media/movies",
     "root_tv": "/data/media/tv",
@@ -181,6 +184,7 @@ MIGRATIONS = [
     ("movies", "digital_release", "TEXT"),
     ("movies", "physical_release", "TEXT"),
     ("movies", "last_refresh", "TEXT"),
+    ("movies", "christmas", "INTEGER DEFAULT 0"),
 ]
 
 
