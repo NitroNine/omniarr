@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 
 from . import db, trash
-from .parser import ParsedRelease, normalize_title, parse
+from .parser import ParsedRelease, normalize_title, not_english, parse
 from .services.newznab import Release
 
 
@@ -126,6 +126,10 @@ def evaluate(rel: Release, kind: str, profile: trash.Profile) -> Decision:
         d.reject(f"Custom format score {score} below minimum {profile.min_format_score}")
     if _blocklisted(rel):
         d.reject("Blocklisted")
+    if db.setting("english_only"):
+        why = not_english(rel.title)
+        if why:
+            d.reject(f"Not English-only ('{why}')")
     return d
 
 

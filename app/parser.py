@@ -99,6 +99,39 @@ _LANGS = {
     11: re.compile(r"\b(russian|rus)\b", re.I),
 }
 _MULTI = re.compile(r"\b(multi|dual[ ._-]?audio|dl)\b", re.I)
+_YEAR_ANY = re.compile(r"\b(19|20)\d{2}\b")
+# For the "English only" setting: anything naming another audio language, or more than one.
+_MULTI_AUDIO = re.compile(r"\b(multi(?:[ ._-]?(?:audio|lang(?:uage)?s?|subs?))?|dual(?:[ ._-]?(?:audio|lang(?:uage)?))?|"
+                          r"tri[ ._-]?audio|(?<!web[ ._-])(?<!web)dl|dubbed|dub|dublado|lektor|vostfr|subfrench)\b", re.I)
+_FOREIGN = re.compile(
+    r"\b(french|vff|vfq|vfi|vf2|truefrench|german|deutsch|spanish|espanol|castellano|latino|italian|ita|japanese|jpn|"
+    r"chinese|chs|cht|mandarin|cantonese|korean|kor|dutch|flemish|russian|rus|hindi|tamil|telugu|malayalam|kannada|"
+    r"bengali|punjabi|marathi|portuguese|brazilian|swedish|danish|norwegian|finnish|nordic|polish|turkish|arabic|"
+    r"czech|hungarian|greek|hebrew|thai|vietnamese|ukrainian|romanian|bulgarian|croatian|serbian|slovak|"
+    r"persian|farsi|indonesian|malay|tagalog|filipino|icelandic|lithuanian|latvian|estonian)\b", re.I)
+
+
+def _title_end(norm: str) -> int:
+    """Where the name part ends: at the year, SxxExx or resolution."""
+    cut = len(norm)
+    for rx in (_SXXEXX, _DAILY, _SEASON_ONLY, _YEAR_ANY, _RES[0][1], _RES[1][1], _RES[2][1]):
+        mm = rx.search(norm)
+        if mm and mm.start() > 0:
+            cut = min(cut, mm.start())
+    return cut
+
+
+def not_english(title: str) -> str | None:
+    """Why a release name isn't a plain English one (another language, or MULTI / dual audio), else None.
+    Only the tags after the title count, so "My Big Fat Greek Wedding" or "The French Dispatch" are fine."""
+    norm = re.sub(r"[._]", " ", title)
+    tags = norm[_title_end(norm):]
+    if not tags.strip():
+        return None
+    m = _MULTI_AUDIO.search(tags) or _FOREIGN.search(tags)
+    return m.group(1) if m else None
+
+
 _3D = re.compile(r"\b(3d|sbs|half[ ._-]?ou|half[ ._-]?sbs|hsbs)\b", re.I)
 
 
@@ -284,12 +317,7 @@ def parse(title: str) -> ParsedRelease:
         p.languages.append(1)
     p.is_3d = bool(_3D.search(norm))
 
-    # name portion before year / SxxExx / quality
-    cut = len(norm)
-    for rx in (_SXXEXX, _DAILY, _SEASON_ONLY, re.compile(r"\b(19|20)\d{2}\b"), _RES[0][1], _RES[1][1], _RES[2][1]):
-        mm = rx.search(norm)
-        if mm and mm.start() > 0:
-            cut = min(cut, mm.start())
+    cut = _title_end(norm)
     p.clean_name = re.sub(r"\s+", " ", re.sub(r"[()\[\]]", " ", norm[:cut])).strip()
     return p
 

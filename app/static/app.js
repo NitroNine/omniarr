@@ -726,6 +726,7 @@ const SECTIONS = {
     ["rss_interval_minutes", "RSS sync (minutes)", "number"], ["search_interval_minutes", "Backlog search (minutes)", "number", "Searches up to 10 missing items per run, each at most once a day."],
     ["series_refresh_hours", "Refresh TV info (hours)", "number"], ["trash_auto_sync_hours", "Re-sync TRaSH Guides (hours)", "number", "0 = never automatically"],
     ["upgrades_enabled", "Upgrade until cutoff", "checkbox"],
+    ["english_only", "English only", "checkbox", "Skip releases whose name mentions another language (French, German, Hindi…) or more than one (MULTI, Multi-Audio, Dual Audio, DL, dubbed). Untagged releases count as English."],
   ] },
 };
 async function renderSettings(sub = "general") {
