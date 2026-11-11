@@ -1,0 +1,86 @@
+"""Indexer requests are spaced out, a 429 pauses that indexer, and API keys never reach the log."""
+import asyncio
+import time
+
+import httpx
+import pytest
+
+from app import db, library, search
+from app.services import metadata, newznab
+
+
+@pytest.fixture()
+def net(monkeypatch):
+    """Fake indexer: records request times; answers 429 while `limit` is set."""
+    state = {"times": [], "limit": False, "retry_after": None}
+
+    def handler(req: httpx.Request):
+        state["times"].append(time.monotonic())
+        if state["limit"]:
+            h = {"Retry-After": state["retry_after"]} if state["retry_after"] else {}
+            return httpx.Response(429, headers=h)
+        if req.url.params.get("t") == "get":
+            return httpx.Response(200, content=b'<?xml version="1.0"?><nzb></nzb>')
+        return httpx.Response(200, text='<rss><channel><item><title>Heat.1995.1080p.BluRay.x264-AMIABLE</title>'
+                                        '<guid>g1</guid><link>http://idx.test/api?t=get&amp;id=1&amp;apikey=SECRET</link>'
+                                        '<enclosure url="http://idx.test/api?t=get&amp;id=1&amp;apikey=SECRET" length="12884901888"/>'
+                                        '</item></channel></rss>')
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(newznab, "MIN_INTERVAL", 0.2)
+    newznab._gates.clear()
+    db.ex("UPDATE indexers SET url='http://idx.test', apikey='SECRET'")
+    yield state
+    newznab._gates.clear()
+
+
+def test_requests_are_spaced(env, net):
+    ix = newznab.enabled_indexers()[0]
+
+    async def burst():
+        await asyncio.gather(*(newznab._query(ix, {"t": "search", "q": f"x{i}"}) for i in range(4)))
+    asyncio.run(burst())
+    gaps = [b - a for a, b in zip(net["times"], net["times"][1:])]
+    assert len(net["times"]) == 4 and min(gaps) >= 0.19
+
+
+def test_429_pauses_indexer_and_hides_key(env, net):
+    ix = newznab.enabled_indexers()[0]
+    net["limit"], net["retry_after"] = True, "120"
+    with pytest.raises(newznab.IndexerBusy) as e:
+        asyncio.run(newznab._query(ix, {"t": "search", "q": "x"}))
+    assert 115 <= e.value.until - time.time() <= 121
+    n = len(net["times"])
+    with pytest.raises(newznab.IndexerBusy):  # paused: doesn't even ask
+        asyncio.run(newznab.fetch_nzb("http://idx.test/api?t=get&id=1&apikey=SECRET"))
+    assert len(net["times"]) == n
+    logs = [r["message"] for r in db.q("SELECT message FROM events")]
+    assert sum("too many requests" in m for m in logs) == 1
+    assert not any("SECRET" in m for m in logs)
+
+
+def test_search_waits_for_paused_indexer(env, net, monkeypatch):
+    async def details(_):
+        return {"tmdb_id": 1, "imdb_id": None, "title": "Heat", "original_title": "Heat", "year": 1995,
+                "overview": "", "poster": None, "runtime": 170, "release_date": "1995-12-15"}
+    monkeypatch.setattr(metadata, "movie_details", details)
+    m = asyncio.run(library.add_movie(1, "hd"))
+    net["limit"] = True
+    with pytest.raises(newznab.IndexerBusy):
+        asyncio.run(search.search_movie(m["id"]))
+    assert db.one("SELECT last_search FROM movies")["last_search"] is None  # searched again later
+    asyncio.run(search.missing_search())  # stops quietly
+    assert not db.q("SELECT 1 FROM events WHERE level='error'")
+
+
+def test_redact():
+    assert newznab.redact("https://x/api?t=get&apikey=abc123&id=9") == "https://x/api?t=get&apikey=***&id=9"
+    assert newznab.redact("https://x/rss?r=tok&i=5") == "https://x/rss?r=***&i=5"
+    db_msg = "Client error for url 'https://nzbs.test/api?t=get&apikey=awngo&id=1'"
+    assert "awngo" not in newznab.redact(db_msg)
+
+
+def test_old_log_lines_scrubbed(env):
+    db.ex("INSERT INTO events(level, message) VALUES('warn', ?)", ("failed 'https://n/api?t=get&apikey=LEAK&id=1'",))
+    db._migrate(db.connect())
+    assert "LEAK" not in db.one("SELECT message FROM events ORDER BY id DESC")["message"]

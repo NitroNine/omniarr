@@ -22,7 +22,10 @@ moved to local; this file carries the context over.
   `download_dir` empty = template's `/downloads` mount if present, else `/data/usenet`, speed limit), runs `nzbget -s` on 127.0.0.1:16789 with a
   generated password, restarts it if it dies, `reload`s on settings changes. Grabs are refused (`search.NoSpace`, HTTP 507) unless NZBGet's
   free space covers 2x (queue + release) + `download_min_free_gb`; disk-full failures (FAILURE/MOVE, WARNING/SPACE, or
-  near-zero free) are not blocklisted (`importer.space_failure`). Old installs with an
+  near-zero free) are not blocklisted (`importer.space_failure`). Indexer HTTP goes through `newznab._request`:
+  one request at a time per host, 1 s apart; a 429 pauses that host (`IndexerBusy`, Retry-After or 60 s doubling to
+  15 min) and slows it further. `search.HOLD` = NoSpace/IndexerBusy: stop grabbing, keep items wanted. API keys are
+  redacted in errors and `db.log`. Old installs with an
   NZBGet password migrate to `external`.
 - **Title pages** `#/title/{movie|tv}/{tmdb_id}` (`/api/info/…`, `metadata.movie_info/tv_info`, 6 h cache):
   cast, crew, release dates (cinema/digital/disc per `streaming_region`, else US), trailer, streaming.
@@ -42,7 +45,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 61 tests
+.venv/bin/pytest -q                       # 66 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

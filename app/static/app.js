@@ -797,7 +797,7 @@ async function renderIndexers(el) {
   window._ix = rows;
   el.innerHTML = `<p class="muted">Any Newznab-compatible Usenet indexer. Movies use category 2000 and TV 5000 by default.</p>
   ${rows.length ? `<div class="table-wrap"><table><tr><th>Name</th><th>URL</th><th>Categories (movie / tv)</th><th>Priority</th><th>Enabled</th><th></th></tr>
-  ${rows.map((r) => `<tr><td>${esc(r.name)}</td><td class="small">${esc(r.url)}</td><td class="small">${esc(r.movie_categories)} / ${esc(r.tv_categories)}</td><td>${r.priority}</td>
+  ${rows.map((r) => `<tr><td>${esc(r.name)}${r.paused_for ? ` <span class="chip warn" title="The indexer said too many requests (429). Omniarr waits, then sends requests more slowly.">Paused ${r.paused_for >= 60 ? Math.ceil(r.paused_for / 60) + " min" : r.paused_for + " s"}</span>` : ""}</td><td class="small">${esc(r.url)}</td><td class="small">${esc(r.movie_categories)} / ${esc(r.tv_categories)}</td><td>${r.priority}</td>
     <td><input type="checkbox" ${r.enabled ? "checked" : ""} onchange="toggleIx(${r.id}, this.checked)"></td>
     <td><button class="small" onclick="testIx(${r.id})">Test</button> <button class="small" onclick="editIx(${r.id})">Edit</button> <button class="small danger" onclick="delIx(${r.id})">Delete</button></td></tr>`).join("")}</table></div>` : ""}
   <h3>Add indexer</h3><div class="form" id="ixf">

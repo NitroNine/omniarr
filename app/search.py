@@ -16,6 +16,10 @@ class NoSpace(Exception):
     """The download disk can't hold this release on top of what's already queued."""
 
 
+# Reasons to stop grabbing for now and leave the rest for a later search, without marking anything as searched.
+HOLD = (NoSpace, newznab.IndexerBusy)
+
+
 def _queued_bytes() -> int:
     rows = db.q("SELECT size, progress FROM downloads WHERE status IN ('queued','downloading')")
     return int(sum((r["size"] or 0) * (1 - (r["progress"] or 0) / 100) for r in rows))
@@ -132,7 +136,7 @@ async def _grab_best_for_episodes(series: dict, decisions: list[decision.Decisio
         try:
             await grab(d, "tv", series_id=series["id"])
             taken.update(d.episode_ids)
-        except NoSpace:
+        except HOLD:
             raise
         except Exception as e:  # noqa: BLE001
             db.log(f"Grab failed for {d.release.title}: {e}", "warn")
@@ -143,7 +147,7 @@ async def rss_sync() -> int:
     """Check the newest releases on every indexer against what we want."""
     try:
         return await _rss_sync()
-    except NoSpace:
+    except HOLD:
         return 0
 
 
@@ -214,7 +218,7 @@ async def missing_search(limit: int = 10) -> None:
                 continue
         try:
             await search_movie(m["id"])
-        except NoSpace:
+        except HOLD:
             return
         except Exception as e:  # noqa: BLE001
             db.log(f"Search for {m['title']} failed: {e}", "warn")
@@ -231,7 +235,7 @@ async def missing_search(limit: int = 10) -> None:
         seen.add(key)
         try:
             await search_series(e["series_id"], season=e["season"])
-        except NoSpace:
+        except HOLD:
             return
         except Exception as ex:  # noqa: BLE001
             db.log(f"Episode search failed: {ex}", "warn")

@@ -179,6 +179,11 @@ MIGRATIONS = [
 
 
 def _migrate(c: sqlite3.Connection) -> None:
+    # Older versions logged indexer URLs with the API key in them
+    import re
+    for eid, msg in c.execute("SELECT id, message FROM events WHERE message LIKE '%apikey=%' OR message LIKE '%&r=%'").fetchall():
+        c.execute("UPDATE events SET message=? WHERE id=?",
+                  (re.sub(r"([?&](?:api_?key|apitoken|token|r)=)[^&\s'\"<>]+", r"\1***", msg, flags=re.I), eid))
     # Root folders used to be split into 1080p and 4K; now there's one per media type
     # (versions share the title folder). Keep the 1080p folder the user had set.
     for kind in ("movies", "tv"):
@@ -319,6 +324,8 @@ def save_settings(values: dict[str, Any]) -> None:
 
 def log(message: str, level: str = "info") -> None:
     import logging
+    import re
+    message = re.sub(r"([?&](?:api_?key|apitoken|token|r)=)[^&\s'\"<>]+", r"\1***", str(message), flags=re.I)
     logging.getLogger("omniarr").log(logging.WARNING if level == "warn" else logging.ERROR if level == "error" else logging.INFO, message)
     ex("INSERT INTO events(level, message) VALUES(?,?)", (level, message))
     ex("DELETE FROM events WHERE id < (SELECT MAX(id) - 2000 FROM events)")

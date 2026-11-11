@@ -3,13 +3,104 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
+from urllib.parse import urlsplit
 
 import httpx
 
 from .. import db
+
+_SECRET = re.compile(r"([?&](?:api_?key|apitoken|token|r)=)[^&\s'\"<>]+", re.I)
+
+
+def redact(text: str) -> str:
+    """Hide API keys and RSS tokens in URLs before they reach an error message or the log."""
+    return _SECRET.sub(r"\1***", str(text))
+
+
+class IndexerError(RuntimeError):
+    pass
+
+
+class IndexerBusy(IndexerError):
+    """The indexer said "too many requests"; it's paused until `until` (epoch seconds)."""
+
+    def __init__(self, host: str, until: float):
+        self.host, self.until = host, until
+        super().__init__(f"{host} asked Omniarr to slow down; trying again in {max(1, round(until - time.time()))} s")
+
+
+class _Gate:
+    """One request at a time per indexer host, spaced out, with back-off after a 429."""
+
+    def __init__(self):
+        self.lock = asyncio.Lock()
+        self.last = 0.0
+        self.interval = MIN_INTERVAL
+        self.until = 0.0
+        self.backoff = 0.0
+
+
+MIN_INTERVAL = 1.0  # seconds between requests to the same indexer
+MAX_INTERVAL = 5.0
+MAX_BACKOFF = 900.0
+_gates: dict[str, _Gate] = {}
+
+
+def _gate(url: str) -> tuple[str, _Gate]:
+    host = urlsplit(url).netloc.lower()
+    return host, _gates.setdefault(host, _Gate())
+
+
+def paused_until(url: str) -> float | None:
+    g = _gates.get(urlsplit(url).netloc.lower())
+    return g.until if g and g.until > time.time() else None
+
+
+def _retry_after(r: httpx.Response) -> float | None:
+    v = r.headers.get("retry-after")
+    if not v:
+        return None
+    if v.strip().isdigit():
+        return float(v)
+    try:
+        return max(0.0, parsedate_to_datetime(v).timestamp() - time.time())
+    except (TypeError, ValueError):
+        return None
+
+
+async def _request(url: str, params: dict | None = None, timeout: float = 45) -> httpx.Response:
+    host, g = _gate(url)
+    if g.until > time.time():
+        raise IndexerBusy(host, g.until)
+    async with g.lock:
+        if g.until > time.time():
+            raise IndexerBusy(host, g.until)
+        wait = g.last + g.interval - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers={"User-Agent": "omniarr"}) as c:
+                r = await c.get(url, params=params)
+        except httpx.HTTPError as e:
+            raise IndexerError(f"{host}: {redact(e) or type(e).__name__}") from None
+        finally:
+            g.last = time.monotonic()
+        if r.status_code == 429:
+            g.backoff = min(MAX_BACKOFF, max(60.0, g.backoff * 2))
+            pause = _retry_after(r) or g.backoff
+            g.until = time.time() + pause
+            g.interval = min(MAX_INTERVAL, g.interval * 1.5)  # and go a bit slower afterwards
+            db.log(f"Indexer {host} said \"too many requests\" (429). Pausing it for {round(pause)} s, "
+                   f"then one request every {g.interval:.1f} s.", "warn")
+            raise IndexerBusy(host, g.until)
+        g.backoff = 0.0
+        if r.status_code >= 400:
+            raise IndexerError(f"{host} answered {r.status_code} {r.reason_phrase}")
+        return r
 
 NS = {"newznab": "http://www.newznab.com/DTD/2010/feeds/attributes/"}
 
@@ -65,9 +156,7 @@ def parse_feed(xml_text: str, indexer: dict) -> list[Release]:
 
 async def _query(indexer: dict, params: dict) -> list[Release]:
     params = {**params, "apikey": indexer["apikey"], "extended": 1, "limit": 100}
-    async with httpx.AsyncClient(timeout=45, follow_redirects=True, headers={"User-Agent": "omniarr"}) as c:
-        r = await c.get(_api_url(indexer["url"]), params=params)
-    r.raise_for_status()
+    r = await _request(_api_url(indexer["url"]), params)
     return parse_feed(r.text, indexer)
 
 
@@ -82,11 +171,16 @@ async def _fan_out(build) -> list[Release]:
         return []
     results = await asyncio.gather(*(build(i) for i in idx), return_exceptions=True)
     out: list[Release] = []
+    busy = []
     for i, res in zip(idx, results):
-        if isinstance(res, Exception):
-            db.log(f"Indexer {i['name']} failed: {res}", "warn")
+        if isinstance(res, IndexerBusy):
+            busy.append(res)  # already logged when the pause started
+        elif isinstance(res, Exception):
+            db.log(f"Indexer {i['name']} failed: {redact(res)}", "warn")
         else:
             out.extend(res)
+    if busy and len(busy) == len(idx):
+        raise busy[0]  # every indexer is paused: try this search again later rather than calling it "nothing found"
     seen, uniq = set(), []
     for r in out:
         k = (r.title.lower(), r.size // (1024 * 1024))
@@ -103,7 +197,9 @@ async def search_movie(movie: dict) -> list[Release]:
         if movie.get("imdb_id"):
             try:
                 res = await _query(ix, {"t": "movie", "imdbid": movie["imdb_id"].removeprefix("tt"), "cat": cat})
-            except (httpx.HTTPError, RuntimeError):
+            except IndexerBusy:
+                raise
+            except RuntimeError:
                 res = []
         if not res:
             res = await _query(ix, {"t": "search", "q": f"{movie['title']} {movie.get('year') or ''}".strip(), "cat": cat})
@@ -125,7 +221,9 @@ async def search_episodes(series: dict, season: int, episode: int | None = None)
                 continue
             try:
                 res = await _query(ix, {**p, key: val})
-            except (httpx.HTTPError, RuntimeError):
+            except IndexerBusy:
+                raise
+            except RuntimeError:
                 res = []
         if not res:
             res = await _query(ix, {**p, "q": re.sub(r"\s*\((19|20)\d{2}\)$", "", series["title"])})
@@ -141,9 +239,7 @@ async def rss(kind: str) -> list[Release]:
 
 
 async def fetch_nzb(link: str) -> bytes:
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True, headers={"User-Agent": "omniarr"}) as c:
-        r = await c.get(link)
-    r.raise_for_status()
+    r = await _request(link, timeout=60)
     if b"<nzb" not in r.content[:2000] and b"<?xml" not in r.content[:100]:
         raise RuntimeError("Indexer did not return an NZB file (check API limits).")
     return r.content
@@ -168,18 +264,17 @@ def parse_caps(xml_text: str) -> dict:
 
 
 async def caps(url: str, apikey: str) -> dict:
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
-        r = await c.get(_api_url(url), params={"t": "caps", "apikey": apikey})
-    if r.status_code in (401, 403):
-        raise RuntimeError("The indexer rejected the API key")
-    r.raise_for_status()
+    try:
+        r = await _request(_api_url(url), {"t": "caps", "apikey": apikey}, timeout=20)
+    except IndexerError as e:
+        if " 401 " in str(e) or " 403 " in str(e):
+            raise RuntimeError("The indexer rejected the API key") from None
+        raise
     return parse_caps(r.text)
 
 
 async def test(indexer: dict) -> str:
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
-        r = await c.get(_api_url(indexer["url"]), params={"t": "caps", "apikey": indexer["apikey"]})
-    r.raise_for_status()
+    r = await _request(_api_url(indexer["url"]), {"t": "caps", "apikey": indexer["apikey"]}, timeout=20)
     root = ET.fromstring(r.text)
     if root.tag == "error":
         raise RuntimeError(root.get("description"))

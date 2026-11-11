@@ -31,6 +31,8 @@ async def _job(name: str, coro_fn):
     _running[name] = True
     try:
         await coro_fn()
+    except search.HOLD:
+        pass  # disk full or indexer paused: already logged, and the item stays wanted for the next search
     except Exception as e:  # noqa: BLE001
         db.log(f"Task {name} failed: {e}", "error")
     finally:
@@ -131,6 +133,11 @@ async def forbidden(_req, exc):
 @app.exception_handler(search.NoSpace)
 async def no_space(_req, exc):
     return JSONResponse({"detail": str(exc)}, status_code=507)
+
+
+@app.exception_handler(newznab.IndexerBusy)
+async def indexer_busy(_req, exc):
+    return JSONResponse({"detail": str(exc)}, status_code=429)
 
 
 @app.exception_handler(metadata.MetadataError)
@@ -480,6 +487,8 @@ def list_indexers():
     rows = db.q("SELECT * FROM indexers ORDER BY priority, id")
     for r in rows:
         r["apikey"] = r["apikey"][:4] + "…" if r["apikey"] else ""
+        until = newznab.paused_until(r["url"])
+        r["paused_for"] = round(until - time.time()) if until else 0
     return rows
 
 
