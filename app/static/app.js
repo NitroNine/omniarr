@@ -802,7 +802,7 @@ async function renderIndexers(el) {
   const rows = await api("/indexers");
   window._ix = rows;
   el.innerHTML = `<p class="muted">Any Newznab-compatible Usenet indexer. Movies use category 2000 and TV 5000 by default.</p>
-  ${rows.length ? `<div class="table-wrap"><table><tr><th>Name</th><th>URL</th><th>Categories (movie / tv)</th><th>Priority</th><th>Enabled</th><th></th></tr>
+  ${rows.length ? `<div class="table-wrap"><table><tr><th>Name</th><th>URL</th><th>Categories (movie / tv)</th><th title="0 = searched first, higher = backup">Priority</th><th>Enabled</th><th></th></tr>
   ${rows.map((r) => `<tr><td>${esc(r.name)}${r.paused_for ? ` <span class="chip warn" title="The indexer said too many requests (429). Omniarr waits, then sends requests more slowly.">Paused ${r.paused_for >= 60 ? Math.ceil(r.paused_for / 60) + " min" : r.paused_for + " s"}</span>` : ""}</td><td class="small">${esc(r.url)}</td><td class="small">${esc(r.movie_categories)} / ${esc(r.tv_categories)}</td><td>${r.priority}</td>
     <td><input type="checkbox" ${r.enabled ? "checked" : ""} onchange="toggleIx(${r.id}, this.checked)"></td>
     <td><button class="small" onclick="testIx(${r.id})">Test</button> <button class="small" onclick="editIx(${r.id})">Edit</button> <button class="small danger" onclick="delIx(${r.id})">Delete</button></td></tr>`).join("")}</table></div>` : ""}
@@ -813,7 +813,7 @@ async function renderIndexers(el) {
     <label>Movie categories</label><input data-k="movie_categories" value="2000">
     <label>TV categories</label><input data-k="tv_categories" value="5000">
     <span></span><div><button type="button" id="ixload">Load categories from indexer</button><div id="ixcats"></div></div>
-    <label>Priority</label><input data-k="priority" type="number" value="25"><div class="help">Lower = preferred. Searches go to the lowest number first; higher numbers are backups, searched only when the preferred indexers find nothing usable or are paused. RSS uses all of them.</div>
+    <label>Priority</label><input data-k="priority" type="number" min="0" value="${rows.length ? Math.max(...rows.map((r) => r.priority)) + 1 : 0}"><div class="help">0 = searched first, 1 = backup, 2 = next backup, and so on. Searches go to the lowest number first; higher numbers are backups, searched only when the preferred indexers find nothing usable or are paused. RSS uses all of them.</div>
     <span></span><div><button class="primary" id="addix">Add</button></div></div>`;
   $("#ixload").onclick = () => loadCats($("#ixf"));
   $("#addix").onclick = () => guard(async () => { const b = collect($("#ixf")); if (!b.name || !b.url || !b.apikey) throw new Error("Name, URL and API key are required"); const r = await api("/indexers", { method: "POST", body: b }); const t = await api(`/indexers/${r.id}/test`, { method: "POST" }); toast(t.ok ? `Added — ${t.message}` : `Added, but test failed: ${t.message}`, !t.ok); route(); });
@@ -870,7 +870,7 @@ function editIx(id) {
     <label>Movie categories</label><input data-k="movie_categories" value="${esc(r.movie_categories)}"><div class="help">Comma-separated Newznab categories, e.g. 2000 or 2040,2045.</div>
     <label>TV categories</label><input data-k="tv_categories" value="${esc(r.tv_categories)}">
     <span></span><div><button type="button" id="ixload">Reload categories</button><div id="ixcats"><p class="small muted">Loading the indexer's categories…</p></div></div>
-    <label>Priority</label><input data-k="priority" type="number" value="${r.priority}"><div class="help">Lower = preferred. Searches go to the lowest number first; higher numbers are backups, searched only when the preferred indexers find nothing usable or are paused. RSS uses all of them.</div>
+    <label>Priority</label><input data-k="priority" type="number" min="0" value="${r.priority}"><div class="help">0 = searched first, 1 = backup, 2 = next backup, and so on. Searches go to the lowest number first; higher numbers are backups, searched only when the preferred indexers find nothing usable or are paused. RSS uses all of them.</div>
     <label>Enabled</label><input type="checkbox" data-k="enabled" ${r.enabled ? "checked" : ""}>
     <span></span><div class="toolbar"><button class="primary" id="ixsave">Save</button><button id="ixsavetest">Save &amp; test</button><button onclick="closeModal()">Cancel</button></div></div>`);
   const save = async (test) => {
