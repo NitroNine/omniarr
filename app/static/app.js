@@ -464,6 +464,7 @@ async function renderProvider(pid) {
     <a href="#/discover"><button>All services</button></a></div>
     <div class="toolbar"><div class="tabs2" style="margin:0">${["movie", "tv"].filter((k) => prov.kinds.includes(k)).map((k) => `<button data-k="${k}" class="${disc.kind === k ? "active" : ""}">${k === "movie" ? "Movies" : "TV shows"}</button>`).join("")}</div>
       <select id="dsort"><option value="popular">Most popular</option><option value="newest">Newest</option><option value="rating">Top rated</option><option value="title">A–Z</option></select>
+      <label id="dxmasw" title="Christmas movies from this year on: tagged Christmas on TMDB, a Christmas word in the title, or (Hallmark) premiering in the Countdown to Christmas season"><input type="checkbox" id="dxmas" ${disc.christmas ? "checked" : ""}> Christmas movies (${new Date().getFullYear()} on)</label>
       ${prov.originals ? `<label id="dorigw"><input type="checkbox" id="dorig" ${disc.originals ? "checked" : ""}> ${esc(prov.name)} originals only</label>` : ""}
       <span class="grow"></span>
       <label>${addLabel()} for <select id="dtier">${tierOptions()}</select></label>
@@ -474,11 +475,11 @@ async function renderProvider(pid) {
       <button class="small primary" id="dbulk" disabled>${addLabel()} selected</button><span class="small muted" id="dprog"></span></div>
     <div class="grid" id="dg"></div><div class="toolbar" style="justify-content:center;margin-top:16px"><button id="dmore">Load more</button></div>`;
   $("#dsort").value = disc.sort;
-  const showMon = () => { $("#dmon").style.display = disc.kind === "tv" ? "" : "none"; if ($("#dorigw")) $("#dorigw").style.display = disc.kind === "tv" ? "" : "none"; };
+  const showMon = () => { $("#dmon").style.display = disc.kind === "tv" ? "" : "none"; $("#dxmasw").style.display = disc.kind === "movie" ? "" : "none"; if ($("#dorigw")) $("#dorigw").style.display = disc.kind === "tv" ? "" : "none"; };
   showMon();
   const load = async (reset) => {
     if (reset) { disc.page = 1; $("#dg").innerHTML = '<p class="muted">Loading…</p>'; }
-    const d = await api(`/providers/${pid}/${disc.kind}?page=${disc.page}&sort=${disc.sort}&originals=${disc.kind === "tv" && disc.originals}&released=${!!disc.released}`);
+    const d = await api(`/providers/${pid}/${disc.kind}?page=${disc.page}&sort=${disc.sort}&originals=${disc.kind === "tv" && disc.originals}&released=${!!disc.released}&christmas=${disc.kind === "movie" && !!disc.christmas}`);
     window._disc = reset ? d.results : [...(window._disc || []), ...d.results];
     $("#dcount").textContent = `${d.total_results.toLocaleString()} ${disc.kind === "movie" ? "movies" : "shows"}`;
     disc.total = d.total_results; disc.more = d.page < d.total_pages;
@@ -494,6 +495,11 @@ async function renderProvider(pid) {
   $("#dsort").onchange = () => { disc.sort = $("#dsort").value; guard(() => load(true)); };
   if ($("#dorig")) $("#dorig").onchange = () => { disc.originals = $("#dorig").checked; guard(() => load(true)); };
   $("#dmore").onclick = () => { disc.page++; guard(() => load(false)); };
+  $("#dxmas").onchange = () => {
+    disc.christmas = $("#dxmas").checked; disc.sel.clear(); discSelCount();
+    if (disc.christmas) $("#dg").innerHTML = '<p class="muted">Finding Christmas movies… (checks each title, takes a few seconds)</p>';
+    guard(() => load(true));
+  };
   $("#dout").onchange = () => {  // hidden titles drop out of the selection too
     disc.released = $("#dout").checked; disc.sel.clear(); discSelCount(); guard(() => load(true));
   };

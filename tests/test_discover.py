@@ -96,3 +96,36 @@ def test_ad_plans_hidden(env, monkeypatch):
     db.save_settings({"streaming_hide_ads": False})
     names = [p["name"] for p in asyncio.run(metadata.watch_providers())]
     assert "Netflix Standard with Ads" in names
+
+
+def test_christmas_filter(env, monkeypatch):
+    """2026 Hallmark examples: keyword, title word, Countdown season, and the ones that aren't Christmas."""
+    movies = [  # (id, title, date, keywords)
+        (1, "Holiday Unplugged", "2026-11-07", ["christmas"]),
+        (2, "Adopting St. Nick", "2026-10-31", []),               # title word, no keyword
+        (3, "Aussie at Heart", "2026-11-05", []),                 # Countdown season, nothing else
+        (4, "O Little Christmas Market", "2026-07-11", []),       # Christmas in July
+        (5, "Snowbound for the Holidays", "2026-07-18", ["christmas in july"]),
+        (6, "The Spirit of Halloween", "2026-10-10", []),         # before the season
+        (7, "Pumpkin Regatta Romance", "2026-09-26", []),
+        (8, "A Royal Setting", "2026-03-28", ["royalty"]),
+    ]
+    calls = []
+
+    async def tmdb(path, **p):
+        calls.append((path, p))
+        if path == "/discover/movie":
+            res = [{"id": i, "title": t, "release_date": d, "poster_path": None} for i, t, d, _ in movies]
+            return {"page": p["page"], "total_pages": 1, "total_results": len(res), "results": res}
+        mid = int(path.split("/")[2])
+        return {"keywords": [{"name": k} for k in next(m[3] for m in movies if m[0] == mid)]}
+    monkeypatch.setattr(metadata, "_tmdb", tmdb)
+    metadata._info_cache.clear()
+    d = asyncio.run(metadata.discover_christmas(290, "Hallmark+ Amazon Channel"))
+    assert [r["title"] for r in d["results"]] == ["Holiday Unplugged", "Adopting St. Nick", "Aussie at Heart",
+                                                   "O Little Christmas Market", "Snowbound for the Holidays"]
+    assert calls[0][1]["primary_release_date.gte"].endswith("-01-01")
+    # not Hallmark: no Countdown-season rule
+    metadata._info_cache.clear()
+    d = asyncio.run(metadata.discover_christmas(8, "Netflix"))
+    assert "Aussie at Heart" not in [r["title"] for r in d["results"]]

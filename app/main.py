@@ -748,11 +748,14 @@ async def providers():
 
 @app.get("/api/providers/{pid}/{kind}")
 async def provider_titles(pid: int, kind: str, page: int = 1, sort: str = "popular", originals: bool = False,
-                          released: bool = False):
+                          released: bool = False, christmas: bool = False):
     if kind not in ("movie", "tv"):
         raise HTTPException(400)
     prov = next((p for p in await metadata.watch_providers() if p["id"] == pid), None)
-    data = await metadata.discover(kind, pid, page, sort, prov["name"] if (originals and prov) else None, released)
+    if christmas and kind == "movie":
+        data = await metadata.discover_christmas(pid, prov["name"] if prov else "", sort, released)
+    else:
+        data = await metadata.discover(kind, pid, page, sort, prov["name"] if (originals and prov) else None, released)
     if kind == "movie":
         have = {r["tmdb_id"]: r["id"] for r in db.q("SELECT id, tmdb_id FROM movies")}
     else:

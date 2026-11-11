@@ -1,6 +1,7 @@
 """Metadata provider: The Movie Database (TMDB) for movies and TV."""
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 
@@ -326,7 +327,7 @@ _SORTS = {"popular": "popularity.desc", "newest": None, "rating": "vote_average.
 
 
 async def discover(kind: str, provider_id: int, page: int = 1, sort: str = "popular",
-                   originals_of: str | None = None, released: bool = False) -> dict:
+                   originals_of: str | None = None, released: bool = False, since: str | None = None) -> dict:
     """Movies or TV shows streaming on a service (flat-rate subscription) in the region.
     originals_of: provider name -> TV limited to that service's own network.
     released: only titles whose release (movies) or first air date (TV) has passed."""
@@ -336,6 +337,8 @@ async def discover(kind: str, provider_id: int, page: int = 1, sort: str = "popu
         params["with_networks"] = originals_network(originals_of)
     else:
         params.update(with_watch_providers=provider_id, with_watch_monetization_types="flatrate")
+    if since:
+        params["primary_release_date.gte" if kind == "movie" else "first_air_date.gte"] = since
     if sort == "newest" or released:
         params["primary_release_date.lte" if kind == "movie" else "first_air_date.lte"] = time.strftime("%Y-%m-%d")
     if sort == "newest":
@@ -352,7 +355,7 @@ async def discover(kind: str, provider_id: int, page: int = 1, sort: str = "popu
         date = r.get("release_date") if kind == "movie" else r.get("first_air_date")
         results.append({
             "tmdb_id": r["id"], "title": r.get("title") or r.get("name"), "year": _year(date),
-            "overview": r.get("overview"), "rating": r.get("vote_average"),
+            "overview": r.get("overview"), "rating": r.get("vote_average"), "date": date or None,
             "poster": TMDB_IMG + r["poster_path"] if r.get("poster_path") else None,
         })
     return {"page": data.get("page", page), "total_pages": min(data.get("total_pages", 1), 500),
@@ -471,3 +474,55 @@ async def series_by_remote_id(imdb_id: str) -> dict | None:
     """Look a show up by its IMDb id (tt...)."""
     tmdb = await _tmdb_find(imdb_id, "imdb_id")
     return await series_details(tmdb_id=tmdb) if tmdb else None
+
+
+# ------------------------------------------------------- Christmas movies --
+_XMAS_TITLE = re.compile(r"christmas|xmas|santa|st\.? nick|noel|mistletoe|merry|jingle|sleigh|yule|reindeer|"
+                         r"\bnorth pole|'?tis the season|snowman|nutcracker|holly\b|navidad|candy cane|gingerbread|"
+                         r"\bholiday", re.I)
+
+
+def _xmas_keyword(name: str) -> bool:
+    n = name.lower()
+    return "christmas" in n or "santa" in n or n in ("holiday", "holidays", "holiday season", "holiday romance",
+                                                       "holiday movie", "winter holiday")
+
+
+def _countdown_season(date: str | None) -> bool:
+    """Hallmark's Countdown to Christmas: from mid-October every new premiere is a Christmas movie."""
+    return bool(date) and date[5:] >= "10-17"
+
+
+async def is_christmas(r: dict, hallmark: bool) -> bool:
+    if _XMAS_TITLE.search(r.get("title") or ""):
+        return True
+    if hallmark and _countdown_season(r.get("date")):
+        return True
+    try:
+        kw = await _cached(f"kw:{r['tmdb_id']}", lambda: _tmdb(f"/movie/{r['tmdb_id']}/keywords"))
+    except Exception:  # noqa: BLE001
+        return False
+    return any(_xmas_keyword(k.get("name", "")) for k in kw.get("keywords", []))
+
+
+async def discover_christmas(provider_id: int, provider_name: str, sort: str = "popular",
+                             released: bool = False) -> dict:
+    """Christmas movies on a service from this year on: TMDB "christmas"/"holiday" keywords, a Christmas word in
+    the title, or (Hallmark) a premiere in the Countdown to Christmas season. One list, no paging."""
+    since = time.strftime("%Y-01-01")
+    found: list[dict] = []
+    page, pages = 1, 1
+    while page <= min(pages, 15):
+        d = await discover("movie", provider_id, page, sort, None, released, since=since)
+        found += d["results"]
+        pages = d["total_pages"]
+        page += 1
+    hallmark = "hallmark" in (provider_name or "").lower()
+    sem = asyncio.Semaphore(8)
+
+    async def check(r):
+        async with sem:
+            return await is_christmas(r, hallmark)
+    keep = await asyncio.gather(*(check(r) for r in found))
+    results = [r for r, k in zip(found, keep) if k]
+    return {"page": 1, "total_pages": 1, "total_results": len(results), "results": results}
