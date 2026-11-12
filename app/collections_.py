@@ -59,8 +59,6 @@ async def _search_added(movies: list[dict]) -> None:
     """Search one movie at a time so indexer API limits aren't hammered."""
     from . import search
     for m in sorted(movies, key=lambda x: x.get("release_date") or ""):
-        if not library.movie_released(m):
-            continue
         try:
             await search.search_movie(m["id"])
         except Exception as e:  # noqa: BLE001

@@ -218,13 +218,6 @@ def movie_available(m: dict) -> bool:
     return when is None or when <= date.today().isoformat()
 
 
-def movie_released(m: dict) -> bool:
-    """Out at home, or at least in cinemas: worth one search on add and an eye on RSS, since a proper copy
-    sometimes turns up before the announced home date (cam / telesync copies aren't allowed by any profile).
-    The scheduled backlog search still waits for movie_available."""
-    rd = (m.get("release_date") or "")[:10]
-    return movie_available(m) or bool(rd and rd <= date.today().isoformat())
-
 
 # ----------------------------------------------------------------- series --
 async def add_series(tvdb_id: int | None, tier: str, monitor: str = "all", folder: str | None = None,

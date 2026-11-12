@@ -899,7 +899,7 @@ async def add_movie(body: AddMovie):
             db.update("movies", m["id"], {"profile": prof})
             m["profile"] = prof
     for m in added:
-        if body.search and body.monitored and library.movie_released(m):
+        if body.search and body.monitored:  # whatever TMDB's dates say: the indexers decide
             asyncio.create_task(_job(f"search-movie-{m['id']}", lambda mid=m["id"]: search.search_movie(mid)))
     return {**added[0], "added": [{"id": m["id"], "tier": m["tier"]} for m in added]}
 

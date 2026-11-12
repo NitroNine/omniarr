@@ -234,7 +234,7 @@ async function libraryInfo(kind, tmdbId) {
     box.innerHTML = infoBody(i);
     if (kind === "movie" && $("#avail") && i.available_date) {
       const today = new Date().toISOString().slice(0, 10);
-      $("#avail").innerHTML = i.available_date > today ? ` <span class="chip warn">Searching from ${fmtDate(i.available_date)}</span>` : "";
+      $("#avail").innerHTML = i.available_date > today ? ` <span class="chip warn" title="Watched for an early copy until then (new releases, or click Automatic search)">Full searches from ${fmtDate(i.available_date)}</span>` : "";
     }
   } catch (e) { box.innerHTML = `<p class="small muted">More details unavailable: ${esc(e.message)}</p>`; }
 }
@@ -780,7 +780,7 @@ async function openCollection(source, id) {
       <td><a class="title-link" href="${titleHref("movie", p.tmdb_id)}" onclick="closeModal()"><b>${esc(p.title)}</b></a> <span class="muted">${p.year || ""}</span></td>
       <td class="small">${esc(p.release_date || "TBA")}${!p.release_date || p.release_date > today ? ' <span class="chip warn">upcoming</span>' : ""}</td>
       <td>${p.in_library ? `${(p.tiers || [p.tier]).map(tierChip).join("")} <span class="chip ${p.has_file ? "ok" : ""}">${p.has_file ? "Downloaded" : "In library"}</span>` : ""}</td></tr>`).join("")}</table></div>
-    <p class="small muted">Unticked movies are remembered and won't be added automatically later. Upcoming movies are added now and searched for once they're released.</p>`;
+    <p class="small muted">Unticked movies are remembered and won't be added automatically later. Upcoming movies are added now, searched once, and watched for until they turn up.</p>`;
   if (saved && (saved.tier === "hd" || canUhd())) $("#ctier").value = saved.tier;
   // a movie already in the library can still get its other version when the collection is set to both
   if (canUhd()) $("#ctier").addEventListener("change", () => document.querySelectorAll(".cpick").forEach((b) => {

@@ -87,7 +87,7 @@ def test_add_with_profile(client, monkeypatch):
     assert not db.q("SELECT 1 FROM movies WHERE tmdb_id=2")  # nothing added on a bad profile
 
 
-def test_in_cinemas_searched_on_add(client, monkeypatch):
+def test_searched_on_add_whatever_the_dates(client, monkeypatch):
     import datetime
     from app import search
     today = datetime.date.today()
@@ -106,5 +106,5 @@ def test_in_cinemas_searched_on_add(client, monkeypatch):
     a = client.post("/api/movies", json={"tmdb_id": 1, "tier": "hd"}).json()  # in cinemas a month, not home yet
     b = client.post("/api/movies", json={"tmdb_id": 2, "tier": "hd"}).json()  # not out anywhere
     m = db.one("SELECT * FROM movies WHERE id=?", (a["id"],))
-    assert not library.movie_available(m) and library.movie_released(m)
-    assert a["id"] in searched and b["id"] not in searched
+    assert not library.movie_available(m)
+    assert a["id"] in searched and b["id"] in searched
