@@ -73,3 +73,11 @@ def test_removed_shows_and_can_be_added_back(client, monkeypatch):
     assert r.status_code == 200 and r.json()["christmas"] == 1
     m = next(x for x in client.get("/api/hallmark").json()["movies"] if x["tmdb_id"] == 2)
     assert not m["removed"] and m["library_id"]
+
+
+def test_hallmark_movie_added_elsewhere_goes_to_christmas_folder(client, monkeypatch):
+    _fake(monkeypatch, [])
+    client.put("/api/hallmark", json={"auto": True, "tier": "hd"})
+    db.ex("DELETE FROM movies WHERE tmdb_id=2")
+    r = client.post("/api/movies", json={"tmdb_id": 2, "tier": "hd", "search": False})  # e.g. from its title page
+    assert r.json()["christmas"] == 1

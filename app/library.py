@@ -143,6 +143,8 @@ async def add_movie(tmdb_id: int, tier: str, monitored: bool = True, folder: str
     m.update(tier=tier, monitored=int(monitored))
     if other:
         christmas = bool(other.get("christmas"))
+    elif not christmas and _hallmark_listed(tmdb_id):
+        christmas = True  # a Hallmark Christmas movie goes to the Christmas folder however it's added
     if folder:
         christmas = christmas or _in_christmas(folder)
     m["folder"] = folder or (other["folder"] if other else None) or movie_folder_name(m)
@@ -152,6 +154,14 @@ async def add_movie(tmdb_id: int, tier: str, monitored: bool = True, folder: str
     m["id"] = db.insert("movies", m)
     db.log(f"Added movie {m['title']} ({m.get('year')}) [{TIER_NAMES[tier]}]")
     return m
+
+
+def _hallmark_listed(tmdb_id: int) -> bool:
+    import json
+    try:
+        return tmdb_id in json.loads(db.setting("hallmark_seen") or "[]")
+    except (TypeError, ValueError):
+        return False
 
 
 async def add_movie_tiers(tmdb_id: int, tier: str, monitored: bool = True, christmas: bool = False) -> list[dict]:
