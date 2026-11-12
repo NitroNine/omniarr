@@ -76,7 +76,7 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
 .tabs2 { display: flex; gap: 4px; margin-bottom: 14px; flex-wrap: wrap; }
 .tabs2 button.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .detail { display: flex; gap: 20px; flex-wrap: wrap; }
-.detail img { width: 180px; border-radius: 8px; }
+.detail img { width: 180px; height: auto; aspect-ratio: 2 / 3; object-fit: cover; align-self: flex-start; flex-shrink: 0; border-radius: 8px; }
 .detail .info { flex: 1; min-width: 260px; }
 .progress { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; min-width: 80px; }
 .progress > div { height: 100%; background: var(--accent); }
