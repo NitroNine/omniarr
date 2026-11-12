@@ -153,7 +153,25 @@ class Store:
                 for f in os.listdir(nd):
                     with open(os.path.join(nd, f), encoding="utf-8") as fh:
                         self.naming[app] = json.load(fh)
+        self._add_remux_only()
         self.loaded = any(self.cfs[a] for a in APPS)
+
+    # Omniarr's own profiles: TRaSH's "Remux + WEB" with only the Remux allowed (same scores, sizes, cutoff)
+    REMUX_ONLY = {"remux-only-2160p": ("remux-web-2160p", "Remux-2160p", "Remux only 2160p"),
+                  "remux-only-1080p": ("remux-web-1080p", "Remux-1080p", "Remux only 1080p")}
+
+    def _add_remux_only(self) -> None:
+        import copy
+        for key, (base, quality, name) in self.REMUX_ONLY.items():
+            src = self.profiles["radarr"].get(base)
+            if not src or not any(it["name"] == quality for it in src.get("items", [])):
+                continue
+            d = copy.deepcopy(src)
+            for it in d["items"]:
+                it["allowed"] = it["name"] == quality
+            d.update(_key=key, name=name, cutoff=quality,
+                     trash_description=f"Only {quality} (Omniarr's own: TRaSH's {src['name']} without the WEB releases).")
+            self.profiles["radarr"][key] = d
 
     def _load_cf(self, app, _stem, d):
         self.cfs[app][d["trash_id"]] = CustomFormat(

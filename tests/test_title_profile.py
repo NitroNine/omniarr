@@ -57,3 +57,19 @@ def test_bulk_profile(client, monkeypatch):
     assert client.post("/api/movies/profile", json={"ids": [b["id"]], "profile": "nope"}).status_code == 400
     sid = db.insert("series", {"tmdb_id": 9, "title": "Show", "tier": "hd", "folder": "Show"})
     assert client.post("/api/series/profile", json={"ids": [sid], "profile": "web-2160p"}).json() == {"changed": 1}
+
+
+def test_remux_only_profiles(client):
+    import copy
+    from app import trash
+    st = trash.ensure_loaded()
+    base = copy.deepcopy(st.profiles["radarr"]["uhd-bluray-web"])
+    base["name"] = "Remux + WEB 2160p"
+    st.profiles["radarr"]["remux-web-2160p"] = base
+    st._add_remux_only()
+    keys = {p["key"]: p["name"] for p in client.get("/api/profiles/movie/uhd").json()["profiles"]}
+    assert keys["remux-only-2160p"] == "Remux only 2160p" and "remux-only-1080p" not in keys  # no 1080p base here
+    p = st.build_profile("movie", "remux-only-2160p")
+    assert [i["name"] for i in p.items if i.get("allowed")] == ["Remux-2160p"] and p.cutoff == "Remux-2160p"
+    assert p.quality_rank("WEBDL-2160p") is None and p.quality_rank("Remux-2160p") is not None
+    assert p.format_scores == st.build_profile("movie", "remux-web-2160p").format_scores
