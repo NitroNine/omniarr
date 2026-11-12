@@ -39,7 +39,8 @@ moved to local; this file carries the context over.
   `before-restore-*.zip`, swaps the DB (migrations run), the scheduler pauses meanwhile (`backup.restoring`). Media not included.
 - **Title pages** `#/title/{movie|tv}/{tmdb_id}` (`/api/info/…`, `metadata.movie_info/tv_info`, 6 h cache):
   cast, crew, release dates (cinema/digital/disc per `streaming_region`, else US), trailer, streaming.
-  Movies are only searched once `library.available_date` (first digital/disc/TV-premiere date, else cinema + 90 d) passes;
+  The backlog search waits for `library.available_date` (first digital/disc/TV-premiere date, else cinema + 90 d);
+  once in cinemas (`library.movie_released`) a movie is still searched on add and watched in RSS (early copies);
   job `movie_refresh` re-reads dates daily for monitored movies without a file.
 - **Library import** of existing folders (`app/scanner.py`), **collections/universes**
   (TMDB collections and keywords, `app/collections_.py`), **Streaming tab** (TMDB watch providers),
@@ -55,7 +56,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 121 tests
+.venv/bin/pytest -q                       # 123 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

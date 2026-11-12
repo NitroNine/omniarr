@@ -88,7 +88,7 @@ async def fulfill(req: dict) -> int | None:
         added = await library.add_movie_tiers(req["target_id"], req["tier"])
         from . import search as search_mod
         for m in added:
-            if search and library.movie_available(m):
+            if search and library.movie_released(m):
                 asyncio.create_task(search_mod.search_movie(m["id"]))
         return added[0]["id"]
     if req["kind"] == "tv":

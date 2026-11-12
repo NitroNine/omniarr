@@ -183,7 +183,7 @@ async def rss_sync() -> int:
 
 async def _rss_sync() -> int:
     grabbed = 0
-    movies = [m for m in db.q("SELECT * FROM movies WHERE monitored=1") if library.movie_available(m)]
+    movies = [m for m in db.q("SELECT * FROM movies WHERE monitored=1") if library.movie_released(m)]  # early copies too
     wanted_movies = {}
     for m in movies:
         if m["file_path"]:

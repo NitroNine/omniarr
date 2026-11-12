@@ -73,3 +73,38 @@ def test_remux_only_profiles(client):
     assert [i["name"] for i in p.items if i.get("allowed")] == ["Remux-2160p"] and p.cutoff == "Remux-2160p"
     assert p.quality_rank("WEBDL-2160p") is None and p.quality_rank("Remux-2160p") is not None
     assert p.format_scores == st.build_profile("movie", "remux-web-2160p").format_scores
+
+
+def test_add_with_profile(client, monkeypatch):
+    async def details(tmdb_id):
+        return {"tmdb_id": tmdb_id, "imdb_id": None, "title": "Alpha", "original_title": "Alpha", "year": 2020,
+                "overview": "", "poster": None, "runtime": 90, "release_date": "2020-01-01"}
+    monkeypatch.setattr(metadata, "movie_details", details)
+    r = client.post("/api/movies", json={"tmdb_id": 1, "tier": "both", "search": False, "profile": "uhd-bluray-web"})
+    assert r.status_code == 200
+    assert {m["tier"]: m["profile"] for m in db.q("SELECT * FROM movies")} == {"hd": "uhd-bluray-web", "uhd": "uhd-bluray-web"}
+    assert client.post("/api/movies", json={"tmdb_id": 2, "profile": "nope"}).status_code == 400
+    assert not db.q("SELECT 1 FROM movies WHERE tmdb_id=2")  # nothing added on a bad profile
+
+
+def test_in_cinemas_searched_on_add(client, monkeypatch):
+    import datetime
+    from app import search
+    today = datetime.date.today()
+
+    async def details(tmdb_id):
+        rd = (today - datetime.timedelta(days=30 if tmdb_id == 1 else -30)).isoformat()
+        return {"tmdb_id": tmdb_id, "imdb_id": None, "title": f"T{tmdb_id}", "original_title": "", "year": today.year,
+                "overview": "", "poster": None, "runtime": 90, "release_date": rd}
+    monkeypatch.setattr(metadata, "movie_details", details)
+    searched = []
+
+    async def fake_search(mid, auto_grab=True):
+        searched.append(mid)
+        return []
+    monkeypatch.setattr(search, "search_movie", fake_search)
+    a = client.post("/api/movies", json={"tmdb_id": 1, "tier": "hd"}).json()  # in cinemas a month, not home yet
+    b = client.post("/api/movies", json={"tmdb_id": 2, "tier": "hd"}).json()  # not out anywhere
+    m = db.one("SELECT * FROM movies WHERE id=?", (a["id"],))
+    assert not library.movie_available(m) and library.movie_released(m)
+    assert a["id"] in searched and b["id"] not in searched

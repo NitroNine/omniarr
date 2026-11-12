@@ -886,14 +886,20 @@ class AddMovie(BaseModel):
     monitored: bool = True
     search: bool = True
     christmas: bool = False  # into the Christmas folder
+    profile: str | None = None  # own quality profile; empty = the library's
 
 
 @app.post("/api/movies")
 async def add_movie(body: AddMovie):
     """tier: hd | uhd | both. Adds the versions that aren't in the library yet."""
+    prof = _check_profile("movie", body.profile)
     added = await library.add_movie_tiers(body.tmdb_id, body.tier, body.monitored, christmas=body.christmas)
     for m in added:
-        if body.search and body.monitored and library.movie_available(m):
+        if prof:
+            db.update("movies", m["id"], {"profile": prof})
+            m["profile"] = prof
+    for m in added:
+        if body.search and body.monitored and library.movie_released(m):
             asyncio.create_task(_job(f"search-movie-{m['id']}", lambda mid=m["id"]: search.search_movie(mid)))
     return {**added[0], "added": [{"id": m["id"], "tier": m["tier"]} for m in added]}
 
@@ -1001,12 +1007,17 @@ class AddSeries(BaseModel):
     tier: str = "hd"
     monitor: str = "all"
     search: bool = True
+    profile: str | None = None  # own quality profile; empty = the library's
 
 
 @app.post("/api/series")
 async def add_series(body: AddSeries):
     """tier: hd | uhd | both. monitor 'same' copies episode monitoring from the other version."""
+    prof = _check_profile("tv", body.profile)
     added = await library.add_series_tiers(body.tvdb_id, body.tier, body.monitor, tmdb_id=body.tmdb_id)
+    for s in added:
+        if prof:
+            db.update("series", s["id"], {"profile": prof})
     for s in added:
         if body.search and body.monitor != "none":
             asyncio.create_task(_job(f"search-series-{s['id']}", lambda sid=s["id"]: search.search_series(sid)))

@@ -570,6 +570,9 @@ async function renderAdd() {
     $("#results").innerHTML = '<p class="muted" style="padding:12px">Searching…</p>';
     const res = await api(`/lookup/${kind}?term=${encodeURIComponent(term)}`);
     window._lookup = res;
+    // admins can pick the quality up front (default: the 1080p / 4K library's own)
+    const profs = isAdmin() && kind !== "collection" ? await api(`/profiles/${kind === "movie" ? "movie" : "tv"}/hd`).catch(() => null) : null;
+    const qsel = (i) => (profs ? `<select id="q${i}" title="Quality">${profileOptions(profs.profiles, "Library quality")}</select>` : "");
     if (kind === "collection") {
       $("#results").innerHTML = res.map((r) => `<div class="result-row">${r.poster ? `<img src="${esc(r.poster)}" alt="">` : ""}
         <div class="grow"><b>${esc(r.name)}</b> <span class="chip">${r.source === "keyword" ? "Universe (keyword)" : "Collection"}</span>${r.saved ? ' <span class="chip ok">Added</span>' : ""}<p>${esc(r.overview)}</p></div>
@@ -582,7 +585,7 @@ async function renderAdd() {
         ${r.collection ? `<button class="small" onclick="openCollection('collection', ${r.collection.id})">Part of ${esc(r.collection.name)} — add whole collection…</button>` : ""}</div>
       <div class="add-ctrls">${r.in_library || (!canUhd() && (r.library_tiers || []).includes("hd")) ? '<span class="chip ok">In library</span>' : `
         ${(r.library_tiers || []).length ? `<span class="chip ok">In library: ${r.library_tiers.map((x) => TIER_LABEL[x]).join(", ")}</span>` : ""}
-        <select id="t${i}">${tierOptions(true, r.library_tiers || [])}</select>
+        <select id="t${i}">${tierOptions(true, r.library_tiers || [])}</select>${qsel(i)}
         ${kind === "series" ? `<select id="m${i}"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option>${isAdmin() ? '<option value="none">None</option>' : ""}</select>` : ""}
         <label class="small"><input type="checkbox" id="s${i}" checked> Search now</label>
         <button class="primary" onclick="addItem('${kind}', ${i}, this)">${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted" style="padding:12px">No results.</p>';
@@ -610,8 +613,8 @@ async function addItem(kind, i, btn) {
   await guard(async () => {
     btn.textContent = isAdmin() ? "Adding…" : "Requesting…";
     const res = kind === "movie"
-      ? await addOrRequest("movie", { tmdb_id: r.tmdb_id, tier: $("#t" + i).value, search: $("#s" + i).checked })
-      : await addOrRequest("tv", { tvdb_id: r.tvdb_id || undefined, tmdb_id: r.tmdb_id || undefined, tier: $("#t" + i).value, monitor: $("#m" + i).value, search: $("#s" + i).checked });
+      ? await addOrRequest("movie", { tmdb_id: r.tmdb_id, tier: $("#t" + i).value, search: $("#s" + i).checked, profile: ($("#q" + i) || {}).value || undefined })
+      : await addOrRequest("tv", { tvdb_id: r.tvdb_id || undefined, tmdb_id: r.tmdb_id || undefined, tier: $("#t" + i).value, monitor: $("#m" + i).value, search: $("#s" + i).checked, profile: ($("#q" + i) || {}).value || undefined });
     if (isAdmin()) toast(`Added ${res.title}`);
     btn.textContent = res.requested ? "Requested" : "Added";
   });
