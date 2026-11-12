@@ -473,13 +473,13 @@ async function renderSeries() {
   draw();
 }
 
-// The quality profile choices: the library's (value ""), the plain profiles, then SQP under More;
-// Anime and other-language ones (French, German...) only if already chosen.
+// The quality profile choices: the library's (value ""), then the plain profiles;
+// Anime, SQP and other-language ones (French, German...) only if already chosen.
 const plainProfile = (p) => !p.name.startsWith("[") && p.name !== "Base Profile";
 function profileOptions(profiles, libLabel, current, prefix = "") {
   const opt = (p) => `<option value="${esc(p.key)}">${prefix}${esc(p.name)}</option>`;
   const main = profiles.filter(plainProfile);
-  const more = profiles.filter((p) => /^\[SQP\]/.test(p.name) || (p.key === current && !main.includes(p)));
+  const more = profiles.filter((p) => p.key === current && !main.includes(p));
   return `<option value="">${prefix}${esc(libLabel)}</option>` + main.map(opt).join("")
     + (more.length ? `<optgroup label="More">${more.map(opt).join("")}</optgroup>` : "");
 }
@@ -1239,7 +1239,7 @@ async function delIx(id) { if (await ask("Delete indexer?")) await guard(async (
 async function renderProfiles(el, s) {
   const tp = await api("/trash/profiles");
   const st = await api("/status");
-  const opts = (list, cur) => list.filter((p) => plainProfile(p) || /^\[SQP\]/.test(p.name) || p.key === cur).map((p) => `<option value="${esc(p.key)}" ${p.key === cur ? "selected" : ""}>${esc(p.name)} (${esc(p.key)})</option>`).join("");
+  const opts = (list, cur) => list.filter((p) => plainProfile(p) || p.key === cur).map((p) => `<option value="${esc(p.key)}" ${p.key === cur ? "selected" : ""}>${esc(p.name)} (${esc(p.key)})</option>`).join("");
   el.innerHTML = `<p>Quality profiles, custom formats, scores and size limits are imported straight from <a href="https://trash-guides.info" target="_blank" rel="noopener">TRaSH Guides</a>.
     Last sync: <b>${esc(st.trash_synced || "never")}</b> <button id="sync" class="primary">Sync TRaSH Guides now</button></p>
   ${tp.loaded ? `<div class="form">
