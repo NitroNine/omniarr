@@ -689,6 +689,17 @@ async def downloader_status():
     return out
 
 
+@app.get("/api/downloader/speed")
+async def downloader_speed():
+    """Just the live numbers, for the Activity speed meter (polled every 2 s)."""
+    try:
+        st = await nzbget.status()
+    except Exception:  # noqa: BLE001
+        return {"ok": False}
+    return {"ok": True, "speed": st.get("DownloadRate", 0), "paused": bool(st.get("DownloadPaused")),
+            "remaining_mb": st.get("RemainingSizeMB", 0)}
+
+
 @app.post("/api/downloader/{action}")
 async def downloader_pause(action: str):
     if action not in ("pause", "resume"):

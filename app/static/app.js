@@ -870,12 +870,15 @@ async function renderActivity(sub = "queue") {
   const el = $("#act");
   if (sub === "queue") {
     const st = await api("/downloader/status").catch(() => null);
+    if (st && st.ok && !window._spd.s.length) spdPush(st);  // the 2 s poll adds the rest
     if (st) el.insertAdjacentHTML("beforebegin", `<div class="panel dlbar">${st.ok
-      ? `<b>${st.paused ? "Paused" : st.speed ? speed(st.speed) : "Idle"}</b><span class="small muted">${st.remaining_mb ? `${size(st.remaining_mb * 1048576)} left` : "Nothing downloading"}${st.free != null ? ` · ${size(st.free)} free` : ""}${st.speed_limit ? ` · limit ${speed(st.speed_limit)}` : ""}</span>
-         <span class="grow"></span><button class="small" onclick="pauseDl(${!st.paused})">${st.paused ? "▶ Resume" : "❚❚ Pause"}</button>`
+      ? `<div class="spdnow"><b id="spdnow"></b><span class="small muted" id="spdinfo"></span><span class="small muted">${st.free != null ? `${size(st.free)} free` : ""}${st.speed_limit ? ` · limit ${speed(st.speed_limit)}` : ""}</span></div>
+         <div class="spdgraph"><svg id="spdg" viewBox="0 0 300 60" preserveAspectRatio="none"></svg><span class="small muted" id="spdscale"></span></div>
+         <button class="small" onclick="pauseDl(${!st.paused})">${st.paused ? "▶ Resume" : "❚❚ Pause"}</button>`
       : `<span class="chip bad">Downloader not running</span><span class="small muted">${esc(st.message || "")}</span><span class="grow"></span><a href="#/settings/downloads"><button class="small">Settings</button></a>`}</div>`
       + ((st.speeds || []).length ? `<details class="panel small speedlog" ${window._spdOpen ? "open" : ""} ontoggle="window._spdOpen = this.open"><summary>Speed by hour (while downloading)</summary><div class="table-wrap"><table>
           <tr><th>Hour</th><th>Top speed</th><th>Average</th></tr>${st.speeds.map((r) => `<tr><td>${esc(r.hour)}</td><td>${speed(r.peak)}</td><td>${speed(r.avg)}</td></tr>`).join("")}</table></div></details>` : ""));
+    if (st && st.ok) { spdDraw(); if (!window._spdTimer) window._spdTimer = setInterval(spdPoll, 2000); }
   }
   if (sub === "queue" || sub === "history") {
     const rows = (await api("/queue")).filter((d) => (sub === "queue") === ["queued", "downloading", "importing", "import_failed"].includes(d.status));
@@ -893,6 +896,41 @@ async function renderActivity(sub = "queue") {
   }
 }
 routes.activity = (sub) => renderActivity(sub || "queue");
+
+// ---- live speed meter on Activity → Queue: samples every 2 s, graph of the last 3 minutes ----
+const SPD_KEEP = 90;
+window._spd = window._spd || { s: [], paused: false, left: 0 };
+function spdPush(r) {
+  const d = window._spd;
+  d.paused = r.paused; d.left = r.remaining_mb * 1048576;
+  d.s.push(r.paused ? 0 : r.speed || 0);
+  if (d.s.length > SPD_KEEP) d.s.splice(0, d.s.length - SPD_KEEP);
+}
+async function spdPoll() {
+  if (!$("#spdg") || !/^#\/activity(\/queue)?$/.test(location.hash || "")) { clearInterval(window._spdTimer); window._spdTimer = null; return; }
+  if (document.hidden) return;
+  const r = await api("/downloader/speed").catch(() => null);
+  if (r && r.ok) { spdPush(r); spdDraw(); }
+}
+function spdDraw() {
+  const d = window._spd, s = d.s, g = $("#spdg");
+  if (!g) return;
+  const now = s.length ? s[s.length - 1] : 0, recent = s.slice(-5), avgNow = recent.reduce((a, b) => a + b, 0) / (recent.length || 1);
+  const active = s.filter((v) => v > 0), peak = Math.max(0, ...s), avg = active.length ? active.reduce((a, b) => a + b, 0) / active.length : 0;
+  $("#spdnow").textContent = d.paused ? "Paused" : now ? speed(now) : "Idle";
+  const eta = avgNow > 0 && d.left ? d.left / avgNow : 0;
+  $("#spdinfo").textContent = d.left ? `${size(d.left)} left${eta ? ` · about ${dur(eta)}` : ""}` : "Nothing downloading";
+  $("#spdscale").textContent = peak ? `last 3 min · top ${speed(peak)} · average ${speed(avg)}` : "last 3 min";
+  const top = peak || 1, W = 300, H = 60, step = W / (SPD_KEEP - 1), x0 = W - (s.length - 1) * step;
+  const pts = s.map((v, i) => `${(x0 + i * step).toFixed(1)},${(H - 2 - (v / top) * (H - 6)).toFixed(1)}`);
+  g.innerHTML = s.length < 2 ? "" : `<polygon points="${x0.toFixed(1)},${H} ${pts.join(" ")} ${W},${H}" class="spdarea"/><polyline points="${pts.join(" ")}" class="spdline"/>`;
+}
+function dur(sec) {
+  sec = Math.round(sec);
+  if (sec < 60) return `${sec} s`;
+  const m = Math.round(sec / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
 
 // ---- manual .nzb upload: pick Movie or TV, the title is detected from the file name (or chosen) ----
 async function nzbUpload() {

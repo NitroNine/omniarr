@@ -20,3 +20,15 @@ def test_speed_log(env, monkeypatch):
 def test_status_includes_speeds(client, monkeypatch):
     db.ex("INSERT INTO speed_log VALUES('2026-11-12 03:00', 1, 1, 1)")
     assert client.get("/api/downloader/status").json()["speeds"][0]["hour"] == "2026-11-12 03:00"
+
+
+def test_live_speed(client, monkeypatch):
+    async def status():
+        return {"DownloadRate": 200 << 20, "DownloadPaused": False, "RemainingSizeMB": 5000}
+    monkeypatch.setattr(nzbget, "status", status)
+    assert client.get("/api/downloader/speed").json() == {"ok": True, "speed": 200 << 20, "paused": False, "remaining_mb": 5000}
+
+    async def down():
+        raise OSError("not running")
+    monkeypatch.setattr(nzbget, "status", down)
+    assert client.get("/api/downloader/speed").json() == {"ok": False}
