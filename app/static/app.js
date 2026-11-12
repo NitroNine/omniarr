@@ -560,7 +560,7 @@ async function monSeason(id, sn, on) {
 // ---------------------------------------------------------------- add ---
 async function renderAdd() {
   view.innerHTML = `<h2>Add to library</h2>
-  <div class="toolbar"><select id="kind"><option value="movie">Movie (TMDB)</option><option value="series">TV series</option><option value="collection">Movie collection / universe (TMDB)</option></select>
+  <div class="toolbar"><select id="kind"><option value="movie">Movie</option><option value="series">TV series</option><option value="collection">Movie collection / universe</option></select>
   <input id="term" class="grow" placeholder="Title, optionally with year — or tmdb:603 / tvdb:81189 (TV: tmdb:1399)" autofocus><button class="primary" id="go">Search</button></div>
   <div id="results" class="panel" style="padding:0"></div>`;
   const go = () => guard(async () => {
