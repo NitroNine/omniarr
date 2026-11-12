@@ -873,7 +873,9 @@ async function renderActivity(sub = "queue") {
     if (st) el.insertAdjacentHTML("beforebegin", `<div class="panel dlbar">${st.ok
       ? `<b>${st.paused ? "Paused" : st.speed ? speed(st.speed) : "Idle"}</b><span class="small muted">${st.remaining_mb ? `${size(st.remaining_mb * 1048576)} left` : "Nothing downloading"}${st.free != null ? ` · ${size(st.free)} free` : ""}${st.speed_limit ? ` · limit ${speed(st.speed_limit)}` : ""}</span>
          <span class="grow"></span><button class="small" onclick="pauseDl(${!st.paused})">${st.paused ? "▶ Resume" : "❚❚ Pause"}</button>`
-      : `<span class="chip bad">Downloader not running</span><span class="small muted">${esc(st.message || "")}</span><span class="grow"></span><a href="#/settings/downloads"><button class="small">Settings</button></a>`}</div>`);
+      : `<span class="chip bad">Downloader not running</span><span class="small muted">${esc(st.message || "")}</span><span class="grow"></span><a href="#/settings/downloads"><button class="small">Settings</button></a>`}</div>`
+      + ((st.speeds || []).length ? `<details class="panel small speedlog" ${window._spdOpen ? "open" : ""} ontoggle="window._spdOpen = this.open"><summary>Speed by hour (while downloading)</summary><div class="table-wrap"><table>
+          <tr><th>Hour</th><th>Top speed</th><th>Average</th></tr>${st.speeds.map((r) => `<tr><td>${esc(r.hour)}</td><td>${speed(r.peak)}</td><td>${speed(r.avg)}</td></tr>`).join("")}</table></div></details>` : ""));
   }
   if (sub === "queue" || sub === "history") {
     const rows = (await api("/queue")).filter((d) => (sub === "queue") === ["queued", "downloading", "importing", "import_failed"].includes(d.status));

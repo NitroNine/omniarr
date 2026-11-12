@@ -97,6 +97,10 @@ CREATE TABLE IF NOT EXISTS requests (
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY, level TEXT, message TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS speed_log (  -- download speed per local hour (bytes/s), sampled while downloading
+  hour TEXT PRIMARY KEY, peak REAL, total REAL, n INTEGER
+);
 """
 
 DEFAULT_SETTINGS: dict[str, Any] = {

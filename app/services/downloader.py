@@ -304,6 +304,30 @@ async def ensure() -> None:
             await asyncio.to_thread(start)
 
 
+SPEED_MIN = 1 << 20  # samples under 1 MB/s are start-up / tail ends, not the line's speed
+
+
+async def record_speed() -> None:
+    """Scheduler job: note the download speed per hour, so slow hours (provider peak time) show up."""
+    from . import nzbget
+    try:
+        st = await nzbget.status()
+    except Exception:  # noqa: BLE001
+        return
+    rate = float(st.get("DownloadRate") or 0)
+    if st.get("DownloadPaused") or rate < SPEED_MIN:
+        return
+    hour = time.strftime("%Y-%m-%d %H:00")
+    db.ex("INSERT INTO speed_log(hour, peak, total, n) VALUES(?,?,?,1) ON CONFLICT(hour) DO UPDATE SET "
+          "peak=MAX(peak, excluded.peak), total=total+excluded.total, n=n+1", (hour, rate, rate))
+    db.ex("DELETE FROM speed_log WHERE hour < ?", (time.strftime("%Y-%m-%d", time.localtime(time.time() - 8 * 86400)),))
+
+
+def speed_history(limit: int = 48) -> list[dict]:
+    return [{"hour": r["hour"], "peak": r["peak"], "avg": r["total"] / max(r["n"], 1), "samples": r["n"]}
+            for r in db.q("SELECT * FROM speed_log ORDER BY hour DESC LIMIT ?", (limit,))]
+
+
 def parse_servers(config: list[dict] | dict) -> list[dict]:
     """News servers out of another NZBGet's settings (the "config" API call or a parsed
     nzbget.conf), in the shape of the usenet_servers table."""

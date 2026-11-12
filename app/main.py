@@ -68,6 +68,7 @@ async def scheduler():
         jobs = [
             ("downloader", 30, downloader.ensure),  # keeps the built-in NZBGet running
             ("downloads", 15, importer.process_downloads),  # import soon after NZBGet finishes
+            ("speed", 30, downloader.record_speed),  # hourly speed log (Activity)
             ("trash", 3600, _trash_auto),
             ("series_refresh", 3600, _refresh_all_series),
             ("collections", 3600, collections_.refresh_due),
@@ -684,6 +685,7 @@ async def downloader_status():
         out["message"] = str(e)
     if s["download_client"] == "builtin":
         out["free"] = downloader.disk_free(downloader.download_dir())
+    out["speeds"] = downloader.speed_history()
     return out
 
 
