@@ -38,3 +38,22 @@ def test_series_profile(client):
     assert client.put(f"/api/series/{sid}", json={"profile": "web-2160p"}).status_code == 200
     s = db.one("SELECT * FROM series WHERE id=?", (sid,))
     assert decision.profile_for("tv", "hd", item=s).name == decision.profile_for("tv", "uhd", apply_overrides=False).name
+
+
+def test_bulk_profile(client, monkeypatch):
+    async def details(tmdb_id):
+        return {"tmdb_id": tmdb_id, "imdb_id": None, "title": f"T{tmdb_id}", "original_title": "", "year": 2020,
+                "overview": "", "poster": None, "runtime": 90, "release_date": "2020-01-01"}
+    monkeypatch.setattr(metadata, "movie_details", details)
+    a = asyncio.run(library.add_movie_tiers(1, "both"))
+    b = asyncio.run(library.add_movie(2, "hd"))
+    prof = lambda: {(m["tmdb_id"], m["tier"]): m["profile"] for m in db.q("SELECT * FROM movies")}
+    r = client.post("/api/movies/profile", json={"ids": [a[0]["id"], b["id"]], "profile": "uhd-bluray-web", "tier": "uhd"})
+    assert r.json() == {"changed": 1} and prof() == {(1, "hd"): None, (1, "uhd"): "uhd-bluray-web", (2, "hd"): None}
+    client.post("/api/movies/profile", json={"ids": [a[1]["id"], b["id"]], "profile": "hd-bluray-web"})
+    assert set(prof().values()) == {"hd-bluray-web"}
+    client.post("/api/movies/profile", json={"ids": [b["id"]], "profile": ""})
+    assert prof()[(2, "hd")] is None
+    assert client.post("/api/movies/profile", json={"ids": [b["id"]], "profile": "nope"}).status_code == 400
+    sid = db.insert("series", {"tmdb_id": 9, "title": "Show", "tier": "hd", "folder": "Show"})
+    assert client.post("/api/series/profile", json={"ids": [sid], "profile": "web-2160p"}).json() == {"changed": 1}

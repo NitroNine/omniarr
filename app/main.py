@@ -1117,6 +1117,35 @@ def _bulk_monitor(kind: str, body: BulkMonitor) -> dict:
     return {"changed": len(ids)}
 
 
+class BulkProfile(BaseModel):
+    ids: list[int]  # any version's id
+    profile: str | None = None  # TRaSH profile key; empty = each library's own
+    tier: str | None = None  # only the 1080p (hd) or 4K (uhd) versions; empty = every version
+
+
+def _bulk_profile(kind: str, body: BulkProfile) -> dict:
+    table = "movies" if kind == "movie" else "series"
+    key = _check_profile(kind, body.profile)
+    ids: set[int] = set()
+    for i in body.ids:
+        item = db.one(f"SELECT * FROM {table} WHERE id=?", (i,))
+        if item:
+            ids |= {v["id"] for v in library.versions(kind, item) if not body.tier or v["tier"] == body.tier}
+    for i in ids:
+        db.update(table, i, {"profile": key})
+    return {"changed": len(ids)}
+
+
+@app.post("/api/movies/profile")
+def profile_movies(body: BulkProfile):
+    return _bulk_profile("movie", body)
+
+
+@app.post("/api/series/profile")
+def profile_series_bulk(body: BulkProfile):
+    return _bulk_profile("tv", body)
+
+
 @app.post("/api/movies/monitor")
 def monitor_movies(body: BulkMonitor):
     return _bulk_monitor("movie", body)

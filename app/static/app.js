@@ -318,7 +318,7 @@ function sortNote(kind, vs) {  // the value the grid is sorted by, under the tit
 const libSel = { on: false, ids: new Set(), kind: "movie" };
 function selBar() {
   return `<div class="toolbar selbar" id="libsel" style="display:none"><button class="small" id="lsall">Select all</button><button class="small" id="lsnone">Clear</button>
-    <select id="lsact" disabled><option value="">With selected…</option><option value="monitor">Monitor</option><option value="unmonitor">Unmonitor</option><option value="delete">Delete…</option></select>
+    <select id="lsact" disabled><option value="">With selected…</option><option value="monitor">Monitor</option><option value="unmonitor">Unmonitor</option><option value="quality">Set quality…</option><option value="delete">Delete…</option></select>
     <span class="small muted" id="lscount">Nothing selected</span></div>`;
 }
 function libPick(id) { return libSel.on ? `<label class="pick" onclick="event.stopPropagation()"><input type="checkbox" data-id="${id}" ${libSel.ids.has(id) ? "checked" : ""} onchange="libToggle(${id}, this.checked)"></label>` : ""; }
@@ -344,12 +344,29 @@ function libSelect(kind, draw) {
   $("#lsact").onchange = () => {
     const a = $("#lsact").value; $("#lsact").value = "";
     if (a === "delete") libDelete();
+    else if (a === "quality") guard(libQuality);
     else if (a) guard(async () => {
       const on = a === "monitor", n = libSel.ids.size, what = libSel.kind === "movie" ? "movie" : "show";
       await api(libSel.kind === "movie" ? "/movies/monitor" : "/series/monitor", { method: "POST", body: { ids: [...libSel.ids], monitored: on } });
       toast(`${on ? "Monitoring" : "Stopped monitoring"} ${n} ${what}${n === 1 ? "" : "s"}`); route();
     });
   };
+}
+async function libQuality() {
+  const n = libSel.ids.size, kind = libSel.kind, what = kind === "movie" ? (n === 1 ? "movie" : "movies") : (n === 1 ? "show" : "shows");
+  const d = await api(`/profiles/${kind}/hd`);
+  modal(`<h3>Set the quality of ${n} ${what}</h3>
+    <div class="toolbar"><label>Versions <select id="lqtier"><option value="">1080p and 4K</option><option value="hd">1080p only</option><option value="uhd">4K only</option></select></label>
+    <label>Quality <select id="lqprof">${profileOptions(d.profiles, "Library default (from Settings)")}</select></label></div>
+    <p class="small muted">Searches and upgrades use it from now on; files already downloaded stay until something better is found.
+      Library default puts them back on the 1080p or 4K library's quality.</p>
+    <div class="toolbar" style="justify-content:flex-end"><button onclick="closeModal()">Cancel</button><button class="primary" id="lqgo">Apply</button></div>`);
+  $("#lqgo").onclick = () => guard(async () => {
+    $("#lqgo").disabled = true;
+    const sel = $("#lqprof"), r = await api(kind === "movie" ? "/movies/profile" : "/series/profile",
+      { method: "POST", body: { ids: [...libSel.ids], profile: sel.value, tier: $("#lqtier").value || null } });
+    closeModal(); toast(`${sel.options[sel.selectedIndex].text}: set on ${r.changed} version${r.changed === 1 ? "" : "s"}`); route();
+  });
 }
 function libDelete() {
   const n = libSel.ids.size, what = libSel.kind === "movie" ? (n === 1 ? "movie" : "movies") : (n === 1 ? "show" : "shows");
@@ -456,6 +473,15 @@ async function renderSeries() {
   draw();
 }
 
+// The quality profile choices: the library's (value ""), the plain profiles, then Anime / SQP under More;
+// other-language ones (French, German...) only if already chosen.
+function profileOptions(profiles, libLabel, current, prefix = "") {
+  const opt = (p) => `<option value="${esc(p.key)}">${prefix}${esc(p.name)}</option>`;
+  const main = profiles.filter((p) => !p.name.startsWith("[") && p.name !== "Base Profile");
+  const more = profiles.filter((p) => /^\[(Anime|SQP)\]/.test(p.name) || (p.key === current && !main.includes(p)));
+  return `<option value="">${prefix}${esc(libLabel)}</option>` + main.map(opt).join("")
+    + (more.length ? `<optgroup label="More">${more.map(opt).join("")}</optgroup>` : "");
+}
 // A title's own quality profile (per version); empty = its library's profile from Settings.
 async function qualitySelect(kind, item) {
   const sel = $("#qprof");
@@ -463,12 +489,7 @@ async function qualitySelect(kind, item) {
   const d = await api(`/profiles/${kind}/${item.tier}`).catch(() => null);
   if (!d) return sel.remove();
   const name = (k) => (d.profiles.find((p) => p.key === k) || { name: k }).name;
-  // the plain profiles first, then Anime / SQP; other-language ones (French, German...) only if already chosen
-  const opt = (p) => `<option value="${esc(p.key)}">Quality: ${esc(p.name)}</option>`;
-  const main = d.profiles.filter((p) => !p.name.startsWith("[") && p.name !== "Base Profile");
-  const more = d.profiles.filter((p) => /^\[(Anime|SQP)\]/.test(p.name) || (p.key === item.profile && !main.includes(p)));
-  sel.innerHTML = `<option value="">Quality: library default (${esc(name(d.library))})</option>`
-    + main.map(opt).join("") + (more.length ? `<optgroup label="More">${more.map(opt).join("")}</optgroup>` : "");
+  sel.innerHTML = profileOptions(d.profiles, `library default (${name(d.library)})`, item.profile, "Quality: ");
   sel.value = item.profile || "";
   sel.onchange = () => guard(async () => {
     await api(`/${kind === "movie" ? "movies" : "series"}/${item.id}`, { method: "PUT", body: { profile: sel.value } });
