@@ -67,11 +67,11 @@ def download_dir() -> str:
 
 
 def _article_cache_mb() -> int:
-    """1 GB of article cache when the machine has RAM to spare (8 GB+), else 200 MB."""
+    """500 MB of article cache when the machine has RAM to spare (8 GB+), else 200 MB (plenty at gigabit speeds)."""
     try:
         with open("/proc/meminfo") as f:
             total_kb = int(next(line for line in f if line.startswith("MemTotal")).split()[1])
-        return 1024 if total_kb >= 8 * 1024 * 1024 else 200
+        return 500 if total_kb >= 8 * 1024 * 1024 else 200
     except (OSError, StopIteration, ValueError):
         return 200
 
