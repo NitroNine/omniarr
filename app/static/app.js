@@ -339,7 +339,7 @@ function libSelect(kind, draw) {
     $("#selbtn").textContent = libSel.on ? "Done" : "Select"; $("#selbtn").classList.toggle("primary", libSel.on);
     $("#libsel").style.display = libSel.on ? "" : "none"; draw(); libCount();
   };
-  $("#lsall").onclick = () => { view.querySelectorAll("#g .card").forEach((c) => libSel.ids.add(+c.dataset.id)); draw(); libCount(); };
+  $("#lsall").onclick = () => { view.querySelectorAll("#g .card[data-id]").forEach((c) => libSel.ids.add(+c.dataset.id)); draw(); libCount(); };
   $("#lsnone").onclick = () => { libSel.ids.clear(); draw(); libCount(); };
   $("#lsact").onchange = () => {
     const a = $("#lsact").value; $("#lsact").value = "";
@@ -837,12 +837,22 @@ async function renderHallmark() {
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Hallmark Christmas ${new Date().getFullYear()} <span class="muted small">(${d.movies.length})</span></h2>
     <label class="small"><input type="checkbox" id="hauto" ${d.auto ? "checked" : ""}> Add &amp; download automatically</label>
     <select id="htier">${["hd", "uhd", "both"].map((v) => `<option value="${v}" ${d.tier === v ? "selected" : ""}>${TIER_LABEL[v]}</option>`).join("")}</select>
-    <button id="hsync">Check now</button></div>
+    <button id="hsync">Check now</button><button id="selbtn">Select</button></div>
     <p class="small muted">New Hallmark Christmas movies on ${esc(d.services.join(", ") || "Hallmark services")} are added to Movies (in the Christmas Movies folder) as TMDB lists them,
       and downloaded once they've aired. Checked every 6 hours${d.last_sync ? `, last ${esc(d.last_sync)}` : ""}. A movie you remove from the library isn't added again.</p>
-    <div class="grid">${d.movies.map((m) => `<div class="card" onclick="location.hash='${m.library_id ? `#/movie/${m.library_id}` : `#/title/movie/${m.tmdb_id}`}'">${poster(m.poster, m.title)}
+    ${selBar()}<div class="grid" id="g"></div>`;
+  // Select mode works on the movies in the library (the others have nothing to change yet)
+  const draw = () => {
+    $("#g").innerHTML = d.movies.map((m) => m.library_id
+      ? `<div class="card" data-id="${m.library_id}" onclick="libCard(this, '#/movie/${m.library_id}')">${libPick(m.library_id)}${poster(m.poster, m.title)}
       <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
-      <div class="chips">${m.tiers.map(tierChip).join("")}${status(m)}</div></div></div>`).join("") || '<p class="muted">None listed yet.</p>'}</div>`;
+      <div class="chips">${m.tiers.map(tierChip).join("")}${status(m)}</div></div></div>`
+      : `<div class="card${libSel.on ? " unpickable" : ""}" onclick="if (!libSel.on) location.hash='#/title/movie/${m.tmdb_id}'">${poster(m.poster, m.title)}
+      <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
+      <div class="chips">${status(m)}</div></div></div>`).join("") || '<p class="muted">None listed yet.</p>';
+  };
+  libSelect("movie", draw);
+  draw();
   const save = (body) => guard(async () => { const r = await api("/hallmark", { method: "PUT", body }); if (r.added && r.added.length) toast(`Added ${r.added.length}: ${r.added.join(", ")}`); renderHallmark(); });
   $("#hauto").addEventListener("change", (e) => save({ auto: e.target.checked }));
   $("#htier").addEventListener("change", (e) => save({ tier: e.target.value }));
