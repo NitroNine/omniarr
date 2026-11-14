@@ -82,7 +82,7 @@ async def search_movie(movie_id: int, auto_grab: bool = True) -> list[dict]:
     if not movie:
         raise ValueError("Movie not found")
     releases = await newznab.search_movie(  # backup indexers only when the preferred ones have nothing usable
-        movie, enough=lambda rels: any(d.accepted for d in decision.decide_movie(movie, rels)))
+        movie, enough=lambda rels: any(d.accepted for d in decision.decide_movie(movie, rels, dual_fallback=False)))
     decisions = decision.decide_movie(movie, releases)
     if auto_grab and decisions and decisions[0].accepted and not decision.active_download_for("movie", movie_id):
         busy = None
@@ -128,7 +128,7 @@ async def search_series(series_id: int, season: int | None = None, episode_id: i
     for sn, eps in by_season.items():
         total = db.one("SELECT COUNT(*) c FROM episodes WHERE series_id=? AND season=?", (series_id, sn))["c"]
         def enough(rels, eps=eps):
-            return any(d.accepted for d in decision.decide_episodes(series, eps, rels))
+            return any(d.accepted for d in decision.decide_episodes(series, eps, rels, dual_fallback=False))
         if episode_id is None and len(eps) > 1 and len(eps) >= total / 2:
             releases = await newznab.search_episodes(series, sn, enough=enough)  # season search (packs + singles)
         else:
@@ -202,7 +202,7 @@ async def _rss_sync() -> int:
             if decision.active_download_for("movie", mid):
                 continue
             m = db.one("SELECT * FROM movies WHERE id=?", (mid,))
-            ds = decision.decide_movie(m, rs)
+            ds = decision.decide_movie(m, rs, dual_fallback=False)
             if ds and ds[0].accepted:
                 await grab(ds[0], "movie", movie_id=mid)
                 grabbed += 1
@@ -228,7 +228,7 @@ async def _rss_sync() -> int:
         for sid, rs in buckets.items():
             eps = [e for e in wanted_eps if e["series_id"] == sid and not decision.active_download_for("tv", e["id"])]
             if eps:
-                ds = decision.decide_episodes(series[sid], eps, rs)
+                ds = decision.decide_episodes(series[sid], eps, rs, dual_fallback=False)
                 before = db.one("SELECT COUNT(*) c FROM downloads")["c"]
                 await _grab_best_for_episodes(series[sid], ds)
                 grabbed += db.one("SELECT COUNT(*) c FROM downloads")["c"] - before

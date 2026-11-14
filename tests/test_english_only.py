@@ -21,3 +21,32 @@ def test_setting_rejects_and_can_be_turned_off(env):
     assert any("Not English" in r for r in decision.evaluate(rel, "movie", prof).reasons)
     db.save_settings({"english_only": False})
     assert not any("Not English" in r for r in decision.evaluate(rel, "movie", prof).reasons)
+
+
+def test_dual_audio_names():
+    from app.parser import dual_audio
+    for t in ["Movie.2026.DUAL.AUDIO.1080p.x264", "Movie.2026.MULTi.1080p.WEB.H264", "Movie.2026.German.DL.1080p.WEB.x264",
+              "Movie.2026.1080p.WEB-DL.Multi-Audio.x264"]:
+        assert dual_audio(t), t
+    for t in ["Movie.2026.iTALiAN.1080p.WEB", "Movie.2026.1080p.HINDI.WEB-DL", "Movie.2026.German.DUBBED.1080p.x264",
+              "Movie.2026.1080p.WEB-DL.DDP5.1.H.264-FLUX"]:
+        assert not dual_audio(t), t
+
+
+def _movie():
+    return {"id": 1, "tmdb_id": 1, "tier": "hd", "title": "Movie", "original_title": "Movie", "year": 2026,
+            "runtime": 100, "imdb_id": None, "file_quality": None, "file_score": None, "profile": None}
+
+
+def _rel(t):
+    return Release(title=t, guid=t, link="", size=4 << 30, indexer="FakeIdx", indexer_id=1)
+
+
+def test_dual_only_when_nothing_english(env):
+    dual, ita = _rel("Movie.2026.DUAL.1080p.WEB-DL.H264-GRP"), _rel("Movie.2026.iTALiAN.1080p.WEB-DL.H264-GRP")
+    eng = _rel("Movie.2026.1080p.WEB-DL.H264-OTHER")
+    ds = decision.decide_movie(_movie(), [dual, ita])
+    assert [d.release.title for d in ds if d.accepted] == [dual.title]  # only dual available: ok
+    ds = decision.decide_movie(_movie(), [dual, eng])
+    assert [d.release.title for d in ds if d.accepted] == [eng.title]  # an English-only one wins
+    assert not any(d.accepted for d in decision.decide_movie(_movie(), [dual], dual_fallback=False))  # RSS waits

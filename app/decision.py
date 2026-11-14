@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 
 from . import db, trash
-from .parser import ParsedRelease, normalize_title, not_english, parse
+from .parser import ParsedRelease, dual_audio, normalize_title, not_english, parse
 from .services.newznab import Release
 
 
@@ -21,6 +21,10 @@ class Decision:
     accepted: bool = True
     reasons: list[str] = field(default_factory=list)
     episode_ids: list[int] = field(default_factory=list)
+    dual_reason: str | None = None  # rejected as dual audio: allowed when nothing English-only is acceptable
+
+    def other_reasons(self) -> list[str]:
+        return [r for r in self.reasons if r != self.dual_reason]
 
     def reject(self, why: str):
         self.accepted = False
@@ -174,7 +178,21 @@ def evaluate(rel: Release, kind: str, profile: trash.Profile) -> Decision:
         why = not_english(rel.title)
         if why:
             d.reject(f"Not English-only ('{why}')")
+            if dual_audio(rel.title):
+                d.dual_reason = d.reasons[-1]
     return d
+
+
+def _allow_dual(out: list[Decision], covered: set[int] | None = None) -> None:
+    """Accept dual-audio releases that fail nothing else, when no English-only release is acceptable
+    (for TV: for the episodes no acceptable English-only release covers)."""
+    for d in out:
+        if d.accepted or not d.dual_reason or d.other_reasons():
+            continue
+        if covered is None or not covered.intersection(d.episode_ids):
+            d.accepted = True
+            d.reasons = []
+            d.dual_reason = None
 
 
 def _title_matches(parsed_name: str, *titles: str | None) -> bool:
@@ -188,7 +206,9 @@ def _title_matches(parsed_name: str, *titles: str | None) -> bool:
 
 
 # ----------------------------------------------------------------- movies --
-def decide_movie(movie: dict, releases: list[Release]) -> list[Decision]:
+def decide_movie(movie: dict, releases: list[Release], dual_fallback: bool = True) -> list[Decision]:
+    """dual_fallback: a dual-audio release may be grabbed when nothing English-only is acceptable (searches;
+    RSS only sees a few releases, so it waits for English-only ones)."""
     profile = profile_for("movie", movie["tier"], item=movie)
     out = []
     for rel in releases:
@@ -204,11 +224,14 @@ def decide_movie(movie: dict, releases: list[Release]) -> list[Decision]:
         _size_ok(d, profile, movie.get("runtime") or 0)
         _upgrade_check(d, profile, movie.get("file_quality"), movie.get("file_score"))
         out.append(d)
+    if dual_fallback and not any(d.accepted for d in out):
+        _allow_dual(out)
     return sorted(out, key=lambda x: (not x.accepted, x.sort_key()))
 
 
 # --------------------------------------------------------------- episodes --
-def decide_episodes(series: dict, episodes: list[dict], releases: list[Release]) -> list[Decision]:
+def decide_episodes(series: dict, episodes: list[dict], releases: list[Release],
+                    dual_fallback: bool = True) -> list[Decision]:
     """`episodes` = the episodes we're looking for (wanted). Releases are mapped
     onto them; a release covering any non-wanted / already-good episode is
     only accepted if every covered episode benefits."""
@@ -251,10 +274,12 @@ def decide_episodes(series: dict, episodes: list[dict], releases: list[Release])
             for e in covered:
                 if e["file_quality"]:
                     _upgrade_check(d, profile, e["file_quality"], e["file_score"])
-                    if not d.accepted:
+                    if d.other_reasons():
                         break
             _size_ok(d, profile, series.get("runtime") or 0, len(covered))
         out.append(d)
+    if dual_fallback:
+        _allow_dual(out, {eid for d in out if d.accepted for eid in d.episode_ids})
     return sorted(out, key=lambda x: (not x.accepted, x.sort_key()))
 
 

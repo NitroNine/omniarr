@@ -132,6 +132,18 @@ def not_english(title: str) -> str | None:
     return m.group(1) if m else None
 
 
+_DUAL = re.compile(r"\b(multi(?:[ ._-]?(?:audio|lang(?:uage)?s?))?|dual(?:[ ._-]?(?:audio|lang(?:uage)?))?|"
+                   r"tri[ ._-]?audio|(?<!web[ ._-])(?<!web)dl)\b", re.I)
+_DUBBED = re.compile(r"\b(dubbed|dub|dublado|lektor|vostfr|subfrench|multi[ ._-]?subs?)\b", re.I)
+
+
+def dual_audio(title: str) -> bool:
+    """A dual / multi-audio release (the original English track plus others, e.g. DUAL, MULTi, German.DL), not a dub."""
+    norm = re.sub(r"[._]", " ", title)
+    tags = norm[_title_end(norm):]
+    return bool(_DUAL.search(tags)) and not _DUBBED.search(tags)
+
+
 _3D = re.compile(r"\b(3d|sbs|half[ ._-]?ou|half[ ._-]?sbs|hsbs)\b", re.I)
 
 
