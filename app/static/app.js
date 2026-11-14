@@ -570,7 +570,7 @@ async function renderAdd() {
   <div class="newrel"><div class="toolbar"><div class="tabs2" id="nrtabs" style="margin:0"><button data-k="movie">Movies</button><button data-k="tv">TV</button></div>
       <select id="nrwhere" title="Movies: new on streaming services, in cinemas, or out on 4K Blu-ray"><option value="streaming">Streaming</option><option value="cinema">In cinemas</option><option value="disc4k">4K disc</option></select>
       <select id="nrsvc" title="Only titles streaming on this service"><option value="">Every service</option></select>
-      <span class="small muted" id="nrnote"></span><span class="grow"></span>
+      <span class="grow"></span>
       <label>${addLabel()} for <select id="nrtier">${tierOptions()}</select></label><span id="nrqw"></span>
       <select id="nrmon" title="TV: which episodes to monitor"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option></select>
       <label class="small"><input type="checkbox" id="nrsearch" checked> Search on add</label></div>
@@ -627,8 +627,6 @@ async function newReleases() {
       $("#nrsvc").innerHTML = '<option value="">Every service</option>' + sorted.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
       $("#nrsvc").value = nr.provider || "";
     }
-    $("#nrnote").textContent = nr.kind === "tv" ? "New shows from the last 60 days"
-      : { streaming: "Out on digital in the last 4 months and now on a streaming service", cinema: "Opened in cinemas in the last 60 days", disc4k: "4K Ultra HD Blu-ray releases from the last 3 months, newest first" }[nr.where];
     const profs = isAdmin() ? await api(`/profiles/${nr.kind}/hd`).catch(() => null) : null;
     $("#nrqw").innerHTML = profs ? `<select id="nrq" title="Quality">${profileOptions(profs.profiles, "Library quality")}</select>` : "";
     pickDefault($("#nrq"), ADD_DEFAULT.profile);
