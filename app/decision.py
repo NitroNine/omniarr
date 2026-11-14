@@ -183,13 +183,10 @@ def evaluate(rel: Release, kind: str, profile: trash.Profile) -> Decision:
     return d
 
 
-def _allow_dual(out: list[Decision], covered: set[int] | None = None) -> None:
-    """Accept dual-audio releases that fail nothing else, when no English-only release is acceptable
-    (for TV: for the episodes no acceptable English-only release covers)."""
+def _allow_dual(out: list[Decision]) -> None:
+    """Movies: accept dual-audio releases that fail nothing else, when no English-only release is acceptable."""
     for d in out:
-        if d.accepted or not d.dual_reason or d.other_reasons():
-            continue
-        if covered is None or not covered.intersection(d.episode_ids):
+        if not d.accepted and d.dual_reason and not d.other_reasons():
             d.accepted = True
             d.reasons = []
             d.dual_reason = None
@@ -230,8 +227,7 @@ def decide_movie(movie: dict, releases: list[Release], dual_fallback: bool = Tru
 
 
 # --------------------------------------------------------------- episodes --
-def decide_episodes(series: dict, episodes: list[dict], releases: list[Release],
-                    dual_fallback: bool = True) -> list[Decision]:
+def decide_episodes(series: dict, episodes: list[dict], releases: list[Release]) -> list[Decision]:
     """`episodes` = the episodes we're looking for (wanted). Releases are mapped
     onto them; a release covering any non-wanted / already-good episode is
     only accepted if every covered episode benefits."""
@@ -274,12 +270,10 @@ def decide_episodes(series: dict, episodes: list[dict], releases: list[Release],
             for e in covered:
                 if e["file_quality"]:
                     _upgrade_check(d, profile, e["file_quality"], e["file_score"])
-                    if d.other_reasons():
+                    if not d.accepted:
                         break
             _size_ok(d, profile, series.get("runtime") or 0, len(covered))
         out.append(d)
-    if dual_fallback:
-        _allow_dual(out, {eid for d in out if d.accepted for eid in d.episode_ids})
     return sorted(out, key=lambda x: (not x.accepted, x.sort_key()))
 
 

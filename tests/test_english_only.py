@@ -50,3 +50,12 @@ def test_dual_only_when_nothing_english(env):
     ds = decision.decide_movie(_movie(), [dual, eng])
     assert [d.release.title for d in ds if d.accepted] == [eng.title]  # an English-only one wins
     assert not any(d.accepted for d in decision.decide_movie(_movie(), [dual], dual_fallback=False))  # RSS waits
+
+
+def test_tv_stays_english_only(env):
+    sid = db.insert("series", {"tmdb_id": 9, "tvdb_id": 9, "title": "Show", "year": 2026, "tier": "hd", "monitored": 1})
+    db.insert("episodes", {"series_id": sid, "season": 1, "episode": 1, "air_date": "2026-01-01", "monitored": 1})
+    s = db.one("SELECT * FROM series WHERE id=?", (sid,))
+    eps = db.q("SELECT * FROM episodes WHERE series_id=?", (sid,))
+    ds = decision.decide_episodes(s, eps, [_rel("Show.S01E01.DUAL.1080p.WEB-DL.H264-GRP")])
+    assert not ds[0].accepted and "Not English" in ds[0].reasons[0]

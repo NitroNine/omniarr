@@ -128,7 +128,7 @@ async def search_series(series_id: int, season: int | None = None, episode_id: i
     for sn, eps in by_season.items():
         total = db.one("SELECT COUNT(*) c FROM episodes WHERE series_id=? AND season=?", (series_id, sn))["c"]
         def enough(rels, eps=eps):
-            return any(d.accepted for d in decision.decide_episodes(series, eps, rels, dual_fallback=False))
+            return any(d.accepted for d in decision.decide_episodes(series, eps, rels))
         if episode_id is None and len(eps) > 1 and len(eps) >= total / 2:
             releases = await newznab.search_episodes(series, sn, enough=enough)  # season search (packs + singles)
         else:
@@ -228,7 +228,7 @@ async def _rss_sync() -> int:
         for sid, rs in buckets.items():
             eps = [e for e in wanted_eps if e["series_id"] == sid and not decision.active_download_for("tv", e["id"])]
             if eps:
-                ds = decision.decide_episodes(series[sid], eps, rs, dual_fallback=False)
+                ds = decision.decide_episodes(series[sid], eps, rs)
                 before = db.one("SELECT COUNT(*) c FROM downloads")["c"]
                 await _grab_best_for_episodes(series[sid], ds)
                 grabbed += db.one("SELECT COUNT(*) c FROM downloads")["c"] - before
