@@ -446,7 +446,28 @@ async def new_releases(kind: str, page: int = 1, where: str = "streaming", provi
 
     disc = kind == "movie" and where == "disc4k"
     key = f"new:{kind}:{where}:{1 if disc else page}:{today}:{params.get('with_original_language', '')}:{_region()}:{provider or ''}"
-    return await _cached(key, fetch_disc4k if disc else fetch)
+    if disc:
+        return await _with_bluray(await _cached(key, fetch_disc4k), params["release_date.gte"], today)
+    return await _cached(key, fetch)
+
+
+async def _with_bluray(base: dict, since: str, until: str) -> dict:
+    """Add Blu-ray.com's 4K discs (services/bluray.py) to the TMDB-notes list; Blu-ray.com's date wins."""
+    from . import bluray
+    rows = {r["tmdb_id"]: r for r in base["results"]}
+    for b in bluray.releases(since, until):
+        tid = b["tmdb_id"]
+        if tid in rows:
+            rows[tid] = {**rows[tid], "date": b["release_date"], "bluray": b["url"]}
+            continue
+        try:
+            d = await _cached(f"md:{tid}", lambda tid=tid: movie_details(tid))
+        except Exception:  # noqa: BLE001
+            continue
+        rows[tid] = {"tmdb_id": tid, "title": d.get("title"), "year": d.get("year"), "overview": d.get("overview"),
+                     "rating": None, "date": b["release_date"], "poster": d.get("poster"), "bluray": b["url"]}
+    found = sorted(rows.values(), key=lambda x: x["date"] or "", reverse=True)
+    return {"page": 1, "total_pages": 1, "total_results": len(found), "results": found}
 
 
 async def tvdb_id_for_tmdb_tv(tmdb_id: int) -> int | None:

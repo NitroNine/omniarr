@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY, level TEXT, message TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS bluray_releases (  -- 4K discs seen in Blu-ray.com's New Releases RSS feed
+  url TEXT PRIMARY KEY, title TEXT, year INTEGER, studio TEXT, release_date TEXT,
+  tmdb_id INTEGER, matched INTEGER DEFAULT 0, added TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS speed_log (  -- download speed per local hour (bytes/s), sampled while downloading
   hour TEXT PRIMARY KEY, peak REAL, total REAL, n INTEGER
 );

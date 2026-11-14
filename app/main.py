@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import auth, backup, collections_, db, hallmark, requests_, decision, importer, library, manual_nzb, scanner, search, trash
-from .services import downloader, metadata, newznab, nzbget
+from .services import bluray, downloader, metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("omniarr")
@@ -76,6 +76,7 @@ async def scheduler():
             ("rss", int(s["rss_interval_minutes"]) * 60, search.rss_sync),
             ("missing", int(s["search_interval_minutes"]) * 60, search.missing_search),
             ("backup", 3600, _auto_backup),
+            ("bluray", 6 * 3600, bluray.sync),  # 4K disc release dates (Add → New releases → 4K disc)
             ("hallmark", 3600, hallmark.sync_due),  # every 6 h while Hallmark auto-add is on  # makes one a day (backup.auto_backup skips if the last is recent)
         ]
         if backup.restoring:  # the database is being swapped

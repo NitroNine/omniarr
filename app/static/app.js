@@ -564,8 +564,7 @@ async function renderAdd() {
   <div class="toolbar"><select id="kind"><option value="movie">Movie</option><option value="series">TV series</option><option value="collection">Movie collection / universe</option></select>
   <input id="term" class="grow" placeholder="Title, optionally with year — or tmdb:603 / tvdb:81189 (TV: tmdb:1399)" autofocus><button class="primary" id="go">Search</button></div>
   <div id="results" class="panel" style="padding:0"></div>
-  <div class="newrel"><div class="toolbar"><h3 style="margin:0">New releases</h3>
-      <div class="tabs2" id="nrtabs" style="margin:0"><button data-k="movie">Movies</button><button data-k="tv">TV</button></div>
+  <div class="newrel"><div class="toolbar"><div class="tabs2" id="nrtabs" style="margin:0"><button data-k="movie">Movies</button><button data-k="tv">TV</button></div>
       <select id="nrwhere" title="Movies: new on streaming services, in cinemas, or out on 4K Blu-ray"><option value="streaming">Streaming</option><option value="cinema">In cinemas</option><option value="disc4k">4K disc</option></select>
       <select id="nrsvc" title="Only titles streaming on this service"><option value="">Every service</option></select>
       <span class="small muted" id="nrnote"></span><span class="grow"></span>
@@ -637,7 +636,7 @@ async function newReleases() {
     nr.items = reset ? d.results : [...(nr.items || []), ...d.results];
     $("#nrg").innerHTML = nr.items.map((r, i) => `<div class="card" onclick="location.hash='${titleHref(kind, r.tmdb_id)}'" title="${esc(r.overview || "")}">${poster(r.poster, r.title)}
       <div class="meta"><div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
-      <div class="chips"><span class="chip">${esc(r.date || "")}</span>${r.rating ? `<span class="chip">★ ${r.rating.toFixed(1)}</span>` : ""}</div>
+      <div class="chips"><span class="chip">${esc(r.date || "")}</span>${r.rating ? `<span class="chip">★ ${r.rating.toFixed(1)}</span>` : ""}${r.bluray ? `<a class="chip" href="${esc(r.bluray)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Disc details at Blu-ray.com">Blu-ray.com</a>` : ""}</div>
       ${r.library_tiers.length ? `<span class="chip ok">In library</span>` : `<button class="small primary add-btn" onclick="event.stopPropagation();nrAdd(${i}, this)">+ ${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted">Nothing new found.</p>';
     $("#nrmore").style.display = d.page < d.total_pages ? "" : "none";
   };

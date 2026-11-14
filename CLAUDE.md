@@ -42,7 +42,7 @@ moved to local; this file carries the context over.
   The backlog search waits for `library.available_date` (first digital/disc/TV-premiere date, else cinema + 90 d);
   adding a title searches right away whatever the dates (owner's wish), and RSS watches every monitored movie;
   job `movie_refresh` re-reads dates daily for monitored movies without a file.
-- **Add page → New releases** (`/api/new/{movie|tv}`, `metadata.new_releases`, 6 h cache), most popular first, English only while `english_only`, + Add per card. Movies menu: Streaming (digital release in the last 120 d and now on a subscription service, optional service filter), In cinemas (last 60 d), 4K disc (physical releases of the last 90 d whose TMDB release note says 4K/UHD, `metadata.disc4k_date`, one page newest first). TV tab: shows first aired in the last 60 d (no news/soap/talk), optional service filter (`provider`).
+- **Add page → New releases** (`/api/new/{movie|tv}`, `metadata.new_releases`, 6 h cache), most popular first, English only while `english_only`, + Add per card. Movies menu: Streaming (digital release in the last 120 d and now on a subscription service, optional service filter), In cinemas (last 60 d), 4K disc (physical releases of the last 90 d whose TMDB release note says 4K/UHD, `metadata.disc4k_date`, plus 4K discs from Blu-ray.com's New Releases RSS feed, read every 6 h by job `bluray` (`services/bluray.py`, table `bluray_releases`, matched to TMDB by title + year; Blu-ray.com's date wins). Blu-ray.com forbids crawling its pages: only ever read the RSS feed. One page, newest first). Streaming and In cinemas: films first released in the past year only. TV tab: shows first aired in the last 60 d (no news/soap/talk), optional service filter (`provider`).
 - **Library import** of existing folders (`app/scanner.py`), **collections/universes**
   (TMDB collections and keywords, `app/collections_.py`), **Streaming tab** (TMDB watch providers),
   **user accounts + requests** with admin approval / per-user auto-approve and 4K permission
@@ -57,7 +57,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 130 tests
+.venv/bin/pytest -q                       # 132 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised
