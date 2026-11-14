@@ -366,10 +366,11 @@ NEW_DAYS = 60
 _NO_TV_GENRES = "10763,10766,10767"  # news, soap, talk
 
 
-async def new_releases(kind: str, page: int = 1, where: str = "home") -> dict:
+async def new_releases(kind: str, page: int = 1, where: str = "home", provider: int | None = None) -> dict:
     """Newly released titles, most popular first (Add page → New releases).
     Movies: out at home (digital or disc, where='home') or in cinemas (where='cinema') in the region during the last
-    NEW_DAYS days. TV: shows whose first episode aired in the last NEW_DAYS days (no news, soaps or talk shows).
+    NEW_DAYS days. TV: shows whose first episode aired in the last NEW_DAYS days (no news, soaps or talk shows),
+    optionally only those streaming on one service (TMDB watch provider id, subscription) in the region.
     English-language only while english_only is on."""
     today = time.strftime("%Y-%m-%d")
     since = time.strftime("%Y-%m-%d", time.localtime(time.time() - NEW_DAYS * 86400))
@@ -381,6 +382,8 @@ async def new_releases(kind: str, page: int = 1, where: str = "home") -> dict:
                        "release_date.gte": since, "release_date.lte": today})
     else:
         params.update({"first_air_date.gte": since, "first_air_date.lte": today, "without_genres": _NO_TV_GENRES})
+        if provider:
+            params.update(with_watch_providers=provider, watch_region=_region(), with_watch_monetization_types="flatrate")
 
     async def fetch():
         data = await _tmdb("/discover/movie" if kind == "movie" else "/discover/tv", **params)
@@ -394,7 +397,7 @@ async def new_releases(kind: str, page: int = 1, where: str = "home") -> dict:
             })
         return {"page": data.get("page", page), "total_pages": min(data.get("total_pages", 1), 500),
                 "total_results": data.get("total_results", 0), "results": results}
-    key = f"new:{kind}:{where}:{page}:{today}:{params.get('with_original_language', '')}:{params.get('region', '')}"
+    key = f"new:{kind}:{where}:{page}:{today}:{params.get('with_original_language', '')}:{_region()}:{provider or ''}"
     return await _cached(key, fetch)
 
 

@@ -35,3 +35,15 @@ def test_new_tv(client, monkeypatch):
     assert path == "/discover/tv" and p["page"] == 2 and "10767" in p["without_genres"] and "first_air_date.gte" in p
     assert d["results"][0]["title"] == "New Show"
     assert client.get("/api/new/book").status_code == 400
+
+
+def test_new_tv_by_service(client, monkeypatch):
+    seen = []
+    _fake(monkeypatch, seen)
+    client.get("/api/new/tv?provider=8")
+    p = seen[-1][1]
+    assert p["with_watch_providers"] == 8 and p["watch_region"] and p["with_watch_monetization_types"] == "flatrate"
+    client.get("/api/new/tv")
+    assert "with_watch_providers" not in seen[-1][1]  # a separate cache entry, not the service's list
+    client.get("/api/new/movie?provider=8")
+    assert "with_watch_providers" not in seen[-1][1]  # movies ignore it

@@ -567,6 +567,7 @@ async function renderAdd() {
   <div class="newrel"><div class="toolbar"><h3 style="margin:0">New releases</h3>
       <div class="tabs2" id="nrtabs" style="margin:0"><button data-k="movie">Movies</button><button data-k="tv">TV</button></div>
       <select id="nrwhere" title="Movies: out to watch at home (digital or disc), or still in cinemas"><option value="home">Out at home</option><option value="cinema">In cinemas</option></select>
+      <select id="nrsvc" title="TV: only shows streaming on this service"><option value="">Every service</option></select>
       <span class="small muted" id="nrnote"></span><span class="grow"></span>
       <label>${addLabel()} for <select id="nrtier">${tierOptions()}</select></label><span id="nrqw"></span>
       <select id="nrmon" title="TV: which episodes to monitor"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option></select>
@@ -613,13 +614,21 @@ async function newReleases() {
     $("#nrwhere").style.display = nr.kind === "movie" ? "" : "none";
     $("#nrmon").style.display = nr.kind === "tv" ? "" : "none";
     $("#nrwhere").value = nr.where;
+    $("#nrsvc").style.display = nr.kind === "tv" ? "" : "none";
+    if (nr.kind === "tv" && $("#nrsvc").options.length < 2) {
+      window._nrProv = window._nrProv || await api("/providers").then((d) => d.providers.filter((p) => p.kinds.includes("tv"))).catch(() => []);
+      const rank = (p) => { const i = PINNED.findIndex((n) => p.name.toLowerCase().replace("+", " plus").startsWith(n)); return i < 0 ? 99 : i; };
+      const sorted = [...window._nrProv].sort((a, b) => rank(a) - rank(b) || a.priority - b.priority);
+      $("#nrsvc").innerHTML = '<option value="">Every service</option>' + sorted.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+      $("#nrsvc").value = nr.provider || "";
+    }
     $("#nrnote").textContent = nr.kind === "tv" ? "New shows from the last 60 days" : nr.where === "home" ? "Out on digital or disc in the last 60 days" : "Opened in cinemas in the last 60 days";
     const profs = isAdmin() ? await api(`/profiles/${nr.kind}/hd`).catch(() => null) : null;
     $("#nrqw").innerHTML = profs ? `<select id="nrq" title="Quality">${profileOptions(profs.profiles, "Library quality")}</select>` : "";
   };
   const load = async (reset) => {
     if (reset) { nr.page = 1; $("#nrg").innerHTML = '<p class="muted">Loading…</p>'; }
-    const kind = nr.kind, d = await api(`/new/${kind}?page=${nr.page}&where=${nr.where}`);
+    const kind = nr.kind, d = await api(`/new/${kind}?page=${nr.page}&where=${nr.where}${kind === "tv" && nr.provider ? `&provider=${nr.provider}` : ""}`);
     if (kind !== nr.kind || !$("#nrg")) return;  // switched tabs or left the page meanwhile
     nr.items = reset ? d.results : [...(nr.items || []), ...d.results];
     $("#nrg").innerHTML = nr.items.map((r, i) => `<div class="card" onclick="location.hash='${titleHref(kind, r.tmdb_id)}'" title="${esc(r.overview || "")}">${poster(r.poster, r.title)}
@@ -630,6 +639,7 @@ async function newReleases() {
   };
   tabs.forEach((b) => (b.onclick = () => { nr.kind = b.dataset.k; guard(async () => { await sync(); await load(true); }); }));
   $("#nrwhere").onchange = () => { nr.where = $("#nrwhere").value; guard(async () => { await sync(); await load(true); }); };
+  $("#nrsvc").onchange = () => { nr.provider = +$("#nrsvc").value || null; guard(() => load(true)); };
   $("#nrmore").onclick = () => { nr.page++; guard(() => load(false)); };
   await guard(async () => { await sync(); await load(true); });
 }
