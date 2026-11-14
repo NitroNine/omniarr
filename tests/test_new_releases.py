@@ -21,6 +21,7 @@ def test_new_movies_streaming_and_cinema(client, monkeypatch):
     path, p = seen[-1]
     assert path == "/discover/movie" and p["with_release_type"] == "4" and p["sort_by"] == "popularity.desc"
     assert p["with_watch_monetization_types"] == "flatrate" and "with_watch_providers" not in p
+    assert p["primary_release_date.gte"] < p["release_date.gte"]
     assert p["with_original_language"] == "en" and p["release_date.gte"] < p["release_date.lte"]
     assert [(r["title"], r["library_tiers"]) for r in d["results"]] == [("New Film", ["hd"]), ("Other", [])]
     assert d["results"][0]["poster"].endswith("/p.jpg") and d["total_pages"] == 3
@@ -71,6 +72,6 @@ def test_new_4k_discs(client, monkeypatch):
     monkeypatch.setattr(metadata, "_tmdb", tmdb)
     metadata._info_cache.clear()
     d = client.get("/api/new/movie?where=disc4k").json()
-    assert seen[0][1]["with_release_type"] == "5"
+    assert seen[0][1]["with_release_type"] == "5" and "primary_release_date.gte" not in seen[0][1]
     assert [(r["title"], r["date"]) for r in d["results"]] == [("Film 3", today), ("Film 1", recent)]  # newest first
     assert d["total_pages"] == 1 and client.get("/api/new/movie?where=bogus").status_code == 400

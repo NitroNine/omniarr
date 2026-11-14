@@ -408,6 +408,8 @@ async def new_releases(kind: str, page: int = 1, where: str = "streaming", provi
         rtype, since = {"streaming": ("4", _ago(STREAMING_DAYS)), "cinema": ("2|3", _ago(NEW_DAYS)),
                         "disc4k": ("5", _ago(DISC_DAYS))}[where]
         params.update({"region": _region(), "with_release_type": rtype, "release_date.gte": since, "release_date.lte": today})
+        if where != "disc4k":  # not re-releases of old films (a 4K disc of a classic is new, though)
+            params["primary_release_date.gte"] = _ago(365)
         if where == "streaming":
             params.update(flatrate, **({"with_watch_providers": provider} if provider else {}))
     else:
