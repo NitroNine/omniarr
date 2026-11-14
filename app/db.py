@@ -130,7 +130,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "hallmark_tier": "hd",
     "hallmark_seen": "[]",  # TMDB ids already added (or skipped because they were in the library): never re-added
     "hallmark_last_sync": "",  # skip releases naming another language, MULTI or dual audio
-    "failed_retry_limit": 3,  # immediate re-searches after failed downloads, per item per day (0 = no limit)  # don't grab when the download disk would drop below this
+    "failed_retry_limit": 4,  # immediate re-searches after failed downloads, per item per day (0 = no limit)  # don't grab when the download disk would drop below this
     "_downloader_password": "",  # built-in: generated, localhost-only control password
     # external NZBGet
     "nzbget_url": "http://nzbget:6789",
