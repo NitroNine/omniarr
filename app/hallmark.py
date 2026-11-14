@@ -23,8 +23,8 @@ async def providers() -> list[dict]:
 
 
 async def candidates() -> list[dict]:
-    """Hallmark Christmas movies from this year on, across all Hallmark services plus Hallmark's own productions
-    (including upcoming premieres), newest first."""
+    """Hallmark Christmas movies from this year on: on Hallmark's streaming services, made by Hallmark, or airing on a
+    Hallmark channel (upcoming premieres included), newest first."""
     found: dict[int, dict] = {}
     for p in await providers():
         try:
@@ -34,11 +34,14 @@ async def candidates() -> list[dict]:
             continue
         for r in data["results"]:
             found.setdefault(r["tmdb_id"], r)
-    try:  # not on Hallmark+ until they've aired: also every Christmas movie TMDB credits to Hallmark
-        for r in await metadata.hallmark_productions():
-            found.setdefault(r["tmdb_id"], r)
-    except Exception as e:  # noqa: BLE001
-        db.log(f"Hallmark Christmas: couldn't list Hallmark's productions: {e}", "warn")
+    # not on Hallmark+ until they've aired: also Hallmark's own productions and anything airing on a Hallmark channel
+    for what, fn in (("Hallmark's productions", metadata.hallmark_productions),
+                     ("Hallmark channel premieres", metadata.hallmark_premieres)):
+        try:
+            for r in await fn():
+                found.setdefault(r["tmdb_id"], r)
+        except Exception as e:  # noqa: BLE001
+            db.log(f"Hallmark Christmas: couldn't list {what}: {e}", "warn")
     return sorted(found.values(), key=lambda r: r.get("date") or "", reverse=True)
 
 

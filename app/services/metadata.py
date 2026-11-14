@@ -665,6 +665,26 @@ async def hallmark_productions() -> list[dict]:
     return [r for r, k in zip(found, keep) if k]
 
 
+async def hallmark_premieres() -> list[dict]:
+    """Christmas movies of this calendar year that air on any Hallmark outlet (Hallmark Channel, Hallmark Mystery,
+    Hallmark Family, Hallmark+...): a US release whose TMDB note names Hallmark, or a Hallmark streaming service."""
+    rows = (await discover_christmas_all(False))["results"]
+    sem = asyncio.Semaphore(8)
+
+    async def on_hallmark(r):
+        if any("hallmark" in s.lower() for s in r.get("services") or []):
+            return True
+        async with sem:
+            try:
+                rd = await _cached(f"rd:{r['tmdb_id']}", lambda: _tmdb(f"/movie/{r['tmdb_id']}/release_dates"))
+            except Exception:  # noqa: BLE001
+                return False
+        return any("hallmark" in (x.get("note") or "").lower()
+                   for c in rd.get("results", []) if c.get("iso_3166_1") == "US" for x in c.get("release_dates", []))
+    keep = await asyncio.gather(*(on_hallmark(r) for r in rows))
+    return [{k: v for k, v in r.items() if k != "services"} for r, k in zip(rows, keep) if k]
+
+
 async def _xmas_keyword_ids() -> str:
     """TMDB keyword ids for Christmas / holiday ("christmas", "christmas movie", "holiday"...), OR-ed for discover."""
     async def find():

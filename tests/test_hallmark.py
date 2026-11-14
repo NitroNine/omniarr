@@ -4,7 +4,8 @@ from app import db, hallmark
 from app.services import metadata
 
 FILMS = {1: ("Christmas on Cherry Lane", "2026-10-25"), 2: ("A Danish Christmas", "2026-11-01"),
-         3: ("Merry Memories", "2026-12-20"), 4: ("Snow Globe Town", "2026-12-12")}  # 4: upcoming, not on Hallmark+
+         3: ("Merry Memories", "2026-12-20"), 4: ("Snow Globe Town", "2026-12-12"),  # 4: upcoming, made by Hallmark
+         5: ("A Mystery Christmas", "2026-12-14")}  # 5: upcoming on Hallmark Mystery
 
 
 def _fake(monkeypatch, searched):
@@ -12,7 +13,7 @@ def _fake(monkeypatch, searched):
         return [{"id": 290, "name": "Hallmark+ Amazon Channel", "kinds": ["movie"]}]
 
     async def disc(pid, name, sort, released):
-        return {"results": [{"tmdb_id": i, "title": t, "date": d, "poster": None} for i, (t, d) in FILMS.items() if i != 4]}
+        return {"results": [{"tmdb_id": i, "title": t, "date": d, "poster": None} for i, (t, d) in FILMS.items() if i < 4]}
 
     async def productions():
         return [{"tmdb_id": i, "title": FILMS[i][0], "date": FILMS[i][1], "poster": None} for i in (2, 4)]
@@ -27,6 +28,10 @@ def _fake(monkeypatch, searched):
     monkeypatch.setattr(hallmark, "providers", providers)
     monkeypatch.setattr(metadata, "discover_christmas", disc)
     monkeypatch.setattr(metadata, "hallmark_productions", productions)
+
+    async def premieres():
+        return [{"tmdb_id": 5, "title": FILMS[5][0], "date": FILMS[5][1], "poster": None}]
+    monkeypatch.setattr(metadata, "hallmark_premieres", premieres)
     monkeypatch.setattr(metadata, "movie_details", details)
     import app.collections_ as c
     monkeypatch.setattr(c, "_search_added", search_added)
@@ -62,7 +67,7 @@ def test_page_status(env, monkeypatch):
 def test_api(client, monkeypatch):
     _fake(monkeypatch, [])
     r = client.put("/api/hallmark", json={"auto": True, "tier": "hd"})
-    assert r.status_code == 200 and len(r.json()["added"]) == 4
+    assert r.status_code == 200 and len(r.json()["added"]) == 5
     assert client.put("/api/hallmark", json={"tier": "8k"}).status_code == 400
     assert client.get("/api/hallmark").json()["auto"] is True
 
@@ -85,3 +90,17 @@ def test_hallmark_movie_added_elsewhere_goes_to_christmas_folder(client, monkeyp
     db.ex("DELETE FROM movies WHERE tmdb_id=2")
     r = client.post("/api/movies", json={"tmdb_id": 2, "tier": "hd", "search": False})  # e.g. from its title page
     assert r.json()["christmas"] == 1
+
+
+def test_premieres_from_channel_notes(env, monkeypatch):
+    async def christmas_all(released):
+        return {"results": [{"tmdb_id": 7, "title": "Hallmark Mystery Xmas", "date": "2026-12-14", "services": []},
+                            {"tmdb_id": 8, "title": "Lifetime Xmas", "date": "2026-12-14", "services": []},
+                            {"tmdb_id": 9, "title": "Streams Xmas", "date": "2026-11-01", "services": ["Hallmark+ Apple TV channel"]}]}
+
+    async def tmdb(path, **_):
+        note = "Hallmark Mystery" if "/7/" in path else "Lifetime"
+        return {"results": [{"iso_3166_1": "US", "release_dates": [{"type": 6, "note": note}]}]}
+    monkeypatch.setattr(metadata, "discover_christmas_all", christmas_all)
+    monkeypatch.setattr(metadata, "_tmdb", tmdb)
+    assert sorted(r["tmdb_id"] for r in asyncio.run(metadata.hallmark_premieres())) == [7, 9]

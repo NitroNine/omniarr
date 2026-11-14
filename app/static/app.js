@@ -913,18 +913,24 @@ async function renderHallmark() {
     <label class="small"><input type="checkbox" id="hauto" ${d.auto ? "checked" : ""}> Add &amp; download automatically</label>
     <select id="htier">${["hd", "uhd", "both"].map((v) => `<option value="${v}" ${d.tier === v ? "selected" : ""}>${TIER_LABEL[v]}</option>`).join("")}</select>
     <button id="hsync">Check now</button><button id="selbtn">Select</button></div>
-    <p class="small muted">New Hallmark Christmas movies on ${esc(d.services.join(", ") || "Hallmark services")} are added to Movies (in the Christmas Movies folder) as TMDB lists them,
+    <p class="small muted">New Hallmark Christmas movies (Hallmark's own, anything airing on a Hallmark channel, or on ${esc(d.services.join(", ") || "Hallmark services")}) are added to Movies (in the Christmas Movies folder) as TMDB lists them,
       and downloaded once they've aired. Checked every 6 hours${d.last_sync ? `, last ${esc(d.last_sync)}` : ""}. A movie you remove from the library isn't added again.</p>
-    ${selBar()}<div class="grid" id="g"></div>`;
+    ${selBar()}<div id="g"></div>`;
   // Select mode works on the movies in the library (the others have nothing to change yet)
+  const upcoming = (m) => !m.has_file && (m.airs || m.date) && (m.airs || m.date) > today;
   const draw = () => {
-    $("#g").innerHTML = d.movies.map((m) => m.library_id
+    const card = (m) => m.library_id
       ? `<div class="card" data-id="${m.library_id}" onclick="libCard(this, '#/movie/${m.library_id}')">${libPick(m.library_id)}${poster(m.poster, m.title)}
       <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
       <div class="chips">${m.tiers.map(tierChip).join("")}${status(m)}</div></div></div>`
       : `<div class="card${libSel.on ? " unpickable" : ""}" onclick="if (!libSel.on) location.hash='#/title/movie/${m.tmdb_id}'">${poster(m.poster, m.title)}
       <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
-      <div class="chips">${status(m)}</div></div></div>`).join("") || '<p class="muted">None listed yet.</p>';
+      <div class="chips">${status(m)}</div></div></div>`;
+    const soon = d.movies.filter(upcoming).sort((a, b) => (a.airs || a.date).localeCompare(b.airs || b.date));  // next premiere first
+    const aired = d.movies.filter((m) => !upcoming(m));
+    $("#g").innerHTML = !d.movies.length ? '<p class="muted">None listed yet.</p>'
+      : (soon.length ? `<h3>Coming up <span class="muted small">(${soon.length})</span></h3><div class="grid">${soon.map(card).join("")}</div>` : "")
+        + (aired.length ? `<h3>Aired <span class="muted small">(${aired.length})</span></h3><div class="grid">${aired.map(card).join("")}</div>` : "");
   };
   libSelect("movie", draw);
   draw();
