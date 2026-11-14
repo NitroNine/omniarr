@@ -566,7 +566,7 @@ async function renderAdd() {
   <div id="results" class="panel" style="padding:0"></div>
   <div class="newrel"><div class="toolbar"><h3 style="margin:0">New releases</h3>
       <div class="tabs2" id="nrtabs" style="margin:0"><button data-k="movie">Movies</button><button data-k="tv">TV</button></div>
-      <select id="nrwhere" title="Movies: out to watch at home (digital or disc), or still in cinemas"><option value="home">Out at home</option><option value="cinema">In cinemas</option></select>
+      <select id="nrwhere" title="Movies: out to watch at home (digital or disc), or still in cinemas"><option value="home">Released</option><option value="cinema">In cinemas</option></select>
       <select id="nrsvc" title="TV: only shows streaming on this service"><option value="">Every service</option></select>
       <span class="small muted" id="nrnote"></span><span class="grow"></span>
       <label>${addLabel()} for <select id="nrtier">${tierOptions()}</select></label><span id="nrqw"></span>
