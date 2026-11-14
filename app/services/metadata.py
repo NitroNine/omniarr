@@ -636,6 +636,35 @@ async def discover_christmas(provider_id: int, provider_name: str, sort: str = "
     return {"page": 1, "total_pages": 1, "total_results": len(results), "results": results}
 
 
+HALLMARK_COMPANIES = "53015|285126"  # TMDB: Hallmark Media, Crown Media Production
+
+
+async def hallmark_productions() -> list[dict]:
+    """Christmas movies Hallmark made, dated this calendar year. Unlike the Hallmark+ lists these include the ones
+    that haven't premiered yet (a movie reaches Hallmark+ only after its Hallmark Channel premiere)."""
+    since, until = time.strftime("%Y-01-01"), time.strftime("%Y-12-31")
+    found: list[dict] = []
+    page, pages = 1, 1
+    while page <= min(pages, 5):
+        d = await _tmdb("/discover/movie", page=page, include_adult="false", with_companies=HALLMARK_COMPANIES,
+                        sort_by="primary_release_date.desc",
+                        **{"primary_release_date.gte": since, "primary_release_date.lte": until})
+        pages = d.get("total_pages", 1)
+        for r in d.get("results", []):
+            date = r.get("release_date") or None
+            found.append({"tmdb_id": r["id"], "title": r.get("title"), "year": _year(date),
+                          "overview": r.get("overview"), "rating": r.get("vote_average"), "date": date,
+                          "poster": TMDB_IMG + r["poster_path"] if r.get("poster_path") else None})
+        page += 1
+    sem = asyncio.Semaphore(8)
+
+    async def check(r):
+        async with sem:
+            return await is_christmas(r, False)  # needs a Christmas title or keyword: Hallmark makes other films too
+    keep = await asyncio.gather(*(check(r) for r in found))
+    return [r for r, k in zip(found, keep) if k]
+
+
 async def _xmas_keyword_ids() -> str:
     """TMDB keyword ids for Christmas / holiday ("christmas", "christmas movie", "holiday"...), OR-ed for discover."""
     async def find():

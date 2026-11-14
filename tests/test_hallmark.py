@@ -4,7 +4,7 @@ from app import db, hallmark
 from app.services import metadata
 
 FILMS = {1: ("Christmas on Cherry Lane", "2026-10-25"), 2: ("A Danish Christmas", "2026-11-01"),
-         3: ("Merry Memories", "2026-12-20")}
+         3: ("Merry Memories", "2026-12-20"), 4: ("Snow Globe Town", "2026-12-12")}  # 4: upcoming, not on Hallmark+
 
 
 def _fake(monkeypatch, searched):
@@ -12,7 +12,10 @@ def _fake(monkeypatch, searched):
         return [{"id": 290, "name": "Hallmark+ Amazon Channel", "kinds": ["movie"]}]
 
     async def disc(pid, name, sort, released):
-        return {"results": [{"tmdb_id": i, "title": t, "date": d, "poster": None} for i, (t, d) in FILMS.items()]}
+        return {"results": [{"tmdb_id": i, "title": t, "date": d, "poster": None} for i, (t, d) in FILMS.items() if i != 4]}
+
+    async def productions():
+        return [{"tmdb_id": i, "title": FILMS[i][0], "date": FILMS[i][1], "poster": None} for i in (2, 4)]
 
     async def details(tmdb_id):
         t, d = FILMS[tmdb_id]
@@ -23,6 +26,7 @@ def _fake(monkeypatch, searched):
         searched.extend(m["title"] for m in movies)
     monkeypatch.setattr(hallmark, "providers", providers)
     monkeypatch.setattr(metadata, "discover_christmas", disc)
+    monkeypatch.setattr(metadata, "hallmark_productions", productions)
     monkeypatch.setattr(metadata, "movie_details", details)
     import app.collections_ as c
     monkeypatch.setattr(c, "_search_added", search_added)
@@ -58,7 +62,7 @@ def test_page_status(env, monkeypatch):
 def test_api(client, monkeypatch):
     _fake(monkeypatch, [])
     r = client.put("/api/hallmark", json={"auto": True, "tier": "hd"})
-    assert r.status_code == 200 and len(r.json()["added"]) == 3
+    assert r.status_code == 200 and len(r.json()["added"]) == 4
     assert client.put("/api/hallmark", json={"tier": "8k"}).status_code == 400
     assert client.get("/api/hallmark").json()["auto"] is True
 
