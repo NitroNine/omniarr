@@ -32,6 +32,10 @@ def _fake(monkeypatch, searched):
     async def premieres():
         return [{"tmdb_id": 5, "title": FILMS[5][0], "date": FILMS[5][1], "poster": None}]
     monkeypatch.setattr(metadata, "hallmark_premieres", premieres)
+
+    async def schedule():
+        return [{"tmdb_id": None, "title": "Not On TMDB Christmas", "date": "2026-12-20", "poster": None}]
+    monkeypatch.setattr(metadata, "hallmark_schedule", schedule)
     monkeypatch.setattr(metadata, "movie_details", details)
     import app.collections_ as c
     monkeypatch.setattr(c, "_search_added", search_added)
@@ -104,3 +108,62 @@ def test_premieres_from_channel_notes(env, monkeypatch):
     monkeypatch.setattr(metadata, "discover_christmas_all", christmas_all)
     monkeypatch.setattr(metadata, "_tmdb", tmdb)
     assert sorted(r["tmdb_id"] for r in asyncio.run(metadata.hallmark_premieres())) == [7, 9]
+
+
+WIKI = """==2025==
+|-
+|''Old One'' (CtC)
+|Someone
+|November 1, 2025
+==2026==
+===Hallmark Channel===
+|-
+|''Lost in Paradise''
+|Someone
+|January 3, 2026
+|-
+|''[[My Christmas Cowboy]]'' (CtC)
+|[[Amy Acker]]
+|November 13, 2026
+|-
+|''Who’s Coming for Christmas?'' (CtC)
+|x
+|October 30, 2026
+|-
+|''Snowbound for the Holidays''
+|x
+|July 18, 2026
+==Future==
+|-
+|''Next Year'' (CtC)
+|x
+|November 1, 2027
+"""
+
+
+def test_wikipedia_schedule_parse():
+    from app.services import wikipedia
+    rows = wikipedia.parse(WIKI, 2026)
+    assert [r["title"] for r in rows] == ["Lost in Paradise", "My Christmas Cowboy", "Who's Coming for Christmas?",
+                                          "Snowbound for the Holidays"]
+    assert rows[1] == {"title": "My Christmas Cowboy", "date": "2026-11-13", "countdown": True}
+
+
+def test_schedule_matched_to_tmdb(env, monkeypatch):
+    from app.services import wikipedia
+
+    async def sched():
+        return wikipedia.parse(WIKI, 2026)
+
+    async def search(term):
+        if term.startswith("My Christmas Cowboy"):
+            return [{"tmdb_id": 50, "title": "My Christmas Cowboy", "year": 2026, "release_date": "2026-11-13", "poster": None}]
+        return []
+    monkeypatch.setattr(wikipedia, "hallmark_schedule", sched)
+    monkeypatch.setattr(metadata, "search_movies", search)
+    rows = asyncio.run(metadata.hallmark_schedule())
+    by = {r["title"]: r for r in rows}
+    assert "Lost in Paradise" not in by  # not a Christmas movie
+    assert by["My Christmas Cowboy"]["tmdb_id"] == 50
+    assert by["Who's Coming for Christmas?"]["tmdb_id"] is None  # announced, not on TMDB yet
+    assert "Snowbound for the Holidays" in by  # Christmas in July: a holiday title

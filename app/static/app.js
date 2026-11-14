@@ -908,12 +908,12 @@ async function renderHallmark() {
     : m.library_id ? (m.airs && m.airs > today ? `<span class="chip">Airs ${esc(m.airs)}</span>` : '<span class="chip warn">Wanted</span>')
     : m.removed ? `<span class="chip" title="You removed it from the library, so it isn't added again automatically">Removed</span>
         <button class="small" onclick="event.stopPropagation();hallmarkAddBack(${m.tmdb_id}, this)">Add back</button>`
-    : `<span class="chip">${m.date && m.date > today ? "Airs " + esc(m.date) : "Not added"}</span>`;
+    : `<span class="chip">${m.date && m.date > today ? "Airs " + esc(m.date) : "Not added"}</span>${m.tmdb_id ? "" : ' <span class="chip" title="Announced by Hallmark; added once TMDB lists it">Not on TMDB yet</span>'}`;
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Hallmark Christmas ${new Date().getFullYear()} <span class="muted small">(${d.movies.length})</span></h2>
     <label class="small"><input type="checkbox" id="hauto" ${d.auto ? "checked" : ""}> Add &amp; download automatically</label>
     <select id="htier">${["hd", "uhd", "both"].map((v) => `<option value="${v}" ${d.tier === v ? "selected" : ""}>${TIER_LABEL[v]}</option>`).join("")}</select>
     <button id="hsync">Check now</button><button id="selbtn">Select</button></div>
-    <p class="small muted">New Hallmark Christmas movies (Hallmark's own, anything airing on a Hallmark channel, or on ${esc(d.services.join(", ") || "Hallmark services")}) are added to Movies (in the Christmas Movies folder) as TMDB lists them,
+    <p class="small muted">New Hallmark Christmas movies (Hallmark Channel's Countdown to Christmas schedule from Wikipedia, Hallmark's own productions, anything airing on a Hallmark channel, or on ${esc(d.services.join(", ") || "Hallmark services")}) are added to Movies (in the Christmas Movies folder) as TMDB lists them,
       and downloaded once they've aired. Checked every 6 hours${d.last_sync ? `, last ${esc(d.last_sync)}` : ""}. A movie you remove from the library isn't added again.</p>
     ${selBar()}<div id="g"></div>`;
   // Select mode works on the movies in the library (the others have nothing to change yet)
@@ -923,7 +923,7 @@ async function renderHallmark() {
       ? `<div class="card" data-id="${m.library_id}" onclick="libCard(this, '#/movie/${m.library_id}')">${libPick(m.library_id)}${poster(m.poster, m.title)}
       <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
       <div class="chips">${m.tiers.map(tierChip).join("")}${status(m)}</div></div></div>`
-      : `<div class="card${libSel.on ? " unpickable" : ""}" onclick="if (!libSel.on) location.hash='#/title/movie/${m.tmdb_id}'">${poster(m.poster, m.title)}
+      : `<div class="card${libSel.on ? " unpickable" : ""}" ${m.tmdb_id ? `onclick="if (!libSel.on) location.hash='#/title/movie/${m.tmdb_id}'"` : 'style="cursor:default"'}>${poster(m.poster, m.title)}
       <div class="meta"><div class="title" title="${esc(m.title)}">${esc(m.title)}</div>
       <div class="chips">${status(m)}</div></div></div>`;
     const soon = d.movies.filter(upcoming).sort((a, b) => (a.airs || a.date).localeCompare(b.airs || b.date));  // next premiere first

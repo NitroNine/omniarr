@@ -29,7 +29,7 @@ moved to local; this file carries the context over.
   15 min) and slows it further. Indexer `priority`: searches ask the lowest number first, backups only while nothing acceptable turned up (`newznab._fan_out(enough=…)`); RSS asks all; a grab skips releases on paused indexers. `search.HOLD` = NoSpace/IndexerBusy: stop grabbing, keep items wanted. API keys are
   redacted in errors and `db.log`. Old installs with an
   NZBGet password migrate to `external`.
-- **Hallmark tab** (`app/hallmark.py`, `#/hallmark`): Christmas movies from this year on across TMDB's Hallmark providers (`metadata.discover_christmas`) plus TMDB's Hallmark production companies (`metadata.hallmark_productions`) and Christmas-tab movies whose US release note names a Hallmark channel (`metadata.hallmark_premieres`); these catch upcoming premieres that aren't on Hallmark+ yet; the tab shows Coming up / Aired; with `hallmark_auto` on, job `hallmark` adds new ones every 6 h in `hallmark_tier` and they download once aired; added ids go in `hallmark_seen` so removed ones stay removed.
+- **Hallmark tab** (`app/hallmark.py`, `#/hallmark`): Christmas movies from this year on: Hallmark Channel's Countdown to Christmas schedule from Wikipedia (`services/wikipedia.py`, MediaWiki API, "List of Hallmark Channel Original Movies (2020s)", matched to TMDB by title + year by `metadata.hallmark_schedule`; unmatched ones show as "Not on TMDB yet"), TMDB's Hallmark providers (`metadata.discover_christmas`) plus TMDB's Hallmark production companies (`metadata.hallmark_productions`) and Christmas-tab movies whose US release note names a Hallmark channel (`metadata.hallmark_premieres`); these catch upcoming premieres that aren't on Hallmark+ yet; the tab shows Coming up / Aired; with `hallmark_auto` on, job `hallmark` adds new ones every 6 h in `hallmark_tier` and they download once aired; added ids go in `hallmark_seen` so removed ones stay removed.
 - **Christmas** (`movies.christmas`, setting `christmas_folder`: a full path = its own root (folder = title folder only), a name = subfolder of root_movies; changing it runs `library.relocate_christmas`): added from the Christmas/Hallmark tabs or the movie page switch (`library.set_christmas` moves the folder); NZBGet category `nzbget_category_christmas`; scanner looks one level into it. Christmas tab = `#/christmas` → `renderProvider(0)` → `metadata.discover_christmas_all` (keywords + US TV premieres, with services), Hide Hallmark.
 - **English only** (setting `english_only`, default on): `parser.not_english` rejects releases whose tags after the title name another language or MULTI/Multi-Audio/Dual Audio/DL/dubbed. Exception: a dual/multi-audio release (`parser.dual_audio`, not dubbed) is accepted in movie searches (not TV) when no English-only release is acceptable; not from RSS or for the backup-indexer check (`dual_fallback=False`).
 - **Manual .nzb upload** (Activity → Upload NZB, `app/manual_nzb.py`, `POST /api/nzb`): Movie/TV choice, title + version
@@ -57,7 +57,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 137 tests
+.venv/bin/pytest -q                       # 139 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

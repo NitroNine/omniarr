@@ -35,14 +35,21 @@ async def candidates() -> list[dict]:
         for r in data["results"]:
             found.setdefault(r["tmdb_id"], r)
     # not on Hallmark+ until they've aired: also Hallmark's own productions and anything airing on a Hallmark channel
-    for what, fn in (("Hallmark's productions", metadata.hallmark_productions),
+    unmatched: list[dict] = []
+    for what, fn in (("Hallmark's schedule on Wikipedia", metadata.hallmark_schedule),
+                     ("Hallmark's productions", metadata.hallmark_productions),
                      ("Hallmark channel premieres", metadata.hallmark_premieres)):
         try:
             for r in await fn():
-                found.setdefault(r["tmdb_id"], r)
+                if r["tmdb_id"] is None:  # announced, not on TMDB yet: shown, added once TMDB has it
+                    unmatched.append(r)
+                elif r["tmdb_id"] in found and fn is metadata.hallmark_schedule:
+                    found[r["tmdb_id"]]["date"] = r["date"]  # Hallmark's premiere date wins
+                else:
+                    found.setdefault(r["tmdb_id"], r)
         except Exception as e:  # noqa: BLE001
             db.log(f"Hallmark Christmas: couldn't list {what}: {e}", "warn")
-    return sorted(found.values(), key=lambda r: r.get("date") or "", reverse=True)
+    return sorted([*found.values(), *unmatched], key=lambda r: r.get("date") or "", reverse=True)
 
 
 def _seen() -> set[int]:
@@ -71,7 +78,7 @@ async def _sync() -> dict:
     added: list[dict] = []
     for r in await candidates():
         tid = r["tmdb_id"]
-        if tid in seen:
+        if tid is None or tid in seen:
             continue
         if tid not in have:
             try:

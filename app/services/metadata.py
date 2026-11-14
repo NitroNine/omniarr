@@ -685,6 +685,28 @@ async def hallmark_premieres() -> list[dict]:
     return [{k: v for k, v in r.items() if k != "services"} for r, k in zip(rows, keep) if k]
 
 
+async def hallmark_schedule() -> list[dict]:
+    """Hallmark Channel's Christmas premieres this year (Wikipedia's schedule: Countdown to Christmas, or a Christmas
+    title), matched to TMDB. Ones TMDB doesn't have yet come back with tmdb_id None."""
+    from . import wikipedia
+    rows = await _cached("wiki-hallmark", wikipedia.hallmark_schedule)
+    norm = lambda t: re.sub(r"[^a-z0-9]", "", (t or "").replace("’", "'").lower())  # noqa: E731
+    sem = asyncio.Semaphore(8)
+
+    async def match(w):
+        async with sem:
+            res = await _cached(f"wsm:{w['title']}:{w['date'][:4]}",
+                                lambda: search_movies(f"{w['title']} {w['date'][:4]}"))
+        year = int(w["date"][:4])
+        same = [m for m in res if norm(m["title"]) == norm(w["title"]) and (not m.get("year") or abs(m["year"] - year) <= 1)]
+        m = next((m for m in same if m.get("release_date") == w["date"]), same[0] if same else None)
+        return {"tmdb_id": m["tmdb_id"] if m else None, "title": m["title"] if m else w["title"], "year": year,
+                "overview": m.get("overview") if m else None, "date": w["date"],  # Hallmark's premiere date
+                "poster": m.get("poster") if m else None}
+    keep = [w for w in rows if w["countdown"] or _XMAS_TITLE.search(w["title"])]
+    return list(await asyncio.gather(*(match(w) for w in keep)))
+
+
 async def _xmas_keyword_ids() -> str:
     """TMDB keyword ids for Christmas / holiday ("christmas", "christmas movie", "holiday"...), OR-ed for discover."""
     async def find():
