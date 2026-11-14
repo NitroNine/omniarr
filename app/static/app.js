@@ -563,7 +563,16 @@ async function renderAdd() {
   view.innerHTML = `<h2>Add to library</h2>
   <div class="toolbar"><select id="kind"><option value="movie">Movie</option><option value="series">TV series</option><option value="collection">Movie collection / universe</option></select>
   <input id="term" class="grow" placeholder="Title, optionally with year — or tmdb:603 / tvdb:81189 (TV: tmdb:1399)" autofocus><button class="primary" id="go">Search</button></div>
-  <div id="results" class="panel" style="padding:0"></div>`;
+  <div id="results" class="panel" style="padding:0"></div>
+  <div class="newrel"><div class="toolbar"><h3 style="margin:0">New releases</h3>
+      <div class="tabs2" id="nrtabs" style="margin:0"><button data-k="movie">Movies</button><button data-k="tv">TV</button></div>
+      <select id="nrwhere" title="Movies: out to watch at home (digital or disc), or still in cinemas"><option value="home">Out at home</option><option value="cinema">In cinemas</option></select>
+      <span class="small muted" id="nrnote"></span><span class="grow"></span>
+      <label>${addLabel()} for <select id="nrtier">${tierOptions()}</select></label><span id="nrqw"></span>
+      <select id="nrmon" title="TV: which episodes to monitor"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option></select>
+      <label class="small"><input type="checkbox" id="nrsearch" checked> Search on add</label></div>
+    <div class="grid" id="nrg"></div><div class="toolbar" style="justify-content:center;margin-top:16px"><button id="nrmore">Load more</button></div></div>`;
+  newReleases();
   const go = () => guard(async () => {
     const kind = $("#kind").value, term = $("#term").value.trim();
     if (!term) return;
@@ -593,6 +602,50 @@ async function renderAdd() {
   $("#go").onclick = go;
   $("#term").addEventListener("keydown", (e) => e.key === "Enter" && go());
 }
+// ---- Add page → New releases: Movies (out at home / in cinemas, last 60 days) and new TV shows, click + Add ----
+window._nr = window._nr || { kind: "movie", where: "home" };
+async function newReleases() {
+  const nr = window._nr;
+  nr.page = 1;
+  const tabs = view.querySelectorAll("#nrtabs button");
+  const sync = async () => {
+    tabs.forEach((b) => b.classList.toggle("active", b.dataset.k === nr.kind));
+    $("#nrwhere").style.display = nr.kind === "movie" ? "" : "none";
+    $("#nrmon").style.display = nr.kind === "tv" ? "" : "none";
+    $("#nrwhere").value = nr.where;
+    $("#nrnote").textContent = nr.kind === "tv" ? "New shows from the last 60 days" : nr.where === "home" ? "Out on digital or disc in the last 60 days" : "Opened in cinemas in the last 60 days";
+    const profs = isAdmin() ? await api(`/profiles/${nr.kind}/hd`).catch(() => null) : null;
+    $("#nrqw").innerHTML = profs ? `<select id="nrq" title="Quality">${profileOptions(profs.profiles, "Library quality")}</select>` : "";
+  };
+  const load = async (reset) => {
+    if (reset) { nr.page = 1; $("#nrg").innerHTML = '<p class="muted">Loading…</p>'; }
+    const kind = nr.kind, d = await api(`/new/${kind}?page=${nr.page}&where=${nr.where}`);
+    if (kind !== nr.kind || !$("#nrg")) return;  // switched tabs or left the page meanwhile
+    nr.items = reset ? d.results : [...(nr.items || []), ...d.results];
+    $("#nrg").innerHTML = nr.items.map((r, i) => `<div class="card" onclick="location.hash='${titleHref(kind, r.tmdb_id)}'" title="${esc(r.overview || "")}">${poster(r.poster, r.title)}
+      <div class="meta"><div class="title" title="${esc(r.title)}">${esc(r.title)}</div>
+      <div class="chips"><span class="chip">${esc(r.date || "")}</span>${r.rating ? `<span class="chip">★ ${r.rating.toFixed(1)}</span>` : ""}</div>
+      ${r.library_tiers.length ? `<span class="chip ok">In library</span>` : `<button class="small primary add-btn" onclick="event.stopPropagation();nrAdd(${i}, this)">+ ${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted">Nothing new found.</p>';
+    $("#nrmore").style.display = d.page < d.total_pages ? "" : "none";
+  };
+  tabs.forEach((b) => (b.onclick = () => { nr.kind = b.dataset.k; guard(async () => { await sync(); await load(true); }); }));
+  $("#nrwhere").onchange = () => { nr.where = $("#nrwhere").value; guard(async () => { await sync(); await load(true); }); };
+  $("#nrmore").onclick = () => { nr.page++; guard(() => load(false)); };
+  await guard(async () => { await sync(); await load(true); });
+}
+async function nrAdd(i, btn) {
+  const nr = window._nr, r = nr.items[i];
+  btn.disabled = true; btn.textContent = isAdmin() ? "Adding…" : "Requesting…";
+  await guard(async () => {
+    const common = { tmdb_id: r.tmdb_id, tier: $("#nrtier").value, search: $("#nrsearch").checked, profile: ($("#nrq") || {}).value || undefined };
+    const item = await addOrRequest(nr.kind, nr.kind === "tv" ? { ...common, monitor: $("#nrmon").value } : common);
+    r.library_tiers = item.requested ? [] : [common.tier];
+    btn.outerHTML = item.requested ? '<span class="chip warn">Requested</span>' : '<span class="chip ok">Added</span>';
+    if (isAdmin()) toast(`Added ${item.title}`);
+  });
+  if (btn.isConnected) { btn.disabled = false; btn.textContent = "+ " + addLabel(); }
+}
+
 // Admins add straight to the library; users create a request (auto-approved if an admin allowed that).
 async function addOrRequest(kind, body) {
   if (!isAdmin()) {

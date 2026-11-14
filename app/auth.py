@@ -187,7 +187,7 @@ def bootstrap_from_env() -> None:
 USER_ROUTES = [
     ("GET", r"/api/auth/me"), ("POST", r"/api/auth/logout"), ("POST", r"/api/auth/password"),
     ("GET", r"/api/lookup/(movie|series|collection)"), ("GET", r"/api/collection/\w+/\d+"),
-    ("GET", r"/api/providers(/\d+/(movie|tv))?"),
+    ("GET", r"/api/providers(/\d+/(movie|tv))?"), ("GET", r"/api/new/(movie|tv)"),
     ("GET", r"/api/movies(/\d+)?"), ("GET", r"/api/series(/\d+)?"), ("GET", r"/api/collections"),
     ("GET", r"/api/info/(movie|tv)/\d+"),
     ("GET", r"/api/requests"), ("POST", r"/api/requests"), ("DELETE", r"/api/requests/\d+"),

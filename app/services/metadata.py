@@ -362,6 +362,42 @@ async def discover(kind: str, provider_id: int, page: int = 1, sort: str = "popu
             "total_results": data.get("total_results", 0), "results": results}
 
 
+NEW_DAYS = 60
+_NO_TV_GENRES = "10763,10766,10767"  # news, soap, talk
+
+
+async def new_releases(kind: str, page: int = 1, where: str = "home") -> dict:
+    """Newly released titles, most popular first (Add page → New releases).
+    Movies: out at home (digital or disc, where='home') or in cinemas (where='cinema') in the region during the last
+    NEW_DAYS days. TV: shows whose first episode aired in the last NEW_DAYS days (no news, soaps or talk shows).
+    English-language only while english_only is on."""
+    today = time.strftime("%Y-%m-%d")
+    since = time.strftime("%Y-%m-%d", time.localtime(time.time() - NEW_DAYS * 86400))
+    params: dict = {"page": page, "include_adult": "false", "sort_by": "popularity.desc"}
+    if db.setting("english_only"):
+        params["with_original_language"] = "en"
+    if kind == "movie":
+        params.update({"region": _region(), "with_release_type": "4|5" if where == "home" else "2|3",
+                       "release_date.gte": since, "release_date.lte": today})
+    else:
+        params.update({"first_air_date.gte": since, "first_air_date.lte": today, "without_genres": _NO_TV_GENRES})
+
+    async def fetch():
+        data = await _tmdb("/discover/movie" if kind == "movie" else "/discover/tv", **params)
+        results = []
+        for r in data.get("results", []):
+            date = r.get("release_date") if kind == "movie" else r.get("first_air_date")
+            results.append({
+                "tmdb_id": r["id"], "title": r.get("title") if kind == "movie" else r.get("name"), "year": _year(date),
+                "overview": r.get("overview"), "rating": r.get("vote_average"), "date": date or None,
+                "poster": TMDB_IMG + r["poster_path"] if r.get("poster_path") else None,
+            })
+        return {"page": data.get("page", page), "total_pages": min(data.get("total_pages", 1), 500),
+                "total_results": data.get("total_results", 0), "results": results}
+    key = f"new:{kind}:{where}:{page}:{today}:{params.get('with_original_language', '')}:{params.get('region', '')}"
+    return await _cached(key, fetch)
+
+
 async def tvdb_id_for_tmdb_tv(tmdb_id: int) -> int | None:
     ids = await _tmdb(f"/tv/{tmdb_id}/external_ids")
     if ids.get("tvdb_id"):

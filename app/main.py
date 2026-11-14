@@ -770,6 +770,20 @@ async def providers():
     return {"region": db.setting("streaming_region") or "US", "providers": await metadata.watch_providers()}
 
 
+@app.get("/api/new/{kind}")
+async def new_releases(kind: str, page: int = 1, where: str = "home"):
+    """Add page → New releases: recent movies (at home / in cinemas) or new TV shows, with library state."""
+    if kind not in ("movie", "tv") or where not in ("home", "cinema"):
+        raise HTTPException(400)
+    data = dict(await metadata.new_releases(kind, max(1, page), where))
+    table = "movies" if kind == "movie" else "series"
+    have: dict[int, list[str]] = {}
+    for r in db.q(f"SELECT tmdb_id, tier FROM {table} WHERE tmdb_id IS NOT NULL ORDER BY tier"):
+        have.setdefault(r["tmdb_id"], []).append(r["tier"])
+    data["results"] = [{**r, "library_tiers": have.get(r["tmdb_id"], [])} for r in data["results"]]
+    return data
+
+
 @app.get("/api/providers/{pid}/{kind}")
 async def provider_titles(pid: int, kind: str, page: int = 1, sort: str = "popular", originals: bool = False,
                           released: bool = False, christmas: bool = False):

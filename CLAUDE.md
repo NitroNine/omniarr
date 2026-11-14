@@ -42,6 +42,7 @@ moved to local; this file carries the context over.
   The backlog search waits for `library.available_date` (first digital/disc/TV-premiere date, else cinema + 90 d);
   adding a title searches right away whatever the dates (owner's wish), and RSS watches every monitored movie;
   job `movie_refresh` re-reads dates daily for monitored movies without a file.
+- **Add page → New releases** (`/api/new/{movie|tv}`, `metadata.new_releases`, 6 h cache): Movies tab = out at home (digital/disc) or in cinemas in the last 60 days, TV tab = shows first aired in the last 60 days (no news/soap/talk), most popular first, English only while `english_only`; + Add per card.
 - **Library import** of existing folders (`app/scanner.py`), **collections/universes**
   (TMDB collections and keywords, `app/collections_.py`), **Streaming tab** (TMDB watch providers),
   **user accounts + requests** with admin approval / per-user auto-approve and 4K permission
@@ -56,7 +57,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 126 tests
+.venv/bin/pytest -q                       # 128 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised
