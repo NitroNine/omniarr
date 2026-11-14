@@ -476,6 +476,9 @@ async function renderSeries() {
 // The quality profile choices: the library's (value ""), then the plain profiles;
 // Anime, SQP and other-language ones (French, German...) only if already chosen.
 const plainProfile = (p) => !p.name.startsWith("[") && p.name !== "Base Profile";
+// Owner's choice: adding defaults to the 4K library with "Remux only 2160p" (when those options are there).
+const ADD_DEFAULT = { tier: "uhd", profile: "remux-only-2160p" };
+function pickDefault(sel, value) { if (sel && [...sel.options].some((o) => o.value === value)) sel.value = value; }
 function profileOptions(profiles, libLabel, current, prefix = "") {
   const opt = (p) => `<option value="${esc(p.key)}">${prefix}${esc(p.name)}</option>`;
   const main = profiles.filter(plainProfile);
@@ -572,6 +575,7 @@ async function renderAdd() {
       <select id="nrmon" title="TV: which episodes to monitor"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option></select>
       <label class="small"><input type="checkbox" id="nrsearch" checked> Search on add</label></div>
     <div class="grid" id="nrg"></div><div class="toolbar" style="justify-content:center;margin-top:16px"><button id="nrmore">Load more</button></div></div>`;
+  pickDefault($("#nrtier"), ADD_DEFAULT.tier);
   newReleases();
   const go = () => guard(async () => {
     const kind = $("#kind").value, term = $("#term").value.trim();
@@ -598,6 +602,7 @@ async function renderAdd() {
         ${kind === "series" ? `<select id="m${i}"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option>${isAdmin() ? '<option value="none">None</option>' : ""}</select>` : ""}
         <label class="small"><input type="checkbox" id="s${i}" checked> Search now</label>
         <button class="primary" onclick="addItem('${kind}', ${i}, this)">${addLabel()}</button>`}</div></div>`).join("") || '<p class="muted" style="padding:12px">No results.</p>';
+    res.forEach((_, i) => { pickDefault($("#t" + i), ADD_DEFAULT.tier); pickDefault($("#q" + i), ADD_DEFAULT.profile); });
   });
   $("#go").onclick = go;
   $("#term").addEventListener("keydown", (e) => e.key === "Enter" && go());
@@ -626,6 +631,7 @@ async function newReleases() {
       : { streaming: "Out on digital in the last 4 months and now on a streaming service", cinema: "Opened in cinemas in the last 60 days", disc4k: "4K Ultra HD Blu-ray releases from the last 3 months, newest first" }[nr.where];
     const profs = isAdmin() ? await api(`/profiles/${nr.kind}/hd`).catch(() => null) : null;
     $("#nrqw").innerHTML = profs ? `<select id="nrq" title="Quality">${profileOptions(profs.profiles, "Library quality")}</select>` : "";
+    pickDefault($("#nrq"), ADD_DEFAULT.profile);
   };
   const load = async (reset) => {
     const disc = nr.kind === "movie" && nr.where === "disc4k";
@@ -726,6 +732,7 @@ async function renderProvider(pid) {
       <button class="small primary" id="dbulk" disabled>${addLabel()} selected</button><span class="small muted" id="dprog"></span></div>
     <div class="grid" id="dg"></div><div class="toolbar" style="justify-content:center;margin-top:16px"><button id="dmore">Load more</button></div>`;
   $("#dsort").value = disc.sort;
+  pickDefault($("#dtier"), ADD_DEFAULT.tier);
   if (all) { disc.kind = "movie"; $("#dsort").style.display = "none"; }
   const showMon = () => { $("#dmon").style.display = disc.kind === "tv" ? "" : "none"; $("#dxmasw").style.display = disc.kind === "movie" && !all ? "" : "none"; if ($("#dorigw")) $("#dorigw").style.display = disc.kind === "tv" ? "" : "none"; };
   showMon();
