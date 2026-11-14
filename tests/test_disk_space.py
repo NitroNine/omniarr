@@ -134,6 +134,6 @@ def test_failure_retries_capped(env, monkeypatch):
     asyncio.run(search.search_movie(m["id"]))
     for _ in range(10):
         asyncio.run(importer.process_downloads())
-    # the first grab plus 3 retries, then it waits for the backlog search
-    assert db.one("SELECT COUNT(*) c FROM downloads")["c"] == 4
-    assert db.one("SELECT COUNT(*) c FROM blocklist")["c"] == 4
+    # the first grab plus 4 retries, then it waits for the backlog search
+    assert db.one("SELECT COUNT(*) c FROM downloads")["c"] == 5
+    assert db.one("SELECT COUNT(*) c FROM blocklist")["c"] == 5
