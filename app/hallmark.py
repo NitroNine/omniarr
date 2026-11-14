@@ -52,10 +52,19 @@ def _seen() -> set[int]:
         return set()
 
 
+_lock = asyncio.Lock()
+
+
 async def sync(force: bool = False) -> dict:
-    """Add the Hallmark Christmas movies not seen before; search the ones that have already aired."""
+    """Add the Hallmark Christmas movies not seen before; search the ones that have already aired.
+    One at a time: "Check now" and the scheduled job mustn't add the same movie twice."""
     if not force and not db.setting("hallmark_auto"):
         return {"added": []}
+    async with _lock:
+        return await _sync()
+
+
+async def _sync() -> dict:
     tier = db.setting("hallmark_tier") or "hd"
     seen = _seen()
     have = {r["tmdb_id"] for r in db.q("SELECT tmdb_id FROM movies")}
