@@ -566,8 +566,8 @@ async function renderAdd() {
   <div id="results" class="panel" style="padding:0"></div>
   <div class="newrel"><div class="toolbar"><h3 style="margin:0">New releases</h3>
       <div class="tabs2" id="nrtabs" style="margin:0"><button data-k="movie">Movies</button><button data-k="tv">TV</button></div>
-      <select id="nrwhere" title="Movies: out to watch at home (digital or disc), or still in cinemas"><option value="home">Released</option><option value="cinema">In cinemas</option></select>
-      <select id="nrsvc" title="TV: only shows streaming on this service"><option value="">Every service</option></select>
+      <select id="nrwhere" title="Movies: new on streaming services, in cinemas, or out on 4K Blu-ray"><option value="streaming">Streaming</option><option value="cinema">In cinemas</option><option value="disc4k">4K disc</option></select>
+      <select id="nrsvc" title="Only titles streaming on this service"><option value="">Every service</option></select>
       <span class="small muted" id="nrnote"></span><span class="grow"></span>
       <label>${addLabel()} for <select id="nrtier">${tierOptions()}</select></label><span id="nrqw"></span>
       <select id="nrmon" title="TV: which episodes to monitor"><option value="all">All episodes</option><option value="future">Future episodes</option><option value="latest">Latest season</option></select>
@@ -604,7 +604,7 @@ async function renderAdd() {
   $("#term").addEventListener("keydown", (e) => e.key === "Enter" && go());
 }
 // ---- Add page → New releases: Movies (out at home / in cinemas, last 60 days) and new TV shows, click + Add ----
-window._nr = window._nr || { kind: "movie", where: "home" };
+window._nr = window._nr || { kind: "movie", where: "streaming" };
 async function newReleases() {
   const nr = window._nr;
   nr.page = 1;
@@ -614,22 +614,26 @@ async function newReleases() {
     $("#nrwhere").style.display = nr.kind === "movie" ? "" : "none";
     $("#nrmon").style.display = nr.kind === "tv" ? "" : "none";
     $("#nrwhere").value = nr.where;
-    $("#nrsvc").style.display = nr.kind === "tv" ? "" : "none";
-    if (nr.kind === "tv" && $("#nrsvc").options.length < 2) {
+    const svc = nr.kind === "tv" || nr.where === "streaming";
+    $("#nrsvc").style.display = svc ? "" : "none";
+    if (svc && $("#nrsvc").options.length < 2) {
       window._nrProv = window._nrProv || await api("/providers").then((d) => d.providers.filter((p) => p.kinds.includes("tv"))).catch(() => []);
       const rank = (p) => { const i = PINNED.findIndex((n) => p.name.toLowerCase().replace("+", " plus").startsWith(n)); return i < 0 ? 99 : i; };
       const sorted = [...window._nrProv].sort((a, b) => rank(a) - rank(b) || a.priority - b.priority);
       $("#nrsvc").innerHTML = '<option value="">Every service</option>' + sorted.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
       $("#nrsvc").value = nr.provider || "";
     }
-    $("#nrnote").textContent = nr.kind === "tv" ? "New shows from the last 60 days" : nr.where === "home" ? "Out on digital or disc in the last 60 days" : "Opened in cinemas in the last 60 days";
+    $("#nrnote").textContent = nr.kind === "tv" ? "New shows from the last 60 days"
+      : { streaming: "Out on digital in the last 4 months and now on a streaming service", cinema: "Opened in cinemas in the last 60 days", disc4k: "4K Ultra HD Blu-ray releases from the last 3 months, newest first" }[nr.where];
     const profs = isAdmin() ? await api(`/profiles/${nr.kind}/hd`).catch(() => null) : null;
     $("#nrqw").innerHTML = profs ? `<select id="nrq" title="Quality">${profileOptions(profs.profiles, "Library quality")}</select>` : "";
   };
   const load = async (reset) => {
-    if (reset) { nr.page = 1; $("#nrg").innerHTML = '<p class="muted">Loading…</p>'; }
-    const kind = nr.kind, d = await api(`/new/${kind}?page=${nr.page}&where=${nr.where}${kind === "tv" && nr.provider ? `&provider=${nr.provider}` : ""}`);
-    if (kind !== nr.kind || !$("#nrg")) return;  // switched tabs or left the page meanwhile
+    const disc = nr.kind === "movie" && nr.where === "disc4k";
+    if (reset) { nr.page = 1; $("#nrg").innerHTML = `<p class="muted">${disc ? "Checking recent disc releases for 4K… (a few seconds the first time)" : "Loading…"}</p>`; }
+    const kind = nr.kind, where = nr.where, svc = (kind === "tv" || where === "streaming") && nr.provider;
+    const d = await api(`/new/${kind}?page=${nr.page}&where=${where}${svc ? `&provider=${nr.provider}` : ""}`);
+    if (kind !== nr.kind || (kind === "movie" && where !== nr.where) || !$("#nrg")) return;  // switched or left meanwhile
     nr.items = reset ? d.results : [...(nr.items || []), ...d.results];
     $("#nrg").innerHTML = nr.items.map((r, i) => `<div class="card" onclick="location.hash='${titleHref(kind, r.tmdb_id)}'" title="${esc(r.overview || "")}">${poster(r.poster, r.title)}
       <div class="meta"><div class="title" title="${esc(r.title)}">${esc(r.title)}</div>

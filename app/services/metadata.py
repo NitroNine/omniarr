@@ -362,43 +362,89 @@ async def discover(kind: str, provider_id: int, page: int = 1, sort: str = "popu
             "total_results": data.get("total_results", 0), "results": results}
 
 
-NEW_DAYS = 60
+NEW_DAYS = 60          # new TV shows, movies in cinemas
+STREAMING_DAYS = 120   # movies: digital release this recent and now on a subscription service
+DISC_DAYS = 90         # movies: 4K disc released this recently
 _NO_TV_GENRES = "10763,10766,10767"  # news, soap, talk
+_4K_NOTE = re.compile(r"4k|uhd|ultra[ -]?hd|2160", re.I)
+MOVIE_WHERE = ("streaming", "cinema", "disc4k")
 
 
-async def new_releases(kind: str, page: int = 1, where: str = "home", provider: int | None = None) -> dict:
-    """Newly released titles, most popular first (Add page → New releases).
-    Movies: out at home (digital or disc, where='home') or in cinemas (where='cinema') in the region during the last
-    NEW_DAYS days. TV: shows whose first episode aired in the last NEW_DAYS days (no news, soaps or talk shows),
-    optionally only those streaming on one service (TMDB watch provider id, subscription) in the region.
-    English-language only while english_only is on."""
+def _ago(days: int) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+
+
+def _new_row(kind: str, r: dict, date: str | None = None) -> dict:
+    date = date or (r.get("release_date") if kind == "movie" else r.get("first_air_date"))
+    return {"tmdb_id": r["id"], "title": r.get("title") if kind == "movie" else r.get("name"), "year": _year(date),
+            "overview": r.get("overview"), "rating": r.get("vote_average"), "date": date or None,
+            "poster": TMDB_IMG + r["poster_path"] if r.get("poster_path") else None}
+
+
+def disc4k_date(release_dates: dict, since: str, until: str) -> str | None:
+    """Earliest 4K disc release (a physical release whose TMDB note says 4K / UHD / Ultra HD) between since and until,
+    in any country."""
+    found = [x["release_date"][:10] for c in (release_dates or {}).get("results", []) for x in c.get("release_dates", [])
+             if x.get("type") == 5 and _4K_NOTE.search(x.get("note") or "") and since <= x["release_date"][:10] <= until]
+    return min(found) if found else None
+
+
+async def new_releases(kind: str, page: int = 1, where: str = "streaming", provider: int | None = None) -> dict:
+    """Newly released titles, most popular first (Add page → New releases). English-language only while english_only is on.
+    Movies, where=
+      streaming: digital release in the region in the last STREAMING_DAYS days and now on a subscription service there
+                 (optionally one service: provider = TMDB watch provider id);
+      cinema:    in cinemas in the region in the last NEW_DAYS days;
+      disc4k:    a 4K Ultra HD Blu-ray released in the last DISC_DAYS days (TMDB release notes), one page, newest first.
+    TV: shows whose first episode aired in the last NEW_DAYS days (no news, soaps or talk shows), optionally one service."""
     today = time.strftime("%Y-%m-%d")
-    since = time.strftime("%Y-%m-%d", time.localtime(time.time() - NEW_DAYS * 86400))
+    if kind == "movie" and where == "home":  # older pages
+        where = "streaming"
     params: dict = {"page": page, "include_adult": "false", "sort_by": "popularity.desc"}
     if db.setting("english_only"):
         params["with_original_language"] = "en"
+    flatrate = {"watch_region": _region(), "with_watch_monetization_types": "flatrate"}
     if kind == "movie":
-        params.update({"region": _region(), "with_release_type": "4|5" if where == "home" else "2|3",
-                       "release_date.gte": since, "release_date.lte": today})
+        rtype, since = {"streaming": ("4", _ago(STREAMING_DAYS)), "cinema": ("2|3", _ago(NEW_DAYS)),
+                        "disc4k": ("5", _ago(DISC_DAYS))}[where]
+        params.update({"region": _region(), "with_release_type": rtype, "release_date.gte": since, "release_date.lte": today})
+        if where == "streaming":
+            params.update(flatrate, **({"with_watch_providers": provider} if provider else {}))
     else:
-        params.update({"first_air_date.gte": since, "first_air_date.lte": today, "without_genres": _NO_TV_GENRES})
+        params.update({"first_air_date.gte": _ago(NEW_DAYS), "first_air_date.lte": today, "without_genres": _NO_TV_GENRES})
         if provider:
-            params.update(with_watch_providers=provider, watch_region=_region(), with_watch_monetization_types="flatrate")
+            params.update(flatrate, with_watch_providers=provider)
+    path = "/discover/movie" if kind == "movie" else "/discover/tv"
 
     async def fetch():
-        data = await _tmdb("/discover/movie" if kind == "movie" else "/discover/tv", **params)
-        results = []
-        for r in data.get("results", []):
-            date = r.get("release_date") if kind == "movie" else r.get("first_air_date")
-            results.append({
-                "tmdb_id": r["id"], "title": r.get("title") if kind == "movie" else r.get("name"), "year": _year(date),
-                "overview": r.get("overview"), "rating": r.get("vote_average"), "date": date or None,
-                "poster": TMDB_IMG + r["poster_path"] if r.get("poster_path") else None,
-            })
+        data = await _tmdb(path, **params)
         return {"page": data.get("page", page), "total_pages": min(data.get("total_pages", 1), 500),
-                "total_results": data.get("total_results", 0), "results": results}
-    key = f"new:{kind}:{where}:{page}:{today}:{params.get('with_original_language', '')}:{_region()}:{provider or ''}"
-    return await _cached(key, fetch)
+                "total_results": data.get("total_results", 0), "results": [_new_row(kind, r) for r in data.get("results", [])]}
+
+    async def fetch_disc4k():
+        # TMDB can't filter on disc format: read every recent disc release's notes (about a hundred titles)
+        rows, pg, pages = [], 1, 1
+        while pg <= min(pages, 10):
+            data = await _tmdb(path, **{**params, "page": pg})
+            rows += data.get("results", [])
+            pages, pg = data.get("total_pages", 1), pg + 1
+        sem = asyncio.Semaphore(8)
+
+        async def check(r):
+            async with sem:
+                try:
+                    rd = await _cached(f"rd:{r['id']}", lambda: _tmdb(f"/movie/{r['id']}/release_dates"))
+                except Exception:  # noqa: BLE001
+                    return None
+            d = disc4k_date(rd, params["release_date.gte"], today)
+            return _new_row(kind, r, d) if d else None
+        found = [x for x in await asyncio.gather(*(check(r) for r in rows)) if x]
+        found.sort(key=lambda x: x["date"], reverse=True)
+        return {"page": 1, "total_pages": 1, "total_results": len(found), "results": found}
+
+    disc = kind == "movie" and where == "disc4k"
+    key = f"new:{kind}:{where}:{1 if disc else page}:{today}:{params.get('with_original_language', '')}:{_region()}:{provider or ''}"
+    return await _cached(key, fetch_disc4k if disc else fetch)
 
 
 async def tvdb_id_for_tmdb_tv(tmdb_id: int) -> int | None:

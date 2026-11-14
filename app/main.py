@@ -771,11 +771,12 @@ async def providers():
 
 
 @app.get("/api/new/{kind}")
-async def new_releases(kind: str, page: int = 1, where: str = "home", provider: int | None = None):
-    """Add page → New releases: recent movies (at home / in cinemas) or new TV shows, with library state."""
-    if kind not in ("movie", "tv") or where not in ("home", "cinema"):
+async def new_releases(kind: str, page: int = 1, where: str = "streaming", provider: int | None = None):
+    """Add page → New releases: recent movies (streaming / in cinemas / 4K disc) or new TV shows, with library state.
+    provider (a streaming service) applies to TV and to streaming movies."""
+    if kind not in ("movie", "tv") or where not in (*metadata.MOVIE_WHERE, "home"):
         raise HTTPException(400)
-    data = dict(await metadata.new_releases(kind, max(1, page), where, provider if kind == "tv" else None))
+    data = dict(await metadata.new_releases(kind, max(1, page), where, provider))
     table = "movies" if kind == "movie" else "series"
     have: dict[int, list[str]] = {}
     for r in db.q(f"SELECT tmdb_id, tier FROM {table} WHERE tmdb_id IS NOT NULL ORDER BY tier"):
