@@ -4,3 +4,4 @@ __pycache__/
 /config/
 /dist/
 *.bundle
+.claude/settings.local.json
