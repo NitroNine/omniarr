@@ -19,7 +19,7 @@ moved to local; this file carries the context over.
   `decision.profile_for(..., item=row)`); then only the library's upgrades on/off and score cutoff apply.
 - **Newznab indexers** + **NZBGet** (JSON-RPC); import with TRaSH naming, blocklist + re-search.
   **Built-in downloader** (default, `download_client=builtin`): NZBGet's official Linux release is baked
-  into the image at `/opt/nzbget` (pinned version + sha256 in the Dockerfile). `services/downloader.py`
+  into the image at `/opt/nzbget` (pinned version + sha256 in the Dockerfile). Weekly workflow `nzbget-update.yml` (Mon 09:00 UTC + manual) bumps the pin to the latest stable nzbgetcom release, commits as github-actions[bot] and starts `docker.yml`; Unraid's nightly container auto-update installs it. `services/downloader.py`
   renders `/config/nzbget/nzbget.conf` from its template + Omniarr settings (table `usenet_servers`,
   `download_dir` empty = template's `/downloads` mount if present, else `/data/usenet`, speed limit), runs `nzbget -s` on 127.0.0.1:16789 with a
   generated password, restarts it if it dies, `reload`s on settings changes. Grabs are refused (`search.NoSpace`, HTTP 507) unless NZBGet's

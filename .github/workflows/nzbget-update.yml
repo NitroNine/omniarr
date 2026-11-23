@@ -1,0 +1,64 @@
+name: Update built-in NZBGet
+
+# Weekly: if nzbgetcom/nzbget has a newer stable release (pre-releases are skipped), put its
+# version and sha256 into the Dockerfile, commit, and start the image build (a push made with
+# GITHUB_TOKEN doesn't start other workflows, so it's started by hand). The build runs the
+# tests first and the Dockerfile checks the sha256 and runs `nzbget -v`, so a broken release
+# never reaches the published image.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"   # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: nzbget-update
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Compare with the latest NZBGet release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current=$(sed -n 's/^ARG NZBGET_VERSION=//p' Dockerfile)
+          tag=$(gh api repos/nzbgetcom/nzbget/releases/latest --jq '.tag_name')   # never a pre-release
+          latest=${tag#v}
+          echo "Dockerfile: $current, latest release: $latest"
+          if ! [[ "$latest" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "Unexpected release tag '$tag'; leaving it alone." >&2; exit 1
+          fi
+          newest=$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)
+          if [ "$latest" = "$current" ] || [ "$newest" != "$latest" ]; then
+            echo "Already up to date."; echo "update=no" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          url="https://github.com/nzbgetcom/nzbget/releases/download/v${latest}/nzbget-${latest}-bin-linux.run"
+          curl -fsSL -o /tmp/nzbget.run "$url"
+          sha=$(sha256sum /tmp/nzbget.run | cut -d' ' -f1)
+          sed -i -e "s/^ARG NZBGET_VERSION=.*/ARG NZBGET_VERSION=${latest}/" \
+                 -e "s/^ARG NZBGET_SHA256=.*/ARG NZBGET_SHA256=${sha}/" Dockerfile
+          git diff --stat
+          { echo "update=yes"; echo "old=$current"; echo "new=$latest"; } >> "$GITHUB_OUTPUT"
+
+      - name: Commit and start the image build
+        if: steps.check.outputs.update == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Built-in NZBGet ${{ steps.check.outputs.old }} → ${{ steps.check.outputs.new }}"
+          git push origin HEAD:main
+          gh workflow run docker.yml --ref main
