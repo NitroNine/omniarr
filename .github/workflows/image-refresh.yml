@@ -31,9 +31,10 @@ jobs:
       - name: Build a fresh copy and compare it with the published image
         id: compare
         env:
-          IMAGE: ghcr.io/${{ github.repository }}:latest
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          IMAGE="ghcr.io/${REPO,,}:latest"   # image names are lowercase
           docker build --pull --no-cache -q -t omniarr-fresh . >/dev/null
           docker pull -q "$IMAGE" >/dev/null
           parts() {
