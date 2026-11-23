@@ -1,0 +1,58 @@
+name: Refresh image when its parts have updates
+
+# Weekly: build the image fresh (no cache, newest python:3.12-slim) and compare what's inside it
+# (Python version, every Debian package incl. MediaInfo, tini and security fixes, every pip package,
+# NZBGet) with the published :latest. If anything differs, start docker.yml, which runs the tests
+# and publishes the rebuild; Unraid's nightly auto-update then installs it. Runs an hour after
+# nzbget-update.yml so an NZBGet bump is already published. Stays on Python 3.12 and inside the
+# version ranges in requirements.txt (bumping those is a code change, done by hand).
+
+on:
+  schedule:
+    - cron: "0 10 * * 1"   # Mondays 10:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+  actions: write
+
+concurrency:
+  group: image-refresh
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Build a fresh copy and compare it with the published image
+        id: compare
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:latest
+        run: |
+          set -euo pipefail
+          docker build --pull --no-cache -q -t omniarr-fresh . >/dev/null
+          docker pull -q "$IMAGE" >/dev/null
+          parts() {
+            docker run --rm --entrypoint sh "$1" -c \
+              'python -V; dpkg-query -W -f "deb \${Package} \${Version}\n"; pip freeze | sed "s/^/pip /"; /opt/nzbget/nzbget -v' \
+              | sort
+          }
+          parts "$IMAGE" > published.txt
+          parts omniarr-fresh > fresh.txt
+          if diff -u published.txt fresh.txt > changes.diff; then
+            echo "Nothing newer; the published image is current." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "rebuild=no" >> "$GITHUB_OUTPUT"
+          else
+            { echo "Newer parts found:"; echo '```diff'; grep -E '^[-+][^-+]' changes.diff; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "rebuild=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Start the image build
+        if: steps.compare.outputs.rebuild == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docker.yml --ref main
