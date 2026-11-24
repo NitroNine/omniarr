@@ -203,3 +203,5 @@ table.kv tr:last-child th, table.kv tr:last-child td { border-bottom: 0; }
 .abbook .add-ctrls, .abbook .toolbar { margin-top: 10px; }
 .absum { white-space: pre-line; color: var(--muted); font-size: 14px; }
 @media (max-width: 600px) { .abbook { flex-direction: column; } .abbook > img { width: 140px; } }
+.abgenre { margin-top: 18px; }
+.abgenre h3 { margin: 0; }

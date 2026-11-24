@@ -976,7 +976,8 @@ routes.activity = (sub) => renderActivity(sub || "queue");
 
 // ------------------------------------------------------------ audiobooks ---
 // Audible catalog → pick an edition → Omniarr finds it on the indexers → NZBGet → the audiobooks folder.
-const AB = { books: [], term: "", results: null, rows: null };
+const AB = { books: [], term: "", results: null, rows: null, genres: null,
+  genre: (() => { try { return localStorage.getItem("omniarr-ab-genre") || ""; } catch { return ""; } })() };
 function hm(min) { if (!min) return ""; const h = Math.floor(min / 60), m = min % 60; return h ? `${h} h${m ? " " + m + " min" : ""}` : `${m} min`; }
 function abByline(b) {
   const s = (b.series || [])[0];
@@ -1003,7 +1004,8 @@ function abCard(b, onclick) {
 async function renderAudiobooks() {
   view.innerHTML = `<div class="toolbar"><h2 class="grow">Audiobooks</h2>
     <input id="abterm" class="grow" placeholder="Title, author or narrator — or an Audible ASIN" value="${esc(AB.term)}"><button class="primary" id="abgo">Search Audible</button></div>
-    <div id="abres"></div><div id="ablib"></div><div id="abdisc"></div>`;
+    <div id="abres"></div><div id="ablib"></div>
+    <div class="toolbar abgenre"><h3 class="grow">Browse Audible</h3><label class="small muted" for="abgen">Genre</label><select id="abgen"><option value="">All genres</option></select></div><div id="abdisc"></div>`;
   const go = () => guard(async () => {
     AB.term = $("#abterm").value.trim();
     if (!AB.term) { AB.results = null; drawAbResults(); return; }
@@ -1022,12 +1024,33 @@ async function renderAudiobooks() {
       <div class="grid books">${lib.books.map((b) => abCard(b, `abOpen(${b.id})`)).join("")}</div>
       ${isAdmin() ? `<p class="small muted">Books go into <code>${esc(lib.root)}</code> as Author / Series / Book NN - Title. Audible store: ${esc(lib.region.toUpperCase())} (<a href="#/settings/general">change</a>).</p>` : ""}` : "";
   });
-  if (!AB.rows) AB.rows = await api("/audiobooks/discover").catch((e) => [{ title: "Popular", items: [], error: e.message }]);
-  if (!$("#abdisc")) return;
-  $("#abdisc").innerHTML = AB.rows.map((r, ri) => `<h3>${esc(r.title)}</h3>${r.error ? `<p class="rej">${esc(r.error)}</p>` : ""}
-    <div class="grid books">${r.items.map((b, i) => abCard(b, `abOpenCat(${ri}, ${i})`)).join("") || '<p class="muted">Nothing right now.</p>'}</div>`).join("");
+  if (!AB.genres) AB.genres = await api("/audiobooks/genres").catch(() => []);
+  $("#abgen").innerHTML = '<option value="">All genres</option>' + AB.genres.map((g) => `<option value="${g.key}">${esc(g.label)}</option>`).join("");
+  $("#abgen").value = AB.genres.some((g) => g.key === AB.genre) ? AB.genre : "";
+  $("#abgen").onchange = () => {
+    AB.genre = $("#abgen").value;
+    try { localStorage.setItem("omniarr-ab-genre", AB.genre); } catch { /* remembered for this visit only */ }
+    AB.rows = null;
+    drawAbDiscover();
+  };
+  await drawAbDiscover();
   // download progress on the library cards, every 15 s while this page is open (one timer for the whole session)
   if (!AB.timer) AB.timer = setInterval(() => { if (location.hash === "#/audiobooks" && $("#modal").classList.contains("hidden")) abRefresh(); }, 15000);
+}
+async function drawAbDiscover() {
+  const el = $("#abdisc");
+  if (!el) return;
+  const genre = AB.genre;
+  if (!AB.rows) {
+    el.innerHTML = '<p class="muted">Loading…</p>';
+    const rows = await api("/audiobooks/discover?genre=" + encodeURIComponent(genre)).catch((e) => [{ title: "Popular", items: [], error: e.message }]);
+    if (genre !== AB.genre) return;  // the genre changed again meanwhile
+    AB.rows = rows;
+  }
+  if (!$("#abdisc")) return;
+  const gl = (AB.genres || []).find((g) => g.key === AB.genre);
+  $("#abdisc").innerHTML = AB.rows.map((r, ri) => `<h3>${esc(r.title)}${gl ? ` <span class="muted small">· ${esc(gl.label)}</span>` : ""}</h3>${r.error ? `<p class="rej">${esc(r.error)}</p>` : ""}
+    <div class="grid books">${r.items.map((b, i) => abCard(b, `abOpenCat(${ri}, ${i})`)).join("") || '<p class="muted">Nothing right now.</p>'}</div>`).join("");
 }
 async function abRefresh() {
   const lib = await api("/audiobooks").catch(() => null);

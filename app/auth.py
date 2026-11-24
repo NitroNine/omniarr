@@ -190,7 +190,7 @@ USER_ROUTES = [
     ("GET", r"/api/providers(/\d+/(movie|tv))?"), ("GET", r"/api/new/(movie|tv)"),
     ("GET", r"/api/movies(/\d+)?"), ("GET", r"/api/series(/\d+)?"), ("GET", r"/api/collections"),
     ("GET", r"/api/info/(movie|tv)/\d+"),
-    ("GET", r"/api/audiobooks/(lookup|discover)"), ("GET", r"/api/audiobooks/book/\w+"), ("GET", r"/api/audiobooks"),
+    ("GET", r"/api/audiobooks/(lookup|discover|genres)"), ("GET", r"/api/audiobooks/book/\w+"), ("GET", r"/api/audiobooks"),
     ("GET", r"/api/requests"), ("POST", r"/api/requests"), ("DELETE", r"/api/requests/\d+"),
 ]
 _USER_RX = [(m, re.compile(p + "$")) for m, p in USER_ROUTES]

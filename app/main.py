@@ -1270,9 +1270,16 @@ async def audiobook_lookup(term: str):
     return _with_state(await audible.search(term))
 
 
+@app.get("/api/audiobooks/genres")
+def audiobook_genres():
+    return [{"key": k, "label": label} for k, label, _path in audible.GENRES]
+
+
 @app.get("/api/audiobooks/discover")
-async def audiobook_discover():
-    rows = await audible.discover()
+async def audiobook_discover(genre: str = ""):
+    if genre and genre not in {g[0] for g in audible.GENRES}:
+        raise HTTPException(400, "Unknown genre")
+    rows = await audible.discover(genre or None)
     return [{**r, "items": _with_state([dict(b) for b in r["items"]])} for r in rows]
 
 

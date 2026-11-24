@@ -117,15 +117,78 @@ async def get_book(asin: str) -> dict:
     return await _cached(f"book:{region()}:{asin}", 6 * 3600, fetch)
 
 
-async def discover() -> list[dict]:
-    """Rows for the Audiobooks page: best sellers (out now), and those released in the last 90 days."""
+# Genre menu on the Audiobooks page: (key, label, path of Audible category names). Each store numbers its
+# categories differently, so the ids are looked up by name (`category_id`). FALLBACK: for a store without that
+# category (Audible Canada has no adult Action & Adventure), a broader category plus search words.
+GENRES = [
+    ("scifi", "Science Fiction", ("Science Fiction & Fantasy", "Science Fiction")),
+    ("fantasy", "Fantasy", ("Science Fiction & Fantasy", "Fantasy")),
+    ("action", "Action & Adventure", ("Literature & Fiction", "Action & Adventure")),
+    ("mystery", "Mystery & Thriller", ("Mystery, Thriller & Suspense",)),
+    ("horror", "Horror", ("Literature & Fiction", "Horror")),
+    ("romance", "Romance", ("Romance",)),
+    ("comedy", "Comedy", ("Comedy & Humor",)),
+    ("biography", "Biographies & Memoirs", ("Biographies & Memoirs",)),
+    ("history", "History", ("History",)),
+    ("kids", "Kids", ("Children's Audiobooks",)),
+]
+FALLBACK = {"action": (("Literature & Fiction",), "action adventure")}
+
+
+async def category_id(genre: str) -> str | None:
+    path = next((g[2] for g in GENRES if g[0] == genre), None)
+    return await _category_at(path) if path else None
+
+
+async def genre_filter(genre: str) -> dict | None:
+    """Search parameters for a genre's best sellers in this store: its category, or the fallback."""
+    cid = await category_id(genre)
+    if cid:
+        return {"category_id": cid}
+    if genre in FALLBACK:
+        path, words = FALLBACK[genre]
+        cid = await _category_at(path)
+        if cid:
+            return {"category_id": cid, "keywords": words}
+    return None
+
+
+async def _category_at(path: tuple) -> str | None:
+    async def fetch():
+        url = f"https://{REGIONS[region()][0]}/1.0/catalog/categories"
+        try:
+            async with httpx.AsyncClient(timeout=20, headers={"Accept": "application/json", "User-Agent": "omniarr"}) as c:
+                r = await c.get(url, params={"categories_num_levels": 2})
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            raise AudibleError(f"Audible's genre list didn't load: {type(e).__name__}") from None
+        return r.json().get("categories") or []
+    level = await _cached(f"categories:{region()}", 24 * 3600, fetch)
+    found = None
+    for name in path:
+        found = next((c for c in level if (c.get("name") or "").lower() == name.lower()), None)
+        if not found:
+            return None
+        level = found.get("children") or []
+    return found and found.get("id")
+
+
+async def discover(genre: str | None = None) -> list[dict]:
+    """Rows for the Audiobooks page: best sellers (out now), and those released in the last 90 days;
+    with a genre, that genre's own best-seller list."""
     async def fetch():
         from datetime import date, timedelta
         today = date.today().isoformat()
         cutoff = (date.today() - timedelta(days=90)).isoformat()
+        params = {"products_sort_by": "BestSellers", "num_results": 50}
+        if genre:
+            filt = await genre_filter(genre)
+            if not filt:
+                return [{"id": "popular", "title": "Popular", "items": [], "error": "This Audible store has no such genre"}]
+            params.update(filt)
         rows = []
         try:
-            best = _books(await _get("", {"products_sort_by": "BestSellers", "num_results": 50}), language_only=True)
+            best = _books(await _get("", params), language_only=True)
         except AudibleError as e:
             return [{"id": "popular", "title": "Popular", "items": [], "error": str(e)}]
         out = [b for b in best if not b["release_date"] or b["release_date"] <= today]  # no pre-orders
@@ -134,4 +197,4 @@ async def discover() -> list[dict]:
         new = [b for b in best if b["release_date"] and cutoff <= b["release_date"] <= today]
         rows.append({"id": "new", "title": "New in the last 90 days", "items": new[:24]})
         return rows
-    return await _cached(f"discover:{region()}", 1800, fetch)
+    return await _cached(f"discover:{region()}:{genre or ''}", 1800, fetch)

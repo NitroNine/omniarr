@@ -192,3 +192,48 @@ def test_api(client, env, monkeypatch):
     u.post("/api/auth/login", json={"username": "kid", "password": "password123"})
     assert u.get("/api/audiobooks/lookup", params={"term": "x"}).status_code == 200
     assert u.post("/api/audiobooks", json={"asin": "B08G9PRS1K"}).status_code == 403
+
+
+def test_genre_menu(client, monkeypatch):
+    cats = [{"id": "1", "name": "Science Fiction & Fantasy", "children": [{"id": "11", "name": "Fantasy"}, {"id": "12", "name": "Science Fiction"}]},
+            {"id": "2", "name": "Literature & Fiction", "children": [{"id": "21", "name": "Action & Adventure"}, {"id": "22", "name": "Horror"}]},
+            {"id": "3", "name": "Romance", "children": []}]
+    asked = {}
+
+    class Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"categories": cats}
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        async def get(self, url, params=None):
+            return Resp()
+
+    async def get(path, params):
+        asked.update(params)
+        return {"products": [{"asin": "B1", "title": "Dune", "language": "english", "release_date": "2020-01-01"},
+                             {"asin": "B2", "title": "Pre-order", "language": "english", "release_date": "2099-01-01"}]}
+    audible._cache.clear()
+    monkeypatch.setattr(audible.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(audible, "_get", get)
+    g = client.get("/api/audiobooks/genres").json()
+    assert len(g) == 10 and g[0] == {"key": "scifi", "label": "Science Fiction"}
+    assert asyncio.run(audible.category_id("action")) == "21"
+    assert asyncio.run(audible.category_id("history")) is None  # not in this store's list
+    cats[1]["children"].pop(0)  # a store without Literature › Action & Adventure (Audible Canada)
+    audible._cache.clear()
+    assert asyncio.run(audible.genre_filter("action")) == {"category_id": "2", "keywords": "action adventure"}
+    rows = client.get("/api/audiobooks/discover", params={"genre": "scifi"}).json()
+    assert asked["category_id"] == "12" and [b["title"] for b in rows[0]["items"]] == ["Dune"]
+    assert client.get("/api/audiobooks/discover", params={"genre": "nope"}).status_code == 400

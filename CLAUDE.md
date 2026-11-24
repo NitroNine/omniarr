@@ -55,7 +55,7 @@ moved to local; this file carries the context over.
   /mnt/user/media/Audiobooks, which Theremin Web serves since Audiobookshelf was removed 2026-11-24; Theremin
   scans it every 5 min and joins MP3 books into .m4b). Books already in the folder are matched by ASIN in the
   folder name or the title (`library_index`, `_folder_key`). Backlog search includes wanted books (5 per run).
-  Requests: kind `audiobook`, `source` = ASIN, target_id 0. Tests `tests/test_audiobooks.py`.
+  Requests: kind `audiobook`, `source` = ASIN, target_id 0. Genre menu (2026-11-24, Brendan): 10 genres (`audible.GENRES`), each store's category id looked up by name (`categories_num_levels=2`, cached 24 h); `discover(genre)` = that category's best sellers; Audible CA has no adult Action & Adventure → `FALLBACK` Literature & Fiction + keywords "action adventure". Choice remembered per browser (localStorage `omniarr-ab-genre`). Tests `tests/test_audiobooks.py`.
 - **Library import** of existing folders (`app/scanner.py`), **collections/universes**
   (TMDB collections and keywords, `app/collections_.py`), **Streaming tab** (TMDB watch providers),
   **user accounts + requests** with admin approval / per-user auto-approve and 4K permission
