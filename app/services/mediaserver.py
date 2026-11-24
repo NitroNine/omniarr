@@ -101,13 +101,13 @@ def server_path(path: str, libs: list[dict]) -> tuple[dict, str] | None:
     if mapped:
         return None
     parts = path.split("/")
-    lower = [x.lower() for x in parts[:-1]]
+    lower = [x.lower() for x in parts]  # the last part too: "Scan everything" sends the library folders themselves
     for lib in libs:  # match by the root folder's name (any case): /data/TV/Show ↔ /mnt/user/media/TV
         for root in lib["paths"]:
             name = os.path.basename(root.rstrip("/")).lower()
             if name and name in lower:
                 i = len(lower) - 1 - lower[::-1].index(name)
-                return lib, root.rstrip("/") + "/" + "/".join(parts[i + 1:])
+                return lib, "/".join([root.rstrip("/"), *parts[i + 1:]])
     return None
 
 

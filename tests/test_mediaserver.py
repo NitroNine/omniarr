@@ -31,6 +31,7 @@ def test_paths_matched_by_folder_name_or_mapping(env, monkeypatch):
     assert lib["id"] == "2" and p == "/mnt/user/media/TV/DIG (2026)"
     assert mediaserver.server_path("/data/movies/Heat (1995)", libs)[1] == "/mnt/user/media/movies/Heat (1995)"
     assert mediaserver.server_path("/data/other/x", libs) is None
+    assert mediaserver.server_path("/data/TV", libs)[1] == "/mnt/user/media/TV"  # Scan everything now
     xmas = [{"id": "3", "name": "Christmas", "paths": ["/christmas movies"]}]
     assert mediaserver.server_path("/data/Christmas Movies/Elf (2003)", xmas)[1] == "/christmas movies/Elf (2003)"
     db.save_settings({"media_server_path_from": "/data", "media_server_path_to": "/mnt/user/media"})
