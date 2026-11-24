@@ -9,7 +9,7 @@ from . import collections_, db, library
 from .services import metadata
 
 # tables are created in db.SCHEMA (users, sessions, requests)
-KINDS = ("movie", "tv", "collection")
+KINDS = ("movie", "tv", "collection", "audiobook")
 
 
 def ensure_schema() -> None:
@@ -19,6 +19,11 @@ def ensure_schema() -> None:
 async def _describe(kind: str, target_id: int, source: str | None) -> tuple[int, str | None, dict]:
     """Validate the target with the metadata provider and get a title/poster to show the admin.
     Returns the (possibly translated) target id and its description."""
+    if kind == "audiobook":  # source = the ASIN (Audible ids aren't numbers); target_id stays 0
+        from .services import audible
+        b = await audible.get_book(source)
+        return 0, source, {"title": b["title"], "year": int(b["release_date"][:4]) if b["release_date"][:4].isdigit() else None,
+                           "poster": b["cover_small"]}
     if kind == "movie":
         m = await metadata.movie_details(target_id)
         return target_id, None, {"title": m["title"], "year": m.get("year"), "poster": m.get("poster")}
@@ -33,6 +38,8 @@ async def _describe(kind: str, target_id: int, source: str | None) -> tuple[int,
 
 def _in_library(kind: str, target_id: int, source: str | None = None, tier: str = "hd") -> bool:
     """True when every requested version ('both' = 1080p and 4K) is already in the library."""
+    if kind == "audiobook":
+        return bool(db.one("SELECT 1 FROM audiobooks WHERE asin=? AND folder IS NOT NULL", (source,)))
     if kind not in ("movie", "tv"):
         return False
     table, col = ("movies", "tmdb_id") if kind == "movie" else ("series", "tmdb_id" if source == "tmdb" else "tvdb_id")
@@ -43,12 +50,16 @@ def _in_library(kind: str, target_id: int, source: str | None = None, tier: str 
 async def create(user: dict, body: dict) -> dict:
     kind = body.get("kind")
     if kind not in KINDS:
-        raise ValueError("kind must be movie, tv or collection")
-    tier = body.get("tier") or "hd"
+        raise ValueError("kind must be movie, tv, collection or audiobook")
+    tier = "hd" if kind == "audiobook" else (body.get("tier") or "hd")
     library.tiers_of(tier)  # hd | uhd | both
     if tier != "hd" and not user["allow_uhd"]:
         raise PermissionError("Your account can't request 4K. Ask an admin to allow it.")
-    if kind == "tv":
+    if kind == "audiobook":
+        source, raw_id = str(body.get("asin") or "").strip().upper(), 0
+        if not source:
+            raise ValueError("Missing ASIN")
+    elif kind == "tv":
         source = "tmdb" if body.get("tmdb_id") else "tvdb"
         raw_id = body.get("tmdb_id") or body.get("tvdb_id")
     else:
@@ -56,7 +67,7 @@ async def create(user: dict, body: dict) -> dict:
         source = body.get("source") if kind == "collection" else None
         if kind == "collection" and source not in ("collection", "keyword"):
             source = "collection"
-    if not raw_id:
+    if not raw_id and kind != "audiobook":
         raise ValueError("Missing id")
     target_id, source, info = await _describe(kind, int(raw_id), source)
     if _in_library(kind, target_id, source, tier) or (
@@ -70,7 +81,7 @@ async def create(user: dict, body: dict) -> dict:
     rid = db.insert("requests", {"user_id": user["id"], "kind": kind, "target_id": target_id, "source": source,
                                  "title": info["title"], "year": info["year"], "poster": info["poster"], "tier": tier,
                                  "options": json.dumps(options)})
-    db.log(f"{user['username']} requested {info['title']} [{_tier_label(tier)}]")
+    db.log(f"{user['username']} requested {info['title']} [{'audiobook' if kind == 'audiobook' else _tier_label(tier)}]")
     if user["auto_approve"] or user["role"] == "admin":
         return await approve(rid, user, auto=True)
     return get(rid)
@@ -84,6 +95,12 @@ async def fulfill(req: dict) -> int | None:
     """Add the requested item to the library; returns the movie/series/collection id."""
     opts = req["options"] if isinstance(req["options"], dict) else json.loads(req["options"] or "{}")
     search = bool(opts.get("search", True))
+    if req["kind"] == "audiobook":
+        from . import audiobooks
+        row = db.one("SELECT id FROM audiobooks WHERE asin=?", (req["source"],))
+        if row:  # already tracked (still downloading or wanted): the request just follows it
+            return row["id"]
+        return (await audiobooks.add(req["source"], search=search))["id"]
     if req["kind"] == "movie":
         added = await library.add_movie_tiers(req["target_id"], req["tier"])
         from . import search as search_mod
@@ -164,6 +181,9 @@ def _decorate(rows: list[dict]) -> list[dict]:
         if r["kind"] == "movie":
             m = db.one("SELECT file_path FROM movies WHERE id=?", (r["item_id"],))
             r["progress"] = {"have": int(bool(m and m["file_path"])), "total": 1}
+        elif r["kind"] == "audiobook":
+            b = db.one("SELECT folder FROM audiobooks WHERE id=?", (r["item_id"],))
+            r["progress"] = {"have": int(bool(b and b["folder"])), "total": 1}
         elif r["kind"] == "tv":
             c = db.one("SELECT SUM(file_path IS NOT NULL) have, COUNT(*) total FROM episodes WHERE series_id=? AND monitored=1 "
                        "AND air_date <= date('now')", (r["item_id"],))

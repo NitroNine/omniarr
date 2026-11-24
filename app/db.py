@@ -26,7 +26,16 @@ CREATE TABLE IF NOT EXISTS usenet_servers (
 CREATE TABLE IF NOT EXISTS indexers (
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, apikey TEXT NOT NULL,
   movie_categories TEXT DEFAULT '2000', tv_categories TEXT DEFAULT '5000',
-  enabled INTEGER DEFAULT 1, priority INTEGER DEFAULT 25
+  enabled INTEGER DEFAULT 1, priority INTEGER DEFAULT 25, audio_categories TEXT DEFAULT '3030'
+);
+
+-- audiobooks, one row per Audible edition (ASIN); folder = where the book is in the audiobooks folder
+CREATE TABLE IF NOT EXISTS audiobooks (
+  id INTEGER PRIMARY KEY, asin TEXT UNIQUE NOT NULL, title TEXT NOT NULL, subtitle TEXT,
+  authors TEXT DEFAULT '[]', narrators TEXT DEFAULT '[]', minutes INTEGER, abridged INTEGER DEFAULT 0,
+  release_date TEXT, series TEXT DEFAULT '[]', cover TEXT, language TEXT, publisher TEXT, summary TEXT,
+  region TEXT, monitored INTEGER DEFAULT 1, folder TEXT, file_size INTEGER,
+  added TEXT DEFAULT CURRENT_TIMESTAMP, last_search TEXT, imported TEXT
 );
 
 -- one row per version: a title can have a 1080p row ('hd') and a 4K row ('uhd')
@@ -61,7 +70,8 @@ CREATE TABLE IF NOT EXISTS downloads (
   episode_ids TEXT, release_title TEXT NOT NULL, indexer TEXT, guid TEXT, size INTEGER,
   quality TEXT, score INTEGER, custom_formats TEXT, nzbget_id INTEGER,
   status TEXT NOT NULL DEFAULT 'queued', progress REAL DEFAULT 0, message TEXT,
-  dest_dir TEXT, added TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP
+  dest_dir TEXT, added TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP,
+  audiobook_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS blocklist (
@@ -139,6 +149,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "nzbget_category_movies": "movies",
     "nzbget_category_tv": "tv",
     "nzbget_category_christmas": "christmas",  # movies marked Christmas download into their own category
+    "nzbget_category_audiobooks": "audiobooks",
+    # Audiobooks (audiobooks.py): Audible store for the catalog, and the folder books go into as
+    # <author>/<series>/Book NN - <title> or <author>/<title>. Empty = the first of /data/media/audiobooks,
+    # /data/audiobooks, /data/Audiobooks … that exists.
+    "audible_region": "us",
+    "root_audiobooks": "",
     # root folders: one for movies, one for TV. 1080p and 4K versions of a title share its folder.
     "root_movies": "/data/media/movies",
     "root_tv": "/data/media/tv",
@@ -196,6 +212,8 @@ MIGRATIONS = [
     ("movies", "christmas", "INTEGER DEFAULT 0"),
     ("movies", "profile", "TEXT"),  # own TRaSH profile; NULL = the library's
     ("series", "profile", "TEXT"),
+    ("indexers", "audio_categories", "TEXT DEFAULT '3030'"),
+    ("downloads", "audiobook_id", "INTEGER"),
 ]
 
 

@@ -263,6 +263,17 @@ async def search_episodes(series: dict, season: int, episode: int | None = None,
     return await _fan_out(one, enough)
 
 
+async def search_audiobook(queries: list[str], enough=None) -> list[Release]:
+    """Plain text searches in each indexer's audiobook categories (3030 unless set otherwise)."""
+    async def one(ix):
+        cat = ix.get("audio_categories") or "3030"
+        res: list[Release] = []
+        for q in queries:
+            res += await _query(ix, {"t": "search", "q": q, "cat": cat})
+        return res
+    return await _fan_out(one, enough)
+
+
 async def rss(kind: str) -> list[Release]:
     async def one(ix):
         cat = ix["movie_categories"] if kind == "movie" else ix["tv_categories"]

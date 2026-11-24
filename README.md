@@ -1,6 +1,6 @@
 # Omniarr
 
-Movies and TV in one self-hosted app, built for Unraid:
+Movies, TV and audiobooks in one self-hosted app, built for Unraid:
 
 - **Metadata:** movies and TV come from **The Movie Database (TMDB)**, which needs one free API key (see [Metadata](#metadata-tmdb)).
 - **Quality, custom formats, scores, size limits and naming** are all imported from **[TRaSH Guides](https://trash-guides.info)**. Omniarr pulls TRaSH's JSON straight from GitHub and re-syncs it daily.
@@ -10,6 +10,7 @@ Movies and TV in one self-hosted app, built for Unraid:
 - **User accounts and requests:** family and friends get their own logins and can request movies, shows and collections. An admin approves each request, or turns on auto-approve for users they trust.
 - **Streaming tab:** browse Netflix, Apple TV+, Prime Video, Disney+, Max, Hulu, Paramount+, Peacock and more. Click a service's logo to see the movies and TV shows it offers, and add them with one click.
 - **Library import:** brings in media that's already in your movies and TV folders. Omniarr matches each folder on TMDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
+- **Audiobooks:** search Audible's catalog (any store: US, Canada, UK, Germany, …) and pick the exact edition — narrator, unabridged or abridged, language. Omniarr searches your indexers' audiobook categories (3030 by default), scores each release against that edition, downloads the best match with the same NZBGet and files it as `Author/Series/Book 01 - Title` (or `Author/Title`) with its cover. Books already in the folder are recognised. Users can request audiobooks like movies. Ideas and matching rules from [Spokarr](https://github.com/BlugDeg/Spokarr).
 - **Quality limits per library:** choose which qualities are allowed (your maximum and minimum), the quality to *upgrade until*, and whether upgrades happen at all.
 - **Downloads:** a **built-in downloader** (NZBGet, shipped inside the image and run by Omniarr — no second container). Add your Usenet provider under **Settings → Downloads**. A separate NZBGet still works if you prefer. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the title's folder. Failed downloads are blocklisted and searched again.
 
@@ -284,6 +285,7 @@ unraid/omniarr.xml Unraid template
 ## Known limitations
 
 - Usenet only (no torrents). Downloads use the built-in NZBGet or a separate NZBGet; no SABnzbd.
+- Audiobooks: one edition per book, no upgrades. Omniarr doesn't tag or convert the files; a player such as Audiobookshelf or Theremin reads the folder.
 - Library import doesn't watch the disk. Use **Rescan folder** (or import again) after changing files by hand.
 - TRaSH `IndexerFlagSpecification` custom formats (freeleech, etc.) never match, since they're torrent-oriented. Language CFs are inferred from release titles.
 
@@ -292,3 +294,24 @@ unraid/omniarr.xml Unraid template
 The Docker image includes [NZBGet](https://github.com/nzbgetcom/nzbget) (GPL-2.0, source at that link)
 as the built-in downloader, unmodified, with the unrar and 7-Zip binaries from its official release
 (their licences are in `/opt/nzbget` inside the image). Omniarr runs it as a separate program.
+
+The audiobook section's Audible catalog client and release scoring (`app/services/audible.py`,
+`app/audiobooks.py`) are ported from [Spokarr](https://github.com/BlugDeg/Spokarr):
+
+> MIT License
+>
+> Copyright (c) 2026 The Spokarr contributors
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+> documentation files (the "Software"), to deal in the Software without restriction, including without limitation
+> the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+> permit persons to whom the Software is furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+> the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+> THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+> TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.

@@ -255,6 +255,11 @@ async def missing_search(limit: int = 10) -> None:
             db.log(f"Search for {m['title']} failed: {e}", "warn")
         if m["last_search"]:
             limit -= 1
+    from . import audiobooks
+    try:
+        await audiobooks.missing_search()
+    except HOLD:
+        return
     eps = [e for e in library.wanted_episodes()
            if not e.get("last_search") or e["last_search"] < db.one("SELECT datetime('now','-1 day') t")["t"]]
     seen: set = set()

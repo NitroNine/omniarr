@@ -14,8 +14,8 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, backup, collections_, db, hallmark, requests_, decision, importer, library, manual_nzb, scanner, search, trash
-from .services import bluray, downloader, metadata, newznab, nzbget
+from . import audiobooks, auth, backup, collections_, db, hallmark, requests_, decision, importer, library, manual_nzb, scanner, search, trash
+from .services import audible, bluray, downloader, metadata, newznab, nzbget
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("omniarr")
@@ -158,6 +158,7 @@ async def indexer_busy(_req, exc):
 
 
 @app.exception_handler(metadata.MetadataError)
+@app.exception_handler(audible.AudibleError)
 @app.exception_handler(nzbget.NZBGetError)
 @app.exception_handler(ValueError)
 @app.exception_handler(KeyError)
@@ -504,6 +505,7 @@ class IndexerIn(BaseModel):
     apikey: str
     movie_categories: str = "2000"
     tv_categories: str = "5000"
+    audio_categories: str = "3030"
     enabled: bool = True
     priority: int = 25
 
@@ -1250,6 +1252,88 @@ async def manual_grab(body: GrabIn):
     return {"id": await search.grab(d, "tv", series_id=body.item_id)}
 
 
+# ------------------------------------------------------------ audiobooks --
+def _with_state(books: list[dict]) -> list[dict]:
+    """Search results: is the book tracked in Omniarr, already in the audiobooks folder, or requested?"""
+    state = audiobooks.library_state([b["asin"] for b in books])
+    pending = {r["source"] for r in db.q("SELECT source FROM requests WHERE kind='audiobook' AND status='pending'")}
+    for b in books:
+        st = state.get(b["asin"])
+        b["library"] = st
+        b["in_folder"] = bool(st and st["have"]) or (not st and bool(audiobooks.found_in_folder(b)))
+        b["requested"] = b["asin"] in pending
+    return books
+
+
+@app.get("/api/audiobooks/lookup")
+async def audiobook_lookup(term: str):
+    return _with_state(await audible.search(term))
+
+
+@app.get("/api/audiobooks/discover")
+async def audiobook_discover():
+    rows = await audible.discover()
+    return [{**r, "items": _with_state([dict(b) for b in r["items"]])} for r in rows]
+
+
+@app.get("/api/audiobooks/book/{asin}")
+async def audiobook_info(asin: str):
+    return _with_state([dict(await audible.get_book(asin.upper()))])[0]
+
+
+@app.get("/api/audiobooks")
+def audiobook_list():
+    return {"books": audiobooks.list_all(), "root": audiobooks.root(), "region": audible.region()}
+
+
+@app.post("/api/audiobooks")
+async def audiobook_add(body: dict):
+    return await audiobooks.add(str(body.get("asin") or ""), search=bool(body.get("search", True)))
+
+
+@app.get("/api/audiobooks/{bid}")
+def audiobook_get(bid: int):
+    b = audiobooks.get(bid)
+    if not b:
+        raise HTTPException(404)
+    b["history"] = db.q("SELECT * FROM downloads WHERE kind='audiobook' AND audiobook_id=? ORDER BY id DESC LIMIT 20", (bid,))
+    b["path"] = os.path.join(audiobooks.root(), b["folder"]) if b["folder"] else None
+    return b
+
+
+@app.put("/api/audiobooks/{bid}")
+def audiobook_edit(bid: int, body: dict):
+    if not audiobooks.get(bid):
+        raise HTTPException(404)
+    if "monitored" in body:
+        db.update("audiobooks", bid, {"monitored": int(bool(body["monitored"]))})
+    if body.get("missing"):  # files gone or wanted again: forget the folder so it's searched for
+        db.update("audiobooks", bid, {"folder": None, "last_search": None})
+    return audiobooks.get(bid)
+
+
+@app.delete("/api/audiobooks/{bid}")
+def audiobook_delete(bid: int, files: bool = False):
+    audiobooks.remove(bid, delete_files=files)
+    return {"ok": True}
+
+
+@app.post("/api/audiobooks/{bid}/search")
+async def audiobook_search(bid: int, auto: bool = True):
+    """auto=true: search and grab the best match; auto=false: just list the releases (pick one by hand)."""
+    return await audiobooks.search_book(bid, auto_grab=auto)
+
+
+@app.post("/api/audiobooks/{bid}/grab")
+async def audiobook_grab(bid: int, body: dict):
+    b = audiobooks.get(bid)
+    if not b:
+        raise HTTPException(404)
+    if not body.get("link") or not body.get("title"):
+        raise HTTPException(400, "Missing release")
+    return {"id": await audiobooks.grab(b, body)}
+
+
 # ------------------------------------------------------- backup / restore --
 @app.get("/api/backup")
 async def download_backup():
@@ -1312,8 +1396,9 @@ def guess_nzb(kind: str, name: str):
 
 @app.get("/api/queue")
 def get_queue(limit: int = 200):
-    rows = db.q("""SELECT d.*, m.title AS movie_title, s.title AS series_title FROM downloads d
+    rows = db.q("""SELECT d.*, m.title AS movie_title, s.title AS series_title, a.title AS audiobook_title FROM downloads d
         LEFT JOIN movies m ON m.id=d.movie_id LEFT JOIN series s ON s.id=d.series_id
+        LEFT JOIN audiobooks a ON a.id=d.audiobook_id
         ORDER BY d.id DESC LIMIT ?""", (limit,))
     return rows
 
@@ -1363,6 +1448,7 @@ def status():
             "movies": db.one("SELECT COUNT(*) c FROM movies")["c"],
             "series": db.one("SELECT COUNT(*) c FROM series")["c"],
             "wanted_movies": db.one("SELECT COUNT(*) c FROM movies WHERE monitored=1 AND file_path IS NULL")["c"],
+            "audiobooks": db.one("SELECT COUNT(*) c FROM audiobooks")["c"],
             "queue": db.one("SELECT COUNT(*) c FROM downloads WHERE status IN ('queued','downloading','importing')")["c"],
         },
     }

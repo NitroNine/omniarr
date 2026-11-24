@@ -960,7 +960,7 @@ async function renderActivity(sub = "queue") {
   if (sub === "queue" || sub === "history") {
     const rows = (await api("/queue")).filter((d) => (sub === "queue") === ["queued", "downloading", "importing", "import_failed"].includes(d.status));
     el.innerHTML = rows.length ? `<div class="table-wrap"><table><tr><th>Item</th><th>Release</th><th>Quality</th><th>Score</th><th>Status</th><th></th></tr>
-      ${rows.map((d) => `<tr><td>${esc(d.movie_title || d.series_title || "")}</td><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)} · ${esc(d.added)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td>
+      ${rows.map((d) => `<tr><td>${esc(d.movie_title || d.series_title || d.audiobook_title || "")}</td><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)} · ${esc(d.added)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td>
       <td>${esc(d.quality)}</td><td>${d.score}</td><td>${statusChip(d)}${d.status === "downloading" ? `<div class="progress"><div style="width:${d.progress}%"></div></div>` : ""}</td>
       <td>${d.status === "import_failed" ? `<button class="small" onclick="retryImport(${d.id})">Retry import</button> ` : ""}${sub === "queue" ? `<button class="small danger" onclick="rmDl(${d.id})">Remove</button>` : ""}</td></tr>`).join("")}</table></div>` : '<p class="muted">Empty.</p>';
     if (sub === "queue") setTimeout(() => { if (location.hash.startsWith("#/activity/queue") || location.hash === "#/activity") renderActivity("queue"); }, 10000);
@@ -973,6 +973,168 @@ async function renderActivity(sub = "queue") {
   }
 }
 routes.activity = (sub) => renderActivity(sub || "queue");
+
+// ------------------------------------------------------------ audiobooks ---
+// Audible catalog → pick an edition → Omniarr finds it on the indexers → NZBGet → the audiobooks folder.
+const AB = { books: [], term: "", results: null, rows: null };
+function hm(min) { if (!min) return ""; const h = Math.floor(min / 60), m = min % 60; return h ? `${h} h${m ? " " + m + " min" : ""}` : `${m} min`; }
+function abByline(b) {
+  const s = (b.series || [])[0];
+  return `${b.authors && b.authors.length ? `<div class="small">by ${esc(b.authors.join(", "))}</div>` : ""}
+    ${b.narrators && b.narrators.length ? `<div class="small muted">Narrated by ${esc(b.narrators.join(", "))}</div>` : ""}
+    <div class="chips">${b.minutes ? `<span class="chip">${hm(b.minutes)}</span>` : ""}<span class="chip">${b.abridged ? "Abridged" : "Unabridged"}</span>${s ? `<span class="chip">${esc(s.title)}${s.seq ? " #" + esc(s.seq) : ""}</span>` : ""}${b.release_date ? `<span class="chip">${esc(b.release_date.slice(0, 4))}</span>` : ""}</div>`;
+}
+// state of a tracked book (library row) or a catalog result
+function abChip(b) {
+  if (b.id !== undefined && b.asin && b.added !== undefined) {  // library row
+    if (b.download) return `<span class="chip warn">${esc(b.download.status)} ${Math.round(b.download.progress)}%</span>`;
+    return b.folder ? '<span class="chip ok">In library</span>' : b.monitored ? '<span class="chip bad">Wanted</span>' : '<span class="chip">Not monitored</span>';
+  }
+  if (b.in_folder) return '<span class="chip ok">In library</span>';
+  if (b.library) return '<span class="chip warn">Wanted</span>';
+  if (b.requested) return '<span class="chip warn">Requested</span>';
+  return "";
+}
+function abCard(b, onclick) {
+  return `<div class="card" onclick="${onclick}" title="${esc(b.title)}">${poster(b.cover_small || b.cover, b.title)}
+    <div class="meta"><div class="title">${esc(b.title)}</div><div class="small muted ellipsis">${esc((b.authors || []).join(", "))}</div>
+    <div class="chips">${abChip(b)}</div></div></div>`;
+}
+async function renderAudiobooks() {
+  view.innerHTML = `<div class="toolbar"><h2 class="grow">Audiobooks</h2>
+    <input id="abterm" class="grow" placeholder="Title, author or narrator — or an Audible ASIN" value="${esc(AB.term)}"><button class="primary" id="abgo">Search Audible</button></div>
+    <div id="abres"></div><div id="ablib"></div><div id="abdisc"></div>`;
+  const go = () => guard(async () => {
+    AB.term = $("#abterm").value.trim();
+    if (!AB.term) { AB.results = null; drawAbResults(); return; }
+    $("#abres").innerHTML = '<p class="muted">Searching Audible…</p>';
+    AB.results = await api("/audiobooks/lookup?term=" + encodeURIComponent(AB.term));
+    drawAbResults();
+  });
+  $("#abgo").onclick = go;
+  $("#abterm").addEventListener("keydown", (e) => e.key === "Enter" && go());
+  if (AB.term && AB.results) drawAbResults();
+  await guard(async () => {
+    const lib = await api("/audiobooks");
+    AB.books = lib.books;
+    const wanted = lib.books.filter((b) => !b.folder).length;
+    $("#ablib").innerHTML = lib.books.length ? `<h3>In Omniarr <span class="muted small">(${lib.books.length}${wanted ? `, ${wanted} still to download` : ""})</span></h3>
+      <div class="grid books">${lib.books.map((b) => abCard(b, `abOpen(${b.id})`)).join("")}</div>
+      ${isAdmin() ? `<p class="small muted">Books go into <code>${esc(lib.root)}</code> as Author / Series / Book NN - Title. Audible store: ${esc(lib.region.toUpperCase())} (<a href="#/settings/general">change</a>).</p>` : ""}` : "";
+  });
+  if (!AB.rows) AB.rows = await api("/audiobooks/discover").catch((e) => [{ title: "Popular", items: [], error: e.message }]);
+  if (!$("#abdisc")) return;
+  $("#abdisc").innerHTML = AB.rows.map((r, ri) => `<h3>${esc(r.title)}</h3>${r.error ? `<p class="rej">${esc(r.error)}</p>` : ""}
+    <div class="grid books">${r.items.map((b, i) => abCard(b, `abOpenCat(${ri}, ${i})`)).join("") || '<p class="muted">Nothing right now.</p>'}</div>`).join("");
+  // download progress on the library cards, every 15 s while this page is open (one timer for the whole session)
+  if (!AB.timer) AB.timer = setInterval(() => { if (location.hash === "#/audiobooks" && $("#modal").classList.contains("hidden")) abRefresh(); }, 15000);
+}
+async function abRefresh() {
+  const lib = await api("/audiobooks").catch(() => null);
+  if (!lib || !$("#ablib")) return;
+  AB.books = lib.books;
+  const grid = $("#ablib .grid");
+  if (grid) grid.innerHTML = lib.books.map((b) => abCard(b, `abOpen(${b.id})`)).join("");
+}
+function drawAbResults() {
+  const el = $("#abres");
+  if (!el) return;
+  if (!AB.results) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="toolbar"><h3 class="grow">Results for “${esc(AB.term)}”</h3><button class="small" onclick="AB.term='';AB.results=null;$('#abterm').value='';drawAbResults()">Clear</button></div>
+    <div class="panel" style="padding:0">${AB.results.map((b, i) => `<div class="result-row">${b.cover_small ? `<img src="${esc(b.cover_small)}" alt="" onclick="abOpenRes(${i})" style="cursor:pointer">` : ""}
+      <div class="grow"><a class="title-link" href="javascript:abOpenRes(${i})"><b>${esc(b.title)}</b></a>${b.subtitle ? ` <span class="muted small">${esc(b.subtitle)}</span>` : ""}
+        ${abByline(b)}</div>
+      <div class="add-ctrls">${abChip(b) || abAddButtons(b, `AB.results[${i}]`)}</div></div>`).join("") || '<p class="muted" style="padding:12px">Nothing found on Audible.</p>'}</div>`;
+}
+function abAddButtons(b, ref) {
+  return `${isAdmin() ? '<label class="small"><input type="checkbox" class="absearch" checked> Search now</label>' : ""}
+    <button class="primary" onclick="abAdd(${ref}, this)">${addLabel()}</button>`;
+}
+async function abAdd(b, btn) {
+  const box = btn.parentElement.querySelector(".absearch");
+  btn.disabled = true;
+  await guard(async () => {
+    if (isAdmin()) {
+      const row = await api("/audiobooks", { method: "POST", body: { asin: b.asin, search: box ? box.checked : true } });
+      b.library = { id: row.id, have: !!row.folder };
+      b.in_folder = !!row.folder;
+      toast(row.folder ? `${row.title} is already in your audiobooks folder` : `Added ${row.title}${box && box.checked ? " — searching" : ""}`);
+    } else {
+      const r = await api("/requests", { method: "POST", body: { kind: "audiobook", asin: b.asin } });
+      b.requested = r.status === "pending";
+      toast(r.duplicate ? "Already requested" : r.status === "approved" ? `${r.title} approved` : `Requested ${r.title}`);
+    }
+    btn.outerHTML = abChip(b) || '<span class="chip ok">Done</span>';
+    AB.rows = null;  // the discover rows show the new state next time
+  });
+  if (btn.isConnected) btn.disabled = false;
+}
+function abOpenRes(i) { abCatalogModal(AB.results[i]); }
+function abOpenCat(ri, i) { abCatalogModal(AB.rows[ri].items[i]); }
+function abCatalogModal(b) {
+  if (b.library && isAdmin()) return abOpen(b.library.id);
+  window._abcur = b;
+  modal(`<div class="toolbar"><h2 class="grow">${esc(b.title)}</h2><button onclick="closeModal()">Close</button></div>
+    <div class="abbook">${b.cover ? `<img src="${esc(b.cover)}" alt="">` : ""}<div>${b.subtitle ? `<p class="muted">${esc(b.subtitle)}</p>` : ""}${abByline(b)}
+    <p class="small muted">${esc(b.publisher || "")}${b.rating ? ` · ★ ${b.rating.toFixed(1)}` : ""} · ASIN ${esc(b.asin)}</p>
+    <div class="add-ctrls">${abChip(b) || abAddButtons(b, "window._abcur")}</div></div></div>
+    <p class="absum">${esc(b.summary || "")}</p>`);
+}
+async function abOpen(id) {
+  const b = await guard(() => api("/audiobooks/" + id));
+  if (!b) return;
+  const hist = b.history.length ? `<h3>Downloads</h3><div class="table-wrap"><table><tr><th>Release</th><th>Score</th><th>Status</th><th>Added</th></tr>
+    ${b.history.map((d) => `<tr><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td><td>${d.score}</td><td>${statusChip(d)}</td><td class="small muted">${esc(d.added)}</td></tr>`).join("")}</table></div>` : "";
+  modal(`<div class="toolbar"><h2 class="grow">${esc(b.title)}</h2><button onclick="closeModal()">Close</button></div>
+    <div class="abbook">${b.cover ? `<img src="${esc(b.cover)}" alt="">` : ""}<div>${b.subtitle ? `<p class="muted">${esc(b.subtitle)}</p>` : ""}${abByline(b)}
+    <div class="chips">${abChip({ ...b, download: (b.history.find((d) => ["queued", "downloading", "importing"].includes(d.status)) || null) })}</div>
+    ${b.path ? `<p class="small muted">In <code>${esc(b.path)}</code>${b.file_size ? " · " + size(b.file_size) : ""}</p>` : ""}
+    ${b.last_search ? `<p class="small muted">Last searched ${esc(b.last_search)} UTC</p>` : ""}
+    ${isAdmin() ? `<div class="toolbar">${b.folder ? `<button class="small" onclick="abEdit(${b.id}, {missing: true})" title="Forget the folder and look for the book again">Download again</button>`
+      : `<button class="small primary" onclick="abSearch(${b.id}, this)">Search now</button>`}
+      <button class="small" onclick="abReleases(${b.id})">Pick a release…</button>
+      <label class="small"><input type="checkbox" ${b.monitored ? "checked" : ""} onchange="abEdit(${b.id}, {monitored: this.checked}, true)"> Monitored</label>
+      <span class="grow"></span><button class="small danger" onclick="abRemove(${b.id}, ${!!b.folder})">Remove</button></div>` : ""}
+    </div></div><p class="absum">${esc(b.summary || "")}</p>${hist}`);
+}
+async function abEdit(id, body, quiet = false) {
+  await guard(async () => { await api("/audiobooks/" + id, { method: "PUT", body }); if (!quiet) { toast("Saved"); abOpen(id); } });
+}
+async function abSearch(id, btn) {
+  btn.disabled = true; btn.textContent = "Searching…";
+  await guard(async () => {
+    const r = await api(`/audiobooks/${id}/search`, { method: "POST" });
+    const best = r.find((x) => x.ok);
+    toast(best ? `Sent to the downloader: ${best.title}` : `${r.length} results, none matching well enough — try “Pick a release…”`, !best);
+    abOpen(id);
+  });
+  if (btn.isConnected) { btn.disabled = false; btn.textContent = "Search now"; }
+}
+async function abReleases(id) {
+  modal('<h2>Releases</h2><p class="muted">Searching your indexers…</p>');
+  const rows = await guard(() => api(`/audiobooks/${id}/search?auto=false`, { method: "POST" }));
+  if (!rows) return closeModal();
+  window._abrel = rows;
+  const PLUS = { narrator: "narrator", author: "author", language: "language", unabridged: "unabridged" };
+  $("#modal .modal-body").innerHTML = `<div class="toolbar"><h2 class="grow">Releases <span class="muted small">${rows.length}</span></h2><button onclick="abOpen(${id})">Back</button><button onclick="closeModal()">Close</button></div>
+    <p class="small muted">Scored on title, narrator, author, language, abridged or not, dramatisations and size per minute (rules from Spokarr). Green = good enough to grab on its own.</p>
+    ${rows.length ? `<div class="table-wrap"><table><tr><th>Release</th><th>Score</th><th>Size</th><th>Age</th><th></th></tr>
+    ${rows.map((r, i) => `<tr><td>${esc(r.title)}<div class="small muted">${esc(r.indexer)}${r.plus.length ? " · matches " + r.plus.map((p) => PLUS[p] || p).join(", ") : ""}</div>
+      ${r.reasons.map((x) => `<div class="rej">${esc(x)}</div>`).join("")}</td>
+      <td><span class="chip ${r.ok ? "ok" : ""}">${r.score}</span></td><td>${size(r.size)}</td><td>${r.age_days ?? ""}${r.age_days != null ? "d" : ""}</td>
+      <td><button class="small ${r.ok ? "primary" : ""}" onclick="abGrab(${id}, ${i}, this)">Grab</button></td></tr>`).join("")}</table></div>`
+    : '<p class="muted">Your indexers found nothing for this title in their audiobook categories (Settings → Indexers).</p>'}`;
+}
+async function abGrab(id, i, btn) {
+  btn.disabled = true;
+  await guard(async () => { await api(`/audiobooks/${id}/grab`, { method: "POST", body: window._abrel[i] }); toast("Sent to the downloader"); btn.textContent = "Sent"; });
+}
+async function abRemove(id, hasFiles) {
+  const msg = hasFiles ? "Stop tracking this audiobook in Omniarr? Its files stay in the audiobooks folder." : "Remove this audiobook from Omniarr?";
+  if (!(await ask(msg, "Remove"))) return;
+  await guard(async () => { await api("/audiobooks/" + id, { method: "DELETE" }); closeModal(); toast("Removed"); AB.rows = null; route(); });
+}
+routes.audiobooks = renderAudiobooks;
 
 // ---- live speed meter on Activity → Queue: samples every 2 s, graph of the last 3 minutes ----
 const SPD_KEEP = 90;
@@ -1082,11 +1244,13 @@ const SECTIONS = {
     ["tmdb_api_key", "TMDB API key (required, free)", "password", "themoviedb.org → Settings → API. v3 key or v4 read token. Used for both movies and TV."],
     ["metadata_language", "Metadata language", "text", "Two-letter code, e.g. en"],
     ["streaming_region", "Streaming region", "text", "Country for the Streaming tab, e.g. US, GB, CA, AU, DE"],
+    ["audible_region", "Audible store (audiobooks)", ["us", "ca", "uk", "au", "in", "de", "fr", "it", "es", "jp"], "Where audiobooks are looked up: its catalog, editions and language. Releases in another language than the book are skipped."],
     ["streaming_hide_ads", "Hide \"with Ads\" plans", "checkbox", "Leaves the ad plans of paid services (e.g. \"Netflix Standard with Ads\", \"Amazon Prime Video with Ads\") off the Streaming tab. Netflix, Prime Video and free services like Tubi stay."],
   ] },
   roots: { title: "Root folders", fields: [
     ["root_movies", "Movies folder", "folder", "Every movie gets its own folder in here. When you have both versions, the 1080p and 4K files sit side by side in it."],
     ["root_tv", "TV folder", "folder", "Every show gets its own folder in here, with 1080p and 4K episodes side by side."],
+    ["root_audiobooks", "Audiobooks folder", "folder", "Books go in here as Author / Series / Book 01 - Title (or Author / Title). Empty = the first of /data/media/audiobooks, /data/audiobooks or /data/Audiobooks that exists."],
     ["christmas_folder", "Christmas movies folder", "folder", "Where Christmas movies go (the Christmas and Hallmark tabs, or \"Christmas movie\" on a movie's page). A full path, e.g. /data/Christmas Movies, keeps them apart from the movies folder; a plain name, e.g. Christmas Movies, is a folder inside it. Changing it moves the Christmas movies you already have."],
   ] },
   schedule: { title: "Schedule", fields: [
@@ -1266,9 +1430,9 @@ function collect(el) {
 async function renderIndexers(el) {
   const rows = await api("/indexers");
   window._ix = rows;
-  el.innerHTML = `<p class="muted">Any Newznab-compatible Usenet indexer. Movies use category 2000 and TV 5000 by default.</p>
-  ${rows.length ? `<div class="table-wrap"><table><tr><th>Name</th><th>URL</th><th>Categories (movie / tv)</th><th title="0 = searched first, higher = backup">Priority</th><th>Enabled</th><th></th></tr>
-  ${rows.map((r) => `<tr><td>${esc(r.name)}${r.paused_for ? ` <span class="chip warn" title="The indexer said too many requests (429). Omniarr waits, then sends requests more slowly.">Paused ${r.paused_for >= 60 ? Math.ceil(r.paused_for / 60) + " min" : r.paused_for + " s"}</span>` : ""}</td><td class="small">${esc(r.url)}</td><td class="small">${esc(r.movie_categories)} / ${esc(r.tv_categories)}</td><td>${r.priority}</td>
+  el.innerHTML = `<p class="muted">Any Newznab-compatible Usenet indexer. Movies use category 2000, TV 5000 and audiobooks 3030 by default.</p>
+  ${rows.length ? `<div class="table-wrap"><table><tr><th>Name</th><th>URL</th><th>Categories (movie / tv / audiobooks)</th><th title="0 = searched first, higher = backup">Priority</th><th>Enabled</th><th></th></tr>
+  ${rows.map((r) => `<tr><td>${esc(r.name)}${r.paused_for ? ` <span class="chip warn" title="The indexer said too many requests (429). Omniarr waits, then sends requests more slowly.">Paused ${r.paused_for >= 60 ? Math.ceil(r.paused_for / 60) + " min" : r.paused_for + " s"}</span>` : ""}</td><td class="small">${esc(r.url)}</td><td class="small">${esc(r.movie_categories)} / ${esc(r.tv_categories)} / ${esc(r.audio_categories || "3030")}</td><td>${r.priority}</td>
     <td><input type="checkbox" ${r.enabled ? "checked" : ""} onchange="toggleIx(${r.id}, this.checked)"></td>
     <td><button class="small" onclick="testIx(${r.id})">Test</button> <button class="small" onclick="editIx(${r.id})">Edit</button> <button class="small danger" onclick="delIx(${r.id})">Delete</button></td></tr>`).join("")}</table></div>` : ""}
   <h3>Add indexer</h3><div class="form" id="ixf">
@@ -1277,6 +1441,7 @@ async function renderIndexers(el) {
     <label>API key</label><input data-k="apikey" type="password" autocomplete="off">
     <label>Movie categories</label><input data-k="movie_categories" value="2000">
     <label>TV categories</label><input data-k="tv_categories" value="5000">
+    <label>Audiobook categories</label><input data-k="audio_categories" value="3030">
     <span></span><div><button type="button" id="ixload">Load categories from indexer</button><div id="ixcats"></div></div>
     <label>Priority</label><input data-k="priority" type="number" min="0" value="${rows.length ? Math.max(...rows.map((r) => r.priority)) + 1 : 0}"><div class="help">0 = searched first, 1 = backup, 2 = next backup, and so on. Searches go to the lowest number first; higher numbers are backups, searched only when the preferred indexers find nothing usable or are paused. RSS uses all of them.</div>
     <span></span><div><button class="primary" id="addix">Add</button></div></div>`;
@@ -1293,7 +1458,7 @@ async function loadCats(form, id) {
   try { caps = await api("/indexers/caps", { method: "POST", body: { id, url: v("url"), apikey: v("apikey") } }); }
   catch (e) { box.innerHTML = `<p class="small rej">${esc(e.message)}</p>`; return; }
   if (!caps.categories.length) { box.innerHTML = '<p class="small muted">This indexer didn\'t list any categories — type them in the fields above.</p>'; return; }
-  box.innerHTML = `<div class="catpick">${[["movie_categories", "Movies", 2000], ["tv_categories", "TV", 5000]].map(([k, label, main]) =>
+  box.innerHTML = `<div class="catpick">${[["movie_categories", "Movies", 2000], ["tv_categories", "TV", 5000], ["audio_categories", "Audiobooks", 3000]].map(([k, label, main]) =>
     `<div class="catcol" data-for="${k}" data-main="${main}"><b>${label}</b><div class="catlist"></div></div>`).join("")}</div>
     <p class="small muted">Ticking a main category includes all of its subcategories. Only the categories you tick are searched.</p>`;
   box.querySelectorAll(".catcol").forEach((col) => drawCats(col, caps.categories, $(`[data-k="${col.dataset.for}"]`, form)));
@@ -1334,6 +1499,7 @@ function editIx(id) {
     <label>API key</label><input data-k="apikey" type="password" autocomplete="off" placeholder="Unchanged (${esc(r.apikey)})"><div class="help">Leave empty to keep the current key.</div>
     <label>Movie categories</label><input data-k="movie_categories" value="${esc(r.movie_categories)}"><div class="help">Comma-separated Newznab categories, e.g. 2000 or 2040,2045.</div>
     <label>TV categories</label><input data-k="tv_categories" value="${esc(r.tv_categories)}">
+    <label>Audiobook categories</label><input data-k="audio_categories" value="${esc(r.audio_categories || "3030")}">
     <span></span><div><button type="button" id="ixload">Reload categories</button><div id="ixcats"><p class="small muted">Loading the indexer's categories…</p></div></div>
     <label>Priority</label><input data-k="priority" type="number" min="0" value="${r.priority}"><div class="help">0 = searched first, 1 = backup, 2 = next backup, and so on. Searches go to the lowest number first; higher numbers are backups, searched only when the preferred indexers find nothing usable or are paused. RSS uses all of them.</div>
     <label>Enabled</label><input type="checkbox" data-k="enabled" ${r.enabled ? "checked" : ""}>
@@ -1549,13 +1715,13 @@ const REQ_TABS = { all: "All", pending: "Pending", approved: "Approved", availab
 async function renderRequests(sub = "all") {
   if (!REQ_TABS[sub]) sub = "all";
   const rows = await api("/requests" + (sub === "all" ? "" : "?status=" + sub));
-  const kindName = { movie: "Movie", tv: "TV show", collection: "Collection" };
+  const kindName = { movie: "Movie", tv: "TV show", collection: "Collection", audiobook: "Audiobook" };
   const statusChip = (r) => {
     const cls = { pending: "warn", approved: "", available: "ok", declined: "bad", failed: "bad" }[r.status];
     const p = r.progress && r.status === "approved" && r.progress.total ? ` ${r.progress.have}/${r.progress.total}` : "";
     return `<span class="chip ${cls}">${{ pending: "Waiting for approval", approved: "Approved — downloading", available: "Available", declined: "Declined", failed: "Failed" }[r.status]}${p}</span>`;
   };
-  const link = (r) => !r.item_id || r.status === "pending" ? esc(r.title) : r.kind === "movie" ? `<a href="#/movie/${r.item_id}">${esc(r.title)}</a>` : r.kind === "tv" ? `<a href="#/show/${r.item_id}">${esc(r.title)}</a>` : `<a href="#/collections">${esc(r.title)}</a>`;
+  const link = (r) => !r.item_id || r.status === "pending" ? esc(r.title) : r.kind === "movie" ? `<a href="#/movie/${r.item_id}">${esc(r.title)}</a>` : r.kind === "tv" ? `<a href="#/show/${r.item_id}">${esc(r.title)}</a>` : r.kind === "audiobook" ? `<a href="#/audiobooks">${esc(r.title)}</a>` : `<a href="#/collections">${esc(r.title)}</a>`;
   view.innerHTML = `<div class="toolbar"><h2 class="grow">${isAdmin() ? "Requests" : "My requests"}</h2>
     <a href="#/discover"><button>Browse streaming</button></a><a href="#/add"><button class="primary">New request</button></a></div>
     <div class="tabs2">${Object.entries(REQ_TABS).map(([k, v]) => `<button class="${k === sub ? "active" : ""}" onclick="location.hash='#/requests/${k}'">${v}</button>`).join("")}</div>
@@ -1563,7 +1729,7 @@ async function renderRequests(sub = "all") {
     ${rows.map((r) => `<tr><td>${r.poster ? `<img src="${esc(r.poster)}" alt="" style="width:42px;border-radius:4px">` : ""}</td>
       <td><b>${link(r)}</b> <span class="muted">${r.year || ""}</span><div class="small muted">${kindName[r.kind]}${r.kind === "collection" && r.options.tmdb_ids ? ` · ${r.options.tmdb_ids.length} movies` : ""}</div>
         ${r.note && r.note !== "Auto-approved" ? `<div class="small ${r.status === "declined" || r.status === "failed" ? "rej" : "muted"}">${esc(r.note)}</div>` : ""}</td>
-      <td>${isAdmin() && r.status === "pending" ? `<select id="rt${r.id}">${["hd", "uhd", "both"].map((v) => `<option value="${v}" ${r.tier === v ? "selected" : ""}>${TIER_LABEL[v]}</option>`).join("")}</select>` : tierChip(r.tier)}</td>
+      <td>${r.kind === "audiobook" ? '<span class="chip">Audiobook</span>' : isAdmin() && r.status === "pending" ? `<select id="rt${r.id}">${["hd", "uhd", "both"].map((v) => `<option value="${v}" ${r.tier === v ? "selected" : ""}>${TIER_LABEL[v]}</option>`).join("")}</select>` : tierChip(r.tier)}</td>
       ${isAdmin() ? `<td>${esc(r.username || "deleted user")}</td>` : ""}
       <td class="small muted">${esc(r.created)}${r.decided_by_name ? `<br>${r.note === "Auto-approved" ? "auto-approved" : (r.status === "declined" ? "declined" : "approved") + " by " + esc(r.decided_by_name)}` : ""}</td>
       <td>${statusChip(r)}</td>

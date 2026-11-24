@@ -293,11 +293,16 @@ async def process_downloads() -> None:
             src = map_path(h.get("FinalDir") or h.get("DestDir") or "")
             db.ex("UPDATE downloads SET status='importing', progress=100, dest_dir=? WHERE id=?", (src, dl["id"]))
             try:
-                if dl["kind"] == "movie":
-                    await import_movie(dl, src)
+                if dl["kind"] == "audiobook":
+                    from . import audiobooks
+                    await audiobooks.import_book(dl, src)
+                    audiobooks.cleanup_source(src)
                 else:
-                    await import_episodes(dl, src)
-                await _cleanup_source(src)
+                    if dl["kind"] == "movie":
+                        await import_movie(dl, src)
+                    else:
+                        await import_episodes(dl, src)
+                    await _cleanup_source(src)
                 downloader.remove_nzb_copy(h.get("NZBFilename") or "")
                 db.ex("UPDATE downloads SET status='imported', message=NULL, updated=datetime('now') WHERE id=?", (dl["id"],))
             except Exception as e:  # noqa: BLE001
@@ -349,6 +354,8 @@ async def space_failure(dl: dict, reason: str, hist: dict | None = None) -> None
         pass
     if dl["kind"] == "movie" and dl["movie_id"]:
         db.ex("UPDATE movies SET last_search=NULL WHERE id=?", (dl["movie_id"],))
+    if dl["kind"] == "audiobook" and dl.get("audiobook_id"):
+        db.ex("UPDATE audiobooks SET last_search=NULL WHERE id=?", (dl["audiobook_id"],))
     for eid in json.loads(dl["episode_ids"] or "[]"):
         db.ex("UPDATE episodes SET last_search=NULL WHERE id=?", (eid,))
 
@@ -359,6 +366,8 @@ def _failures_today(dl: dict) -> int:
          "AND (message IS NULL OR message NOT LIKE 'Download disk ran out%') AND ")
     if dl["kind"] == "movie":
         return len(db.q(q + "kind='movie' AND movie_id=?", (dl["movie_id"],)))
+    if dl["kind"] == "audiobook":
+        return len(db.q(q + "kind='audiobook' AND audiobook_id=?", (dl["audiobook_id"],)))
     mine = set(json.loads(dl["episode_ids"] or "[]"))
     rows = db.q(q + "kind='tv' AND series_id=?", (dl["series_id"],))
     return sum(1 for r in rows if mine & set(json.loads(r["episode_ids"] or "[]")))
@@ -376,7 +385,10 @@ async def fail_download(dl: dict, reason: str, research: bool = True) -> None:
         return
     from . import search
     try:
-        if dl["kind"] == "movie":
+        if dl["kind"] == "audiobook":
+            from . import audiobooks
+            await audiobooks.search_book(dl["audiobook_id"])
+        elif dl["kind"] == "movie":
             await search.search_movie(dl["movie_id"])
         else:
             await search.search_series(dl["series_id"])
@@ -388,7 +400,10 @@ async def retry_import(dl_id: int) -> None:
     dl = db.one("SELECT * FROM downloads WHERE id=?", (dl_id,))
     if not dl or not dl["dest_dir"]:
         raise ValueError("Nothing to retry")
-    if dl["kind"] == "movie":
+    if dl["kind"] == "audiobook":
+        from . import audiobooks
+        await audiobooks.import_book(dl, dl["dest_dir"])
+    elif dl["kind"] == "movie":
         await import_movie(dl, dl["dest_dir"])
     else:
         await import_episodes(dl, dl["dest_dir"])

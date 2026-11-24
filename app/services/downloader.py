@@ -138,6 +138,8 @@ def options() -> dict[str, str]:
     cats = [s["nzbget_category_movies"] or "movies", s["nzbget_category_tv"] or "tv"]
     if s.get("nzbget_category_christmas"):
         cats.append(s["nzbget_category_christmas"])
+    if s.get("nzbget_category_audiobooks"):
+        cats.append(s["nzbget_category_audiobooks"])
     for i, cat in enumerate(cats, 1):
         opts[f"Category{i}.Name"] = cat
         opts[f"Category{i}.Unpack"] = "yes"
