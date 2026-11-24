@@ -155,6 +155,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # /data/audiobooks, /data/Audiobooks … that exists.
     "audible_region": "us",
     "root_audiobooks": "",
+    # Media server told to scan a title's folder after each import (services/mediaserver.py): silo | jellyfin |
+    # emby | "" (off). Path mapping only needed when the folder names don't match its library roots.
+    "media_server_type": "",
+    "media_server_url": "",
+    "media_server_api_key": "",
+    "media_server_path_from": "",
+    "media_server_path_to": "",
     # Built-in torrent client (qBittorrent, services/qbittorrent.py). Torrents are only added by hand.
     # torrent_dir empty = /data/torrents (same disk as the library, so imports are hardlinks).
     "torrent_enabled": True,

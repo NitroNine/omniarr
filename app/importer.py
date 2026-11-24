@@ -11,7 +11,7 @@ import shutil
 
 from . import db, library, naming, trash
 from .parser import parse
-from .services import downloader, mediainfo, nzbget
+from .services import downloader, mediainfo, mediaserver, nzbget
 
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".ts", ".m2ts", ".wmv", ".mov", ".webm"}
 SUB_EXT = {".srt", ".ass", ".ssa", ".sub", ".idx", ".sup", ".vtt"}
@@ -204,6 +204,7 @@ async def import_movie(dl: dict, source_dir: str) -> None:
     db.update("movies", movie["id"], {"file_path": dest, "file_quality": dl["quality"], "file_score": dl["score"],
                                       "file_size": os.path.getsize(dest)})
     db.log(f"Imported {movie['title']} → {dest}")
+    mediaserver.scan_soon([dest_dir])
 
 
 async def import_episodes(dl: dict, source_dir: str) -> None:
@@ -260,6 +261,8 @@ async def import_episodes(dl: dict, source_dir: str) -> None:
                                             "file_score": dl["score"], "file_size": size})
         imported += 1
     db.log(f"Imported {imported} file(s) for {series['title']}")
+    if imported:
+        mediaserver.scan_soon([library.series_dir(series)])
 
 
 async def _cleanup_source(path: str) -> None:

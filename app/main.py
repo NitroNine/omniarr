@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from . import audiobooks, auth, torrents, backup, collections_, db, hallmark, requests_, decision, importer, library, manual_nzb, scanner, search, trash
 from .services import audible, bluray, downloader, metadata, newznab, nzbget
+from .services import mediaserver
 from .services import qbittorrent as qbt
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
@@ -321,7 +322,7 @@ def requests_cancel(rid: int, request: Request):
 
 
 # -------------------------------------------------------------- settings --
-SECRET_KEYS = {"tmdb_api_key", "nzbget_password"}
+SECRET_KEYS = {"tmdb_api_key", "nzbget_password", "media_server_api_key"}
 
 
 @app.get("/api/settings")
@@ -1403,6 +1404,23 @@ async def upload_nzb(body: NzbIn):
 def guess_nzb(kind: str, name: str):
     item = manual_nzb.guess(kind, manual_nzb.release_name(name, b""))
     return {"item_id": item["id"] if item else None}
+
+
+# ---------------------------------------------------------- media server --
+@app.post("/api/media-server/test")
+async def media_server_test():
+    try:
+        return await mediaserver.test()
+    except mediaserver.MediaServerError as e:
+        return {"ok": False, "message": str(e)}
+
+
+@app.post("/api/media-server/scan")
+async def media_server_scan_all():
+    """Scan the movie and TV folders now (Settings button)."""
+    roots = [r for r in (db.setting("root_movies"), db.setting("root_tv"), db.setting("christmas_folder")) if r and r.startswith("/")]
+    sent = await mediaserver.scan(roots)
+    return {"ok": bool(sent), "sent": sent}
 
 
 # -------------------------------------------------------------- torrents --

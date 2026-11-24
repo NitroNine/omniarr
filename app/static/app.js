@@ -1412,7 +1412,7 @@ const SECTIONS = {
 };
 async function renderSettings(sub = "general") {
   const s = await api("/settings");
-  const tabs = { general: "Metadata", downloads: "Downloads", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", users: "Users", naming: "Naming (TRaSH)", schedule: "Schedule", backup: "Backup" };
+  const tabs = { general: "Metadata", downloads: "Downloads", mediaserver: "Media server", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", users: "Users", naming: "Naming (TRaSH)", schedule: "Schedule", backup: "Backup" };
   view.innerHTML = `<h2>Settings</h2><div class="tabs2">${Object.entries(tabs).map(([k, v]) => `<button class="${k === sub ? "active" : ""}" onclick="location.hash='#/settings/${k}'">${v}</button>`).join("")}</div><div id="set" class="panel"></div>`;
   const el = $("#set");
   if (SECTIONS[sub]) {
@@ -1426,12 +1426,38 @@ async function renderSettings(sub = "general") {
     }).join("")}<span></span><div class="toolbar"><button class="primary" id="save">Save</button></div></div>`;
     $("#save").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect(el) }); toast("Saved"); checkBanner(); });
   } else if (sub === "downloads") await renderDownloads(el, s);
+  else if (sub === "mediaserver") renderMediaServer(el, s);
   else if (sub === "indexers") await renderIndexers(el);
   else if (sub === "profiles") await renderProfiles(el, s);
   else if (sub === "limits") await renderLimits(el);
   else if (sub === "users") await renderUsers(el);
   else if (sub === "naming") await renderNaming(el, s);
   else if (sub === "backup") await renderBackup(el);
+}
+// ---------------------------------------------------------- media server --
+// After each import, Omniarr asks Silo / Jellyfin / Emby to scan that title's folder, so it shows up right away.
+function renderMediaServer(el, s) {
+  el.innerHTML = `<p class="small muted">After each import, Omniarr asks your media server to scan just that movie's or show's folder, so new things show up within a minute instead of at its next scheduled library scan.</p>
+    <div class="form" id="msform">${formRows([
+      ["media_server_type", "Media server", [["", "None"], ["silo", "Silo"], ["jellyfin", "Jellyfin"], ["emby", "Emby"]]],
+      ["media_server_url", "Address", "text", "e.g. <code>http://10.78.78.3:8090</code> for Silo (its web address), <code>http://10.78.78.3:8096</code> for Emby or Jellyfin."],
+      ["media_server_api_key", "API key", "password", "Silo: Settings → API keys → create a key on your admin account, with full access (scans need admin). Emby/Jellyfin: Dashboard → API Keys."],
+      ["media_server_path_from", "Omniarr path", "text", "Only if needed: when the server sees your library under a different path and its folder names don't match. e.g. <code>/data</code>"],
+      ["media_server_path_to", "Server path", "text", "…and the media server sees it at, e.g. <code>/mnt/user/media</code>. Leave both empty to match libraries by folder name (TV, movies…)."],
+    ], s)}
+    <span></span><div class="toolbar"><button class="primary" id="mssave">Save</button><button id="mstest">Save &amp; test</button><button id="msscan" title="Ask it to scan your whole movie and TV folders now">Scan everything now</button></div>
+    <span></span><div id="msres" class="small"></div></div>`;
+  const save = () => api("/settings", { method: "PUT", body: collect($("#msform")) });
+  $("#mssave").onclick = () => guard(async () => { await save(); toast("Saved"); });
+  $("#mstest").onclick = () => guard(async () => {
+    await save(); $("#msres").textContent = "Testing…";
+    const r = await api("/media-server/test", { method: "POST" });
+    $("#msres").innerHTML = r.ok ? `<span class="chip ok">Connected</span> Libraries: ${esc(r.libraries.join(", ") || "none")}<br>${r.checks.map(esc).join("<br>")}` : `<span class="rej">${esc(r.message)}</span>`;
+  });
+  $("#msscan").onclick = () => guard(async () => {
+    const r = await api("/media-server/scan", { method: "POST" });
+    toast(r.ok ? "Asked it to scan: " + r.sent.join(", ") : "Nothing sent — check the Events log", !r.ok);
+  });
 }
 // ------------------------------------------------------ backup / restore --
 async function renderBackup(el) {

@@ -220,6 +220,14 @@ Omniarr has a built-in torrent client (qBittorrent) for torrents you add yoursel
   listening port (6882 TCP+UDP, published in the Unraid template; forward it on your router for speed), stop-seeding
   ratio and upload limit.
 
+## Media server scans (Silo, Jellyfin, Emby)
+
+Settings → Media server: after each import Omniarr asks the media server to scan just that movie's or show's
+folder, so it shows up within a minute instead of at the server's next library scan. Silo uses its own API
+(`POST /api/v2/scan`, an admin account's API key); Jellyfin and Emby get `/Library/Media/Updated` (as from Sonarr).
+Folders are matched to the server's libraries by folder name (Omniarr `/data/TV/Show` ↔ Silo `/mnt/user/media/TV`),
+or by the path mapping when names differ. *Save & test* lists the libraries and which one movies and TV land in.
+
 ## Importing media you already have
 
 Go to **Import**, choose Movies or TV shows, and click **Scan root folders**. Omniarr lists every folder in your movies or TV folder that isn't in the library yet, plus loose movie files sitting directly in the movies folder. When a folder holds both 1080p and 4K files, both versions are added. Each one is matched:
