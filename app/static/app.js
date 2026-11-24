@@ -942,9 +942,10 @@ async function renderHallmark() {
 
 // ----------------------------------------------------------- activity ---
 async function renderActivity(sub = "queue") {
-  view.innerHTML = `<div class="tabs2">${["queue", "history", "events", "blocklist"].map((t) => `<button class="${t === sub ? "active" : ""}" onclick="location.hash='#/activity/${t}'">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
-    <span class="grow"></span><button onclick="runTask('rss')">Run RSS sync</button><button onclick="runTask('missing')">Search missing</button><button onclick="runTask('downloads')">Check downloads</button><button class="primary" onclick="nzbUpload()">Upload NZB</button></div><div id="act"></div>`;
+  view.innerHTML = `<div class="tabs2">${["queue", "torrents", "history", "events", "blocklist"].map((t) => `<button class="${t === sub ? "active" : ""}" onclick="location.hash='#/activity/${t}'">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
+    <span class="grow"></span><button onclick="runTask('rss')">Run RSS sync</button><button onclick="runTask('missing')">Search missing</button><button onclick="runTask('downloads')">Check downloads</button><button class="primary" onclick="nzbUpload()">Upload NZB</button><button class="primary" onclick="torrentAdd()">Add torrent</button></div><div id="act"></div>`;
   const el = $("#act");
+  if (sub === "torrents") return drawTorrents(el);
   if (sub === "queue") {
     const st = await api("/downloader/status").catch(() => null);
     if (st && st.ok && !window._spd.s.length) spdPush(st);  // the 2 s poll adds the rest
@@ -962,7 +963,7 @@ async function renderActivity(sub = "queue") {
     el.innerHTML = rows.length ? `<div class="table-wrap"><table><tr><th>Item</th><th>Release</th><th>Quality</th><th>Score</th><th>Status</th><th></th></tr>
       ${rows.map((d) => `<tr><td>${esc(d.movie_title || d.series_title || d.audiobook_title || "")}</td><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)} · ${esc(d.added)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td>
       <td>${esc(d.quality)}</td><td>${d.score}</td><td>${statusChip(d)}${d.status === "downloading" ? `<div class="progress"><div style="width:${d.progress}%"></div></div>` : ""}</td>
-      <td>${d.status === "import_failed" ? `<button class="small" onclick="retryImport(${d.id})">Retry import</button> ` : ""}${sub === "queue" ? `<button class="small danger" onclick="rmDl(${d.id})">Remove</button>` : ""}</td></tr>`).join("")}</table></div>` : '<p class="muted">Empty.</p>';
+      <td>${d.status === "import_failed" ? `<button class="small" onclick="retryImport(${d.id})">Retry import</button> ` : ""}${sub === "queue" ? (d.torrent_hash ? `<a href="#/activity/torrents"><button class="small">Torrent…</button></a>` : `<button class="small danger" onclick="rmDl(${d.id})">Remove</button>`) : ""}</td></tr>`).join("")}</table></div>` : '<p class="muted">Empty.</p>';
     if (sub === "queue") setTimeout(() => { if (location.hash.startsWith("#/activity/queue") || location.hash === "#/activity") renderActivity("queue"); }, 10000);
   } else if (sub === "events") {
     const rows = await api("/events");
@@ -1246,6 +1247,132 @@ async function nzbUpload() {
   });
   await fill();
 }
+// ------------------------------------------------------------- torrents ---
+// Built-in qBittorrent. Torrents are added by hand and linked to a movie or show; when one finishes,
+// its files are renamed and hardlinked into the library while it keeps seeding.
+const TSTATE = { downloading: "Downloading", forcedDL: "Downloading", metaDL: "Getting file list", stalledDL: "Waiting for peers",
+  queuedDL: "Queued", checkingDL: "Checking", checkingUP: "Checking", checkingResumeData: "Checking", moving: "Moving",
+  uploading: "Seeding", forcedUP: "Seeding", stalledUP: "Seeding", queuedUP: "Done", pausedUP: "Done", stoppedUP: "Done",
+  pausedDL: "Paused", stoppedDL: "Paused", error: "Error", missingFiles: "Files missing" };
+function tPaused(t) { return /^(paused|stopped)/.test(t.state || ""); }
+function eta(sec) { if (!sec || sec >= 8640000) return ""; const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h ? `${h} h ${m} min` : `${m} min`; }
+async function drawTorrents(el) {
+  const r = await api("/torrents").catch((e) => ({ error: e.message, torrents: [] }));
+  if (!location.hash.startsWith("#/activity/torrents")) return;
+  window._torrents = r.torrents;
+  const tr = r.transfer || {};
+  const bar = !r.installed ? '<span class="chip bad">qBittorrent isn\'t in this image</span>'
+    : !r.enabled ? '<span class="chip">Torrents are turned off</span><span class="grow"></span><a href="#/settings/downloads"><button class="small">Settings</button></a>'
+    : r.error ? `<span class="chip warn">Starting…</span><span class="small muted">${esc(r.error)}</span>`
+    : `<span class="chip ok">Running</span><span class="small muted">↓ ${speed(tr.dl_info_speed || 0)} · ↑ ${speed(tr.up_info_speed || 0)}${r.free != null ? ` · ${size(r.free)} free` : ""} · saves to <code>${esc(r.dir)}</code></span>`;
+  el.innerHTML = `<div class="panel dlbar">${bar}</div>` + (r.torrents.length ? `<div class="table-wrap"><table><tr><th>Torrent</th><th>Progress</th><th>Goes to</th><th></th></tr>
+    ${r.torrents.map((t, i) => {
+      const ln = t.link, done = t.progress >= 100;
+      const linkCell = ln ? `<b>${esc(ln.title)}</b> ${tierChip(ln.tier)}<div>${statusChip({ ...ln, progress: t.progress })}${ln.quality ? ` <span class="small muted">${esc(ln.quality)}</span>` : ""}</div>${ln.message && ln.status === "import_failed" ? `<div class="rej">${esc(ln.message)}</div>` : ""}`
+        : '<span class="chip warn">Not linked</span><div class="small muted">Link it to a movie or show to have it renamed and filed when done.</div>';
+      return `<tr><td>${esc(t.name)}<div class="small muted">${size(t.size)} · ${esc(TSTATE[t.state] || t.state)}${t.seeds != null ? ` · ${t.seeds} seeds, ${t.peers} peers` : ""}${done ? ` · ratio ${t.ratio}` : ""}</div></td>
+        <td style="min-width:120px">${t.progress}%<div class="progress"><div style="width:${t.progress}%"></div></div><div class="small muted">${!done && t.dlspeed ? speed(t.dlspeed) + (eta(t.eta) ? " · " + eta(t.eta) + " left" : "") : done && t.upspeed ? "↑ " + speed(t.upspeed) : ""}</div></td>
+        <td>${linkCell}</td>
+        <td class="nowrap">${ln && ln.status === "imported" ? "" : `<button class="small" onclick="torrentLink(${i})">${ln ? "Change link" : "Link…"}</button> `}${ln && ln.status === "import_failed" ? `<button class="small" onclick="retryImport(${ln.id})">Retry import</button> ` : ""}${ln && !["imported"].includes(ln.status) ? `<button class="small" onclick="torrentUnlink(${i})">Unlink</button> ` : ""}
+          <button class="small" onclick="torrentPause(${i})">${tPaused(t) ? "▶ Resume" : "❚❚ Pause"}</button> <button class="small danger" onclick="torrentRemove(${i})">Remove</button></td></tr>`;
+    }).join("")}</table></div>` : '<p class="muted">No torrents. Use <b>Add torrent</b> to paste a magnet link or choose a .torrent file.</p>');
+  clearTimeout(window._tTimer);
+  window._tTimer = setTimeout(() => { if (location.hash.startsWith("#/activity/torrents") && $("#modal").classList.contains("hidden")) drawTorrents($("#act") || el); }, 5000);
+}
+// Type + Title pickers shared by Add torrent and Link…; `name` is the torrent's name for "Detect".
+async function titlePicker(name, kind) {
+  const lists = {};
+  const tvish = /\bS\d{1,2}(E\d{1,3})?\b|\bseason\b/i.test((name || "").replace(/[._]/g, " "));
+  $("#tkind").value = kind || (tvish ? "tv" : "movie");
+  const fill = async () => {
+    const k = $("#tkind").value;
+    if (!k) { $("#titem").innerHTML = '<option value="">—</option>'; $("#titem").disabled = true; $("#tguess").textContent = "Added without a link; use Link… on the Torrents tab later."; return; }
+    $("#titem").disabled = false;
+    lists[k] = lists[k] || await api(k === "movie" ? "/movies" : "/series");
+    $("#titem").innerHTML = '<option value="">Detect from the torrent\'s name</option>' + [...lists[k]]
+      .sort((a, b) => a.title.localeCompare(b.title) || a.tier.localeCompare(b.tier))
+      .map((r) => `<option value="${r.id}">${esc(r.title)}${r.year && !String(r.title).includes(r.year) ? ` (${r.year})` : ""} · ${TIER_LABEL[r.tier]}</option>`).join("");
+    await guess();
+  };
+  const guess = async () => {
+    const k = $("#tkind").value, n = window._tname ? window._tname() : name;
+    if (!k || $("#titem").value) return;
+    if (!n) { $("#tguess").textContent = "Pick the title, or leave it on Detect if the torrent's name says it (e.g. Movie.2024.1080p…)."; return; }
+    const g = await api(`/torrents/guess?kind=${k}&name=${encodeURIComponent(n)}`).catch(() => ({}));
+    const it = g.item_id && (lists[k] || []).find((r) => r.id === g.item_id);
+    $("#tguess").innerHTML = `${esc(n)} → ${it ? `<b>${esc(it.title)}</b> · ${TIER_LABEL[it.tier]}` : '<span class="rej">not recognised — pick the title (add it to the library first if it isn\'t there)</span>'}`;
+  };
+  $("#tkind").onchange = () => guard(fill);
+  $("#titem").onchange = () => { if (!$("#titem").value) guard(guess); else $("#tguess").textContent = "Its files go to this title."; };
+  window._tguess = () => guard(guess);
+  await fill();
+}
+function magnetName(m) { try { return new URLSearchParams(m.trim().replace(/^magnet:\?/i, "")).get("dn") || ""; } catch { return ""; } }
+async function torrentAdd() {
+  modal(`<h2>Add torrent</h2><div class="form" id="tform">
+    <label>Magnet link</label><textarea id="tmag" rows="3" placeholder="magnet:?xt=urn:btih:…"></textarea>
+    <label>or .torrent file</label><input type="file" id="tfile" accept=".torrent,application/x-bittorrent">
+    <label>Type</label><select id="tkind"><option value="movie">Movie</option><option value="tv">TV</option><option value="">Link later</option></select>
+    <label>Title</label><select id="titem"></select>
+    <span></span><div id="tguess" class="small muted"></div>
+    <span></span><div class="toolbar"><button class="primary" id="tgo">Add</button><button onclick="closeModal()">Cancel</button></div></div>`);
+  window._tname = () => { const f = $("#tfile").files[0]; return f ? f.name.replace(/\.torrent$/i, "") : magnetName($("#tmag").value); };
+  const changed = () => { const n = window._tname(); const tv = /\bS\d{1,2}(E\d{1,3})?\b|\bseason\b/i.test(n.replace(/[._]/g, " ")); if (n && $("#tkind").value && tv !== ($("#tkind").value === "tv")) { $("#tkind").value = tv ? "tv" : "movie"; $("#tkind").onchange(); } else window._tguess(); };
+  $("#tmag").addEventListener("input", changed); $("#tfile").onchange = changed;
+  await titlePicker("", "movie");
+  $("#tgo").onclick = () => guard(async () => {
+    const f = $("#tfile").files[0], magnet = $("#tmag").value.trim();
+    if (!f && !magnet) throw new Error("Paste a magnet link or choose a .torrent file");
+    const data = f ? await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.onerror = rej; r.readAsDataURL(f); }) : null;
+    const kind = $("#tkind").value, item = $("#titem").value;
+    $("#tgo").disabled = true;
+    try {
+      const r = await api("/torrents", { method: "POST", body: { magnet: f ? null : magnet, data, filename: f ? f.name : "", kind: kind || null, item_id: item ? +item : null } });
+      closeModal();
+      if (r.linked) toast(`Added and linked to ${r.linked.title} (${r.linked.quality})`);
+      else if (r.link_error) toast(`Added, but not linked: ${r.link_error}`, true);
+      else toast("Added — link it to a title from the Torrents tab");
+      location.hash = "#/activity/torrents"; route();
+    } finally { const b = $("#tgo"); if (b) b.disabled = false; }
+  });
+}
+async function torrentLink(i) {
+  const t = window._torrents[i];
+  window._tname = null;
+  modal(`<h2>Link torrent</h2><p class="small">${esc(t.name)}</p><div class="form" id="tform">
+    <label>Type</label><select id="tkind"><option value="movie">Movie</option><option value="tv">TV</option></select>
+    <label>Title</label><select id="titem"></select>
+    <span></span><div id="tguess" class="small muted"></div>
+    <span></span><div class="small muted">When it finishes, the video files are renamed and put in that title's folder (hardlinked, so it keeps seeding and uses no extra space). ${t.progress >= 100 ? "It's already finished, so that happens right away." : ""}</div>
+    <span></span><div class="toolbar"><button class="primary" id="tgo">Link</button><button onclick="closeModal()">Cancel</button></div></div>`);
+  await titlePicker(t.name, t.link && t.link.kind);
+  if (t.link) { $("#titem").value = String(t.link.item_id); $("#tguess").textContent = "Its files go to this title."; }
+  $("#tgo").onclick = () => guard(async () => {
+    const item = $("#titem").value;
+    const r = await api(`/torrents/${t.hash}/link`, { method: "POST", body: { kind: $("#tkind").value, item_id: item ? +item : null } });
+    closeModal(); toast(`Linked to ${r.title} (${r.quality})`); route();
+  });
+}
+async function torrentUnlink(i) {
+  const t = window._torrents[i];
+  if (!await ask(`Unlink ${t.name}? It keeps downloading/seeding but won't be filed into the library.`)) return;
+  await guard(async () => { await api(`/torrents/${t.hash}/link`, { method: "DELETE" }); route(); });
+}
+async function torrentPause(i) {
+  const t = window._torrents[i];
+  await guard(async () => { await api(`/torrents/${t.hash}/${tPaused(t) ? "start" : "stop"}`, { method: "POST" }); setTimeout(route, 700); });
+}
+function torrentRemove(i) {
+  const t = window._torrents[i];
+  modal(`<h3>Remove this torrent?</h3><p class="small">${esc(t.name)}</p><p>It stops downloading/seeding. Anything already filed into your library stays.</p>
+    <label><input type="checkbox" id="tdelf"> Also delete its downloaded files from the torrent folder</label>
+    <div class="toolbar" style="justify-content:flex-end"><button onclick="closeModal()">Cancel</button><button class="danger" id="tdgo">Remove</button></div>`);
+  $("#tdgo").onclick = () => guard(async () => {
+    $("#tdgo").disabled = true;
+    await api(`/torrents/${t.hash}?files=${$("#tdelf").checked}`, { method: "DELETE" });
+    closeModal(); toast("Removed"); route();
+  });
+}
 async function pauseDl(p) { await guard(async () => { await api("/downloader/" + (p ? "pause" : "resume"), { method: "POST" }); route(); }); }
 async function runTask(n) { await guard(async () => { await api("/tasks/" + n, { method: "POST" }); toast("Started " + n); }); }
 async function retryImport(id) { await guard(async () => { await api(`/queue/${id}/retry-import`, { method: "POST" }); toast("Imported"); route(); }); }
@@ -1385,6 +1512,17 @@ async function renderDownloads(el, s) {
       : '<p class="muted">No servers yet — add your Usenet provider below to start downloading.</p>'}
     <div class="toolbar" style="margin-top:10px"><button class="primary" onclick="serverForm()">Add server</button>
       <button onclick="copyServers(this)" title="Uses the separate NZBGet's address and login from before">Copy servers from my old NZBGet</button></div>` : ""}`;
+  el.insertAdjacentHTML("beforeend", `<h3>Torrents</h3>
+    <p class="small muted">Built-in qBittorrent for torrents you add yourself (Activity → Torrents → Add torrent). Omniarr never searches for torrents. Linked torrents are renamed and hardlinked into the library when done, so they keep seeding.</p>
+    <div class="form" id="tsform">${formRows([
+      ["torrent_enabled", "Torrent client on", "checkbox"],
+      ["torrent_dir", "Torrent folder", "folder", "Leave empty for <code>/data/torrents</code> (on the same disk as the library, so the library copy is a hardlink and takes no extra space)."],
+      ["torrent_port", "Listening port", "number", "Port other peers connect to (TCP and UDP). It's published in the Unraid container settings; forward it on your router for faster downloads."],
+      ["torrent_seed_ratio", "Stop seeding at ratio", "number", "0 = keep seeding."],
+      ["torrent_upload_limit", "Upload limit (KB/s)", "number", "0 = no limit."],
+    ], s).replace(`data-k="torrent_dir" value=""`, `data-k="torrent_dir" value="" placeholder="/data/torrents"`)}
+    <span></span><div class="toolbar"><button class="primary" id="tsave">Save</button></div></div>`);
+  $("#tsave").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect($("#tsform")) }); toast("Saved"); route(); });
   window._servers = servers;
   $("#save").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect($("#dlform")) }); toast("Saved"); route(); });
   if ($("#test")) $("#test").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect($("#dlform")) }); const r = await api("/nzbget/test", { method: "POST" }); toast(r.message, !r.ok); });

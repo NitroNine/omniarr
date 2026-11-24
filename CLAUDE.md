@@ -70,7 +70,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 147 tests
+.venv/bin/pytest -q                       # 153 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised
@@ -89,4 +89,4 @@ for real yet, and the Docker image has never been built (the web sandbox couldn'
 ## Owner preferences learned so far
 - Wants things to install/update "normally" on Unraid (template + registry image).
 - Doesn't want paid dependencies (hence TMDB for TV).
-- Uses Usenet + NZBGet only.
+- Searches use Usenet + NZBGet only. Torrents only by hand (2026-11-24, Brendan): built-in qBittorrent (`qbittorrent-nox` from Debian, `services/qbittorrent.py`, Web API on 127.0.0.1:16790, profile `/config/qbittorrent`, saves to `/data/torrents`, port 6882), linked to a title by a `downloads` row with `torrent_hash` (`torrents.py`); finished ones import by hardlink (`importer.TRANSFER_MODE`) and keep seeding.

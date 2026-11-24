@@ -14,8 +14,9 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audiobooks, auth, backup, collections_, db, hallmark, requests_, decision, importer, library, manual_nzb, scanner, search, trash
+from . import audiobooks, auth, torrents, backup, collections_, db, hallmark, requests_, decision, importer, library, manual_nzb, scanner, search, trash
 from .services import audible, bluray, downloader, metadata, newznab, nzbget
+from .services import qbittorrent as qbt
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("omniarr")
@@ -67,6 +68,7 @@ async def scheduler():
         now = time.time()
         jobs = [
             ("downloader", 30, downloader.ensure),  # keeps the built-in NZBGet running
+            ("torrent", 30, qbt.ensure),  # keeps the built-in qBittorrent running
             ("downloads", 15, importer.process_downloads),  # import soon after NZBGet finishes
             ("speed", 30, downloader.record_speed),  # hourly speed log (Activity)
             ("trash", 3600, _trash_auto),
@@ -107,6 +109,7 @@ async def lifespan(_app: FastAPI):
     yield
     task.cancel()
     await asyncio.to_thread(downloader.stop)
+    await asyncio.to_thread(qbt.stop)
 
 
 app = FastAPI(title="Omniarr", lifespan=lifespan)
@@ -345,6 +348,7 @@ async def put_settings(values: dict):
         if r["errors"]:
             db.log("Some Christmas movies weren't moved: " + "; ".join(r["errors"][:5]), "warn")
     asyncio.create_task(_job("downloader", downloader.ensure))
+    asyncio.create_task(_job("torrent", qbt.ensure))
     return get_settings()
 
 
@@ -1401,6 +1405,92 @@ def guess_nzb(kind: str, name: str):
     return {"item_id": item["id"] if item else None}
 
 
+# -------------------------------------------------------------- torrents --
+def _torrent_error(e: Exception):
+    raise HTTPException(400 if isinstance(e, ValueError) else 503, str(e)) from None
+
+
+@app.get("/api/torrents")
+async def list_torrents():
+    out = {"installed": qbt.installed(), "enabled": qbt.enabled(), "running": qbt.running(), "dir": qbt.save_dir(),
+           "free": qbt.disk_free(), "torrents": [], "error": None}
+    try:
+        out["torrents"] = await torrents.listing()
+        out["transfer"] = await qbt.transfer()
+    except qbt.TorrentError as e:
+        out["error"] = str(e)
+    return out
+
+
+class TorrentIn(BaseModel):
+    magnet: str | None = None
+    data: str | None = None  # a .torrent file, base64
+    filename: str = ""
+    kind: str | None = None  # movie | tv | None (link later)
+    item_id: int | None = None
+
+
+@app.post("/api/torrents")
+async def add_torrent(body: TorrentIn):
+    try:
+        data = base64.b64decode(body.data, validate=False) if body.data else None
+        return await torrents.add(body.magnet, data, body.filename, body.kind, body.item_id)
+    except (ValueError, qbt.TorrentError) as e:
+        _torrent_error(e)
+
+
+@app.get("/api/torrents/guess")
+def guess_torrent(kind: str, name: str = "", magnet: str = ""):
+    name = name or qbt.magnet_name(magnet)
+    item = torrents.guess(kind, name)
+    return {"item_id": item["id"] if item else None, "name": name}
+
+
+class LinkIn(BaseModel):
+    kind: str
+    item_id: int | None = None
+
+
+@app.post("/api/torrents/{h}/link")
+async def link_torrent(h: str, body: LinkIn):
+    try:
+        t = await qbt.get(h)
+        if not t:
+            raise ValueError("That torrent isn't in the torrent client")
+        res = torrents.link(h, t.get("name") or h, t.get("total_size") or t.get("size") or 0, body.kind, body.item_id)
+    except (ValueError, qbt.TorrentError) as e:
+        _torrent_error(e)
+    asyncio.create_task(_job("downloads", importer.process_downloads))  # already finished: import now
+    return res
+
+
+@app.delete("/api/torrents/{h}/link")
+def unlink_torrent(h: str):
+    torrents.unlink(h)
+    return {"ok": True}
+
+
+@app.post("/api/torrents/{h}/{action}")
+async def torrent_action(h: str, action: str):
+    if action not in ("stop", "start"):
+        raise HTTPException(404)
+    try:
+        await qbt.pause(h, action == "stop")
+    except qbt.TorrentError as e:
+        _torrent_error(e)
+    return {"ok": True}
+
+
+@app.delete("/api/torrents/{h}")
+async def delete_torrent(h: str, files: bool = False):
+    try:
+        await qbt.delete(h, files)
+    except qbt.TorrentError as e:
+        _torrent_error(e)
+    torrents.unlink(h)
+    return {"ok": True}
+
+
 @app.get("/api/queue")
 def get_queue(limit: int = 200):
     rows = db.q("""SELECT d.*, m.title AS movie_title, s.title AS series_title, a.title AS audiobook_title FROM downloads d
@@ -1421,6 +1511,9 @@ async def remove_download(did: int, blocklist: bool = False):
     dl = db.one("SELECT * FROM downloads WHERE id=?", (did,))
     if not dl:
         raise HTTPException(404)
+    if dl.get("torrent_hash"):  # a hand-added torrent: unlink only, the torrent itself stays (Activity → Torrents)
+        db.ex("UPDATE downloads SET status='removed', message='Unlinked' WHERE id=?", (did,))
+        return {"ok": True}
     if dl["status"] in ("queued", "downloading"):
         try:
             await nzbget.delete(dl["nzbget_id"])

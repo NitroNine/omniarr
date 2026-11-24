@@ -12,7 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # MediaInfo (what Sonarr/Radarr use) reads the real HDR type, audio codec and languages for TRaSH naming
 # tokens; a few MB, where ffmpeg was ~450 MB
 RUN apt-get update \
- && apt-get install -y --no-install-recommends mediainfo tini \
+ && apt-get install -y --no-install-recommends mediainfo tini qbittorrent-nox \
  && rm -rf /var/lib/apt/lists/*
 
 # Built-in downloader: NZBGet (GPL-2.0, https://github.com/nzbgetcom/nzbget), run by Omniarr
@@ -38,7 +38,7 @@ COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 VOLUME ["/config"]
-EXPOSE 8790
+EXPOSE 8790 6882 6882/udp
 HEALTHCHECK --interval=60s --timeout=5s --start-period=20s \
   CMD python -c "import urllib.request,os;urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8790\")}/health',timeout=4)"
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]

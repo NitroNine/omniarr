@@ -155,6 +155,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # /data/audiobooks, /data/Audiobooks … that exists.
     "audible_region": "us",
     "root_audiobooks": "",
+    # Built-in torrent client (qBittorrent, services/qbittorrent.py). Torrents are only added by hand.
+    # torrent_dir empty = /data/torrents (same disk as the library, so imports are hardlinks).
+    "torrent_enabled": True,
+    "torrent_dir": "",
+    "torrent_port": 6882,
+    "torrent_seed_ratio": 0,  # stop seeding at this ratio; 0 = keep seeding
+    "torrent_upload_limit": 0,  # KB/s; 0 = no limit
     # root folders: one for movies, one for TV. 1080p and 4K versions of a title share its folder.
     "root_movies": "/data/media/movies",
     "root_tv": "/data/media/tv",
@@ -214,6 +221,7 @@ MIGRATIONS = [
     ("series", "profile", "TEXT"),
     ("indexers", "audio_categories", "TEXT DEFAULT '3030'"),
     ("downloads", "audiobook_id", "INTEGER"),
+    ("downloads", "torrent_hash", "TEXT"),  # torrents added by hand and linked to a title (torrents.py)
 ]
 
 

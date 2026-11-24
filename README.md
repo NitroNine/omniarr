@@ -206,6 +206,20 @@ The collection window lists every movie with its release date:
 
 Movies you untick are remembered and never added automatically later.
 
+## Torrents (added by hand)
+
+Omniarr has a built-in torrent client (qBittorrent) for torrents you add yourself; it never searches for torrents.
+
+- **Activity → Torrents → Add torrent**: paste a magnet link or choose a `.torrent` file, and pick Movie or TV and the
+  title (or leave it on *Detect* when the torrent's name says it, or choose *Link later*).
+- A torrent that isn't linked yet shows **Link…**: pick the movie or show (add it to the library first).
+- When a linked torrent finishes, its video files are renamed with TRaSH naming and **hardlinked** into the title's
+  folder, so the torrent keeps seeding and the library copy takes no extra space. A season pack is matched to episodes
+  by the files' `S01E02` names.
+- Torrents download into `/data/torrents` (same disk as the library). Settings → Downloads → Torrents: folder,
+  listening port (6882 TCP+UDP, published in the Unraid template; forward it on your router for speed), stop-seeding
+  ratio and upload limit.
+
 ## Importing media you already have
 
 Go to **Import**, choose Movies or TV shows, and click **Scan root folders**. Omniarr lists every folder in your movies or TV folder that isn't in the library yet, plus loose movie files sitting directly in the movies folder. When a folder holds both 1080p and 4K files, both versions are added. Each one is matched:
@@ -284,7 +298,7 @@ unraid/omniarr.xml Unraid template
 
 ## Known limitations
 
-- Usenet only (no torrents). Downloads use the built-in NZBGet or a separate NZBGet; no SABnzbd.
+- Searches are Usenet only. Torrents are only added by hand (see Torrents above). Usenet downloads use the built-in NZBGet or a separate NZBGet; no SABnzbd.
 - Audiobooks: one edition per book, no upgrades. Omniarr doesn't tag or convert the files; a player such as Audiobookshelf or Theremin reads the folder.
 - Library import doesn't watch the disk. Use **Rescan folder** (or import again) after changing files by hand.
 - TRaSH `IndexerFlagSpecification` custom formats (freeleech, etc.) never match, since they're torrent-oriented. Language CFs are inferred from release titles.
@@ -294,6 +308,9 @@ unraid/omniarr.xml Unraid template
 The Docker image includes [NZBGet](https://github.com/nzbgetcom/nzbget) (GPL-2.0, source at that link)
 as the built-in downloader, unmodified, with the unrar and 7-Zip binaries from its official release
 (their licences are in `/opt/nzbget` inside the image). Omniarr runs it as a separate program.
+
+It also includes [qBittorrent](https://www.qbittorrent.org) (`qbittorrent-nox`, GPL-2.0+, Debian's package, unmodified)
+as the built-in torrent client, run by Omniarr as a separate program.
 
 The audiobook section's Audible catalog client and release scoring (`app/services/audible.py`,
 `app/audiobooks.py`) are ported from [Spokarr](https://github.com/BlugDeg/Spokarr):

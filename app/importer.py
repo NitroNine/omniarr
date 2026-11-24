@@ -3,6 +3,7 @@ TRaSH naming. Failed downloads are blocklisted and a new search is started."""
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import re
@@ -66,9 +67,13 @@ async def unpack_nested(root: str) -> bool:
     return done
 
 
+# Set by torrent imports: always hardlink (copy across disks) so the torrent keeps seeding.
+TRANSFER_MODE: contextvars.ContextVar[str | None] = contextvars.ContextVar("transfer_mode", default=None)
+
+
 def _transfer(src: str, dst: str) -> None:
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    mode = db.setting("import_mode")
+    mode = TRANSFER_MODE.get() or db.setting("import_mode")
     if os.path.exists(dst):
         os.remove(dst)
     if mode == "hardlink":
@@ -264,7 +269,12 @@ async def _cleanup_source(path: str) -> None:
 
 
 async def process_downloads() -> None:
-    active = db.q("SELECT * FROM downloads WHERE status IN ('queued','downloading','importing')")
+    from . import torrents
+    try:
+        await torrents.process()
+    except Exception as e:  # noqa: BLE001
+        db.log(f"Checking torrents failed: {e}", "warn")
+    active = db.q("SELECT * FROM downloads WHERE status IN ('queued','downloading','importing') AND torrent_hash IS NULL")
     if not active:
         return
     try:
@@ -400,7 +410,10 @@ async def retry_import(dl_id: int) -> None:
     dl = db.one("SELECT * FROM downloads WHERE id=?", (dl_id,))
     if not dl or not dl["dest_dir"]:
         raise ValueError("Nothing to retry")
-    if dl["kind"] == "audiobook":
+    if dl.get("torrent_hash"):
+        from . import torrents
+        await torrents.import_torrent(dl, dl["dest_dir"])
+    elif dl["kind"] == "audiobook":
         from . import audiobooks
         await audiobooks.import_book(dl, dl["dest_dir"])
     elif dl["kind"] == "movie":
