@@ -27,6 +27,9 @@ def test_score_follows_spokarr_rules(env):
     assert not audiobooks.score(b, _rel("Andy Weir - The Martian", 600 * MB))["ok"]  # title_mismatch
     german = audiobooks.score(b, _rel("Andy Weir - Der Astronaut Project Hail Mary German Hoerbuch", 900 * MB))
     assert not german["ok"] and "wrong_language" in german["minus"]
+    danish = audiobooks.score(b, _rel("Andy_Weir_-_Project_Hail_Mary-AUDiOBOOK-WEB-DK-2023-CRAViNGS_iNT", 512 * MB))
+    assert not danish["ok"] and "wrong_language" in danish["minus"]
+    assert audiobooks.score(b, _rel("Andy.Weir-Project.Hail.Mary-AUDiOBOOK-LoganFee", 506 * MB))["ok"]
     small = audiobooks.score(b, _rel("Andy Weir - Project Hail Mary", 50 * MB))
     assert "too_small" in small["minus"]
     abridged = audiobooks.score(b, _rel("Andy Weir - Project Hail Mary Abridged", 400 * MB))

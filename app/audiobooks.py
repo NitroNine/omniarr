@@ -224,6 +224,11 @@ LANG_TOKENS = {
     "german": {"german", "deutsch", "ger"}, "english": {"english", "eng"},
     "french": {"french", "francais", "truefrench", "vf"}, "italian": {"italian", "italiano", "ita"},
     "spanish": {"spanish", "espanol", "spa", "castellano"}, "japanese": {"japanese", "jap", "jpn"},
+    # not in Spokarr: scene audiobook names tag these too (e.g. "AUDiOBOOK-WEB-DK" = Danish)
+    "danish": {"danish", "dansk", "dk"}, "dutch": {"dutch", "nl", "flemish", "nederlands"},
+    "swedish": {"swedish", "svensk", "swe"}, "norwegian": {"norwegian", "norsk", "nor"},
+    "finnish": {"finnish", "suomi", "fin"}, "polish": {"polish", "polski", "pl"},
+    "russian": {"russian", "rus"}, "portuguese": {"portuguese", "portugues", "por"},
 }
 _ENGLISH_WORDS = re.compile(r"\b(the|and|of)\b")
 _DRAMA = re.compile(r"\bhoerspiel\b|full cast|dramati[sz](?:ed|ation)|audio drama|radio (?:drama|play|adapt\w*)|\bbbc radio\b")
