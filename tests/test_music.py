@@ -322,3 +322,40 @@ def test_cut_off_flac_is_fetched_again(env, monkeypatch):
     asyncio.run(run())
     assert seen == [["01- Track.flac"]]  # the cut-off track was removed before deemix ran
     assert db.one("SELECT status FROM downloads")["status"] == "imported"
+
+
+def test_multi_disc_album_becomes_one_numbered_list(tmp_path):
+    album = tmp_path / "Rebel Yell (Expanded Edition)"
+    for disc, names in (("CD1", ["01- Rebel Yell", "02- Daytime Drama"]), ("CD2", ["01- Best Way Out Of Here", "02- Love Don't Live Here Anymore", "03- Daytime Drama (Demo)"])):
+        (album / disc).mkdir(parents=True)
+        for n in names:
+            _flac(album / disc / f"{n}.flac", 100, 10_000_000)
+        (album / disc / "cover.jpg").write_bytes(b"jpg")
+    moves = music.flatten_discs(str(album))
+    assert sorted(os.listdir(album)) == ["01- Rebel Yell.flac", "02- Daytime Drama.flac", "03- Best Way Out Of Here.flac",
+                                         "04- Love Don't Live Here Anymore.flac", "05- Daytime Drama (Demo).flac", "cover.jpg"]
+    assert len(moves) == 5
+    from mutagen.flac import FLAC
+    t = FLAC(str(album / "04- Love Don't Live Here Anymore.flac"))
+    assert t["tracknumber"] == ["4"] and "discnumber" not in t
+    assert music.flatten_discs(str(album)) == []  # single folder, no discs: nothing to do
+
+
+def test_two_discs_in_one_folder_by_tags(tmp_path):
+    from mutagen.flac import FLAC
+    album = tmp_path / "Best Of"
+    album.mkdir()
+    for disc, track, name in ((1, 1, "01- A"), (1, 2, "02- B"), (2, 1, "01- C"), (2, 2, "02- D")):
+        p = album / f"{name}.flac"
+        _flac(p, 100, 10_000_000)
+        t = FLAC(str(p)); t["discnumber"] = str(disc); t["tracknumber"] = str(track); t.save()
+    music.flatten_discs(str(album))
+    assert sorted(os.listdir(album)) == ["01- A.flac", "02- B.flac", "03- C.flac", "04- D.flac"]
+    assert FLAC(str(album / "03- C.flac"))["tracknumber"] == ["3"] and "discnumber" not in FLAC(str(album / "03- C.flac"))
+
+
+def test_deemix_config_has_no_disc_tags(env):
+    db.save_settings({"deezer_arl": "x"})
+    deemix._write_config("flac")
+    cfg = json.load(open(os.path.join(deemix.config_dir(), "config.json")))
+    assert cfg["tags"]["discNumber"] is False and cfg["createCDFolder"] is True

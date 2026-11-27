@@ -78,6 +78,9 @@ def _write_config(quality: str, artist_folder: bool = True) -> None:
         except (OSError, ValueError):
             cur = {}
     cur.update(settings_for(quality, artist_folder))
+    # no disc numbers: a single-disc album needs none, and Omniarr numbers a multi-disc album straight through
+    # (its CD folders are only used to know which disc a track is on, then merged by music.flatten_discs)
+    cur["tags"] = {**(cur.get("tags") or {}), "discNumber": False, "discTotal": False}
     with open(path, "w") as f:
         json.dump(cur, f, indent=2)
     arl = (db.setting("deezer_arl") or "").strip()

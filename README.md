@@ -232,7 +232,8 @@ optional **Music** path) and Omniarr uses it automatically. FLAC needs a Deezer 
   *Download all missing* (also the albums you don't have, one edition of each), or *Just add*.
   Click any album to download it on its own.
 - Albums download one at a time with the built-in [deemix](https://github.com/bambanah/deemix) into
-  `<music folder>/<Letter>/<Artist>/<Album>/` with tags and cover art, and show in Activity. An album that didn't fully
+  `<music folder>/<Letter>/<Artist>/<Album>/` with tags and cover art, and show in Activity. A multi-disc album becomes one folder numbered straight through
+  (disc 2 continues after disc 1), with no disc numbers. An album that didn't fully
   come down is tried again 6 hours later (only the missing tracks). Releases with a future date wait until they're out.
 - Followed artists are checked every 12 hours. Which kinds of releases they grab (albums, EPs, singles,
   compilations) is set in Settings → Music.
@@ -340,6 +341,8 @@ as the built-in torrent client, run by Omniarr as a separate program.
 It also includes [deemix](https://github.com/bambanah/deemix) (GPL-3.0, source at that link; its licence is in
 `/opt/deemix` inside the image): its command-line tool, built unmodified from a pinned release, with
 [Node.js](https://nodejs.org) to run it. Omniarr runs it as a separate program for music downloads.
+Music tags (track numbers when a multi-disc album is merged into one list) are written with
+[Mutagen](https://github.com/quodlibet/mutagen) (GPL-2.0-or-later).
 
 The audiobook section's Audible catalog client and release scoring (`app/services/audible.py`,
 `app/audiobooks.py`) are ported from [Spokarr](https://github.com/BlugDeg/Spokarr):

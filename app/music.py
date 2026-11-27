@@ -156,6 +156,112 @@ def tidy_names(folder: str) -> None:
                 os.rename(os.path.join(d, f), os.path.join(d, new + ext))
 
 
+CD_DIR = re.compile(r"^(?:cd|disc|disk)\s*(\d+)$", re.I)
+_LEAD = re.compile(r"^(\d{1,3})\s*[-.]?\s*(.*)$")
+
+
+def _retag(path: str, track: int | None) -> None:
+    """Set the track number (when given) and drop the disc number/total. Best effort: a file mutagen can't read is
+    left as it is."""
+    try:
+        import mutagen
+        t = mutagen.File(path, easy=True)
+        if t is None:
+            return
+        if t.tags is None:
+            t.add_tags()
+        if track is not None:
+            t["tracknumber"] = str(track)
+        for k in ("discnumber", "disctotal", "totaldiscs"):
+            if k in t:
+                del t[k]
+        t.save()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _disc_track(path: str) -> tuple[int, int]:
+    try:
+        import mutagen
+        t = mutagen.File(path, easy=True) or {}
+        num = lambda k: int(str((t.get(k) or ["0"])[0]).split("/")[0] or 0)  # noqa: E731
+        return num("discnumber"), num("tracknumber")
+    except Exception:  # noqa: BLE001
+        return 0, 0
+
+
+def flatten_discs(folder: str) -> list[tuple[str, str]]:
+    """One folder and one continuous track list for a multi-disc album (Brendan, 2026-11-27): CD1/01- A … CD2/01- X
+    become 01- A … 13- X in the album folder, track number tags renumbered the same way, disc tags removed.
+    Works from CD folders, or from disc tags when every disc is in one folder. Returns the (old, new) moves."""
+    subs = []
+    try:
+        for e in os.listdir(folder):
+            m = CD_DIR.match(e)
+            if m and os.path.isdir(os.path.join(folder, e)):
+                subs.append((int(m.group(1)), os.path.join(folder, e)))
+    except OSError:
+        return []
+    items = []  # (disc, track, path)
+    if subs:
+        for disc, d in sorted(subs):
+            for f in os.listdir(d):
+                if f.lower().endswith(AUDIO):
+                    m = _LEAD.match(os.path.splitext(f)[0])
+                    items.append((disc, int(m.group(1)) if m and m.group(2) else _disc_track(os.path.join(d, f))[1],
+                                  os.path.join(d, f)))
+    else:
+        files = [os.path.join(folder, f) for f in os.listdir(folder) if f.lower().endswith(AUDIO)]
+        tagged = [(*_disc_track(p), p) for p in files]
+        if len({dt[0] for dt in tagged if dt[0]}) < 2:
+            return []
+        items = tagged
+    items.sort(key=lambda x: (x[0], x[1], os.path.basename(x[2]).lower()))
+    plan = []
+    for n, (_disc, _track, src) in enumerate(items, 1):
+        stem, ext = os.path.splitext(os.path.basename(src))
+        m = _LEAD.match(stem)
+        title = m.group(2) if m and m.group(2) else stem
+        plan.append((src, os.path.join(folder, f"{n:02d}- {title}{ext}"), n))
+    srcs = {p[0] for p in plan}
+    if any(os.path.exists(new) and new not in srcs for _src, new, _n in plan):
+        return []  # a name is taken by something else: leave the album alone
+    moves = []
+    staged = []
+    for i, (src, new, n) in enumerate(plan):  # two steps, so a new name can't clash with a file not moved yet
+        tmp = os.path.join(folder, f".flatten-{i}{os.path.splitext(src)[1]}")
+        os.rename(src, tmp)
+        staged.append((src, tmp, new, n))
+    for src, tmp, new, n in staged:
+        os.rename(tmp, new)
+        _retag(new, n)
+        if src != new:
+            moves.append((src, new))
+        lrc = os.path.splitext(src)[0] + ".lrc"
+        if os.path.exists(lrc):
+            os.rename(lrc, os.path.splitext(new)[0] + ".lrc")
+    for _disc, d in subs:  # cover art etc. moves up; the CD folder goes once it's empty
+        for f in os.listdir(d):
+            src, dst = os.path.join(d, f), os.path.join(folder, f)
+            if not os.path.exists(dst):
+                os.rename(src, dst)
+            elif os.path.isfile(src) and f.lower().endswith((".jpg", ".jpeg", ".png")):
+                os.remove(src)  # the same cover again
+        try:
+            os.rmdir(d)
+        except OSError:
+            pass
+    return moves
+
+
+def strip_discs(folder: str) -> None:
+    """Remove disc number tags from every track of a (single-disc) album."""
+    for d, _sub, files in os.walk(folder):
+        for f in files:
+            if f.lower().endswith(AUDIO):
+                _retag(os.path.join(d, f), None)
+
+
 def _tidy(folder: str, done: bool) -> None:
     """After a download: drop deemix's errors.txt once the album is complete; remove the album folder again when a
     try brought down no audio at all (only errors.txt / cover art), so the library has no empty albums."""
@@ -165,6 +271,8 @@ def _tidy(folder: str, done: bool) -> None:
             if os.path.isfile(p):
                 os.remove(p)
             tidy_names(folder)
+            if not flatten_discs(folder):
+                strip_discs(folder)
         elif not count_audio(folder):
             shutil.rmtree(folder, ignore_errors=True)
     except OSError:
