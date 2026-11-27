@@ -167,8 +167,9 @@ MIN_FLAC_BPS = 160_000  # real FLAC never gets this low; a file that does was cu
 
 
 def flac_cut_off(path: str) -> bool:
-    """A FLAC whose size is far too small for the length its header promises: deemix was stopped while writing it
-    (Omniarr restarted, download cancelled). Its header and tags are there, so it looks fine but plays a few seconds."""
+    """A FLAC whose size is far too small for the length its header promises and that ends on one of Deezer's 2048-byte
+    blocks: deemix was stopped while writing it (Omniarr restarted, download cancelled). Its header and tags are there,
+    so it looks fine but plays only part of the track."""
     try:
         with open(path, "rb") as f:
             if f.read(4) != b"fLaC":
@@ -181,7 +182,10 @@ def flac_cut_off(path: str) -> bool:
         samples = int.from_bytes(info[13:18], "big") & 0xFFFFFFFFF
         if not rate or not samples:
             return False
-        return os.path.getsize(path) * 8 / (samples / rate) < MIN_FLAC_BPS
+        size = os.path.getsize(path)
+        # Deezer streams in 2048-byte blocks, so a cut-off file ends on a block; a finished (tagged) file almost never
+        # does. Both checks together keep tracks that are mostly silence (hidden tracks) from counting as cut off.
+        return size % 2048 == 0 and size * 8 / (samples / rate) < MIN_FLAC_BPS
     except OSError:
         return False
 

@@ -297,8 +297,11 @@ def test_cut_off_flac_is_fetched_again(env, monkeypatch):
     album = flac / "Z" / "The Zutons" / "Tired of Hanging Around (Deluxe)"
     album.mkdir(parents=True)
     _flac(album / "01- Track.flac", 150, 20_000_000)  # ~1 Mbit/s: fine
-    _flac(album / "02- Track.flac", 150, 2_000_000)  # ~107 kbit/s: cut off
+    _flac(album / "02- Track.flac", 150, 2048 * 977)  # ~107 kbit/s, ends on a 2048-byte block: cut off
     assert not music.flac_cut_off(str(album / "01- Track.flac")) and music.flac_cut_off(str(album / "02- Track.flac"))
+    _flac(album / "silent.flac", 300, 52_013)  # a hidden "silent track": tiny but not cut off
+    assert not music.flac_cut_off(str(album / "silent.flac"))
+    os.remove(album / "silent.flac")
     music.forget_index()
     seen = []
 
