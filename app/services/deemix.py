@@ -40,11 +40,11 @@ def available() -> str | None:
     return None
 
 
-def settings_for(quality: str) -> dict:
+def settings_for(quality: str, artist_folder: bool = True) -> dict:
     return {
         "tracknameTemplate": "%artist% - %title%",
         "albumTracknameTemplate": "%tracknumber%- %title%",
-        "createArtistFolder": True, "artistNameTemplate": "%artist%",
+        "createArtistFolder": artist_folder, "artistNameTemplate": "%artist%",
         "createAlbumFolder": True, "albumNameTemplate": "%album%",
         "createCDFolder": True, "createSingleFolder": True, "createPlaylistFolder": True,
         "padTracks": True, "padSingleDigit": True, "paddingSize": "2",
@@ -62,7 +62,7 @@ def settings_for(quality: str) -> dict:
     }
 
 
-def _write_config(quality: str) -> None:
+def _write_config(quality: str, artist_folder: bool = True) -> None:
     d = config_dir()
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, "config.json")
@@ -73,7 +73,7 @@ def _write_config(quality: str) -> None:
                 cur = json.load(f)
         except (OSError, ValueError):
             cur = {}
-    cur.update(settings_for(quality))
+    cur.update(settings_for(quality, artist_folder))
     with open(path, "w") as f:
         json.dump(cur, f, indent=2)
     arl = (db.setting("deezer_arl") or "").strip()
@@ -101,15 +101,16 @@ _procs: dict[str, asyncio.subprocess.Process] = {}
 
 
 async def download(url: str, dest: str, quality: str = "flac", on_progress: Callable[[float], None] | None = None,
-                   key: str = "") -> list[str]:
-    """Download one Deezer album/track URL into dest. Returns the error lines (empty = every track came down)."""
+                   key: str = "", artist_folder: bool = True) -> list[str]:
+    """Download one Deezer album/track URL into dest (dest/Artist/Album, or dest/Album when artist_folder is False).
+    Returns the error lines (empty = every track came down)."""
     why = available()
     if why:
         raise DeemixError(why)
     if not (db.setting("deezer_arl") or "").strip():
         raise DeemixError("No Deezer ARL set (Settings → Music)")
     os.makedirs(dest, exist_ok=True)
-    await asyncio.to_thread(_write_config, quality)
+    await asyncio.to_thread(_write_config, quality, artist_folder)
     env = {**os.environ, "DEEMIX_DATA_DIR": config_dir() + "/", "NODE_ENV": "production"}
     proc = await asyncio.create_subprocess_exec(
         "node", CLI, "--path", dest, "--bitrate", quality, url, cwd=config_dir(), env=env,

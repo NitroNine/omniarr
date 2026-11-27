@@ -62,7 +62,7 @@ moved to local; this file carries the context over.
   Omniarr runs `node deemix.cjs --path <root>/<Letter> --bitrate flac <album url>` with DEEMIX_DATA_DIR=/config/deemix
   (config.json + login.json written each run from settings `deezer_arl` (secret), `music_quality`). Tables
   `music_artists` (monitored = grab new releases), `music_albums` (wanted, folder, last_try); `downloads.music_album_id`
-  rows show in Activity (importer skips them). One album at a time (job `music`, 30 s); complete = audio files ≥ Deezer
+  rows show in Activity (importer skips them). One album at a time (job `music`, 30 s), into the artist's existing folder when `artist_dir` finds one (loose name match), else <root>/<Letter> with deemix making Artist/; complete = audio files ≥ Deezer
   track count, else retry after 6 h. Job `music_refresh`: each artist every 12 h, new releases of `music_types`
   (default album,ep), one edition per base title. Owned albums = `find_album` over `root_music` (empty = `/music` mount
   if present; Tower: /music = /mnt/nvme2tb/Navidrome, Brendan's FLAC library served by Theremin, 2026-11-27) + sibling format folders (Compressed, opus files), letter folders.
@@ -81,7 +81,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 167 tests
+.venv/bin/pytest -q                       # 168 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

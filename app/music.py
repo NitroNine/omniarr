@@ -45,7 +45,7 @@ def letter(artist: str) -> str:
 
 def norm(s: str) -> str:
     s = (s or "").lower().replace("&", "and").replace("․", ".")
-    s = re.sub(r"^the\s+", "", s.strip())
+    s = re.sub(r"^the\s+|,\s*the$", "", s.strip())
     return re.sub(r"[\W_]+", "", s)
 
 
@@ -120,6 +120,24 @@ def find_album(artist: str, title: str, fresh: bool = False) -> str | None:
     for name, path in albums:
         if b and base(name) == b:
             return path
+    return None
+
+
+def artist_dir(artist: str) -> str | None:
+    """The artist's existing folder in the music folder (root/Letter/Artist or root/Artist), matched loosely
+    ("The", case, punctuation), so a new album goes next to the ones already there even if the spelling differs."""
+    r, n = root(), norm(artist)
+    if not n:
+        return None
+    for top in (os.path.join(r, letter(artist)), r):
+        try:
+            names = os.listdir(top)
+        except OSError:
+            continue
+        for e in sorted(names):
+            p = os.path.join(top, e)
+            if len(e) > 1 and e != "0-9" and norm(e) == n and os.path.isdir(p):
+                return p
     return None
 
 
@@ -408,10 +426,11 @@ async def _run(dl_id: int, a: dict, quality: str) -> None:
             last["p"] = p
             db.ex("UPDATE downloads SET progress=?, updated=datetime('now') WHERE id=? AND status='downloading'",
                   (round(p, 1), dl_id))
-    dest = os.path.join(root(), letter(a["artist"]))
+    existing = await asyncio.to_thread(artist_dir, a["artist"])
+    dest = existing or os.path.join(root(), letter(a["artist"]))
     try:
         errors = await deemix.download(f"https://www.deezer.com/album/{a['deezer_id']}", dest, quality, progress,
-                                       key=str(dl_id))
+                                       key=str(dl_id), artist_folder=not existing)
         if (db.one("SELECT status FROM downloads WHERE id=?", (dl_id,)) or {}).get("status") == "removed":
             return  # cancelled
         expected = a.get("tracks")

@@ -93,9 +93,9 @@ def test_download_lands_in_letter_folder(env, monkeypatch):
     monkeypatch.setattr(deemix, "available", lambda: None)
     calls = []
 
-    async def fake_download(url, dest, quality, on_progress, key=""):
+    async def fake_download(url, dest, quality, on_progress, key="", artist_folder=True):
         calls.append((url, dest, quality))
-        d = os.path.join(dest, "The Zutons", "Tired of Hanging Around (Deluxe)")
+        d = os.path.join(dest, *(["The Zutons"] if artist_folder else []), "Tired of Hanging Around (Deluxe)")
         os.makedirs(d, exist_ok=True)
         for i in range(1, 4 if len(calls) > 1 else 3):  # first try: 2 of 3 tracks
             open(os.path.join(d, f"0{i}- Track.flac"), "wb").close()
@@ -114,6 +114,7 @@ def test_download_lands_in_letter_folder(env, monkeypatch):
     assert music.next_album() is None  # waits RETRY_HOURS
     db.ex("UPDATE music_albums SET last_try=datetime('now','-7 hours')")
     asyncio.run(run())
+    assert calls[1][1] == str(flac / "Z" / "The Zutons")  # the retry goes into the folder the first try made
     a = db.one("SELECT * FROM music_albums WHERE deezer_id=102")
     assert a["folder"] == str(flac / "Z" / "The Zutons" / "Tired of Hanging Around (Deluxe)")
     assert db.one("SELECT status FROM downloads ORDER BY id DESC")["status"] == "imported"
@@ -182,3 +183,31 @@ def test_want_missing_skips_titles_owned_in_any_edition(env, monkeypatch):
     art = db.one("SELECT id FROM music_artists")["id"]
     assert [r["deezer_id"] for r in music.missing_editions(art)] == [101]
     assert music.want_missing(art) == 1 and music.missing_editions(art) == []
+
+
+def test_download_goes_into_existing_artist_folder(env, monkeypatch):
+    flac, _ = _roots(env)
+    mine = flac / "Z" / "Zutons, The"  # spelled differently from Deezer's "The Zutons"
+    (mine / "Big Black Hole").mkdir(parents=True)
+    _fake(monkeypatch, ALBUMS)
+    db.save_settings({"deezer_arl": "secret-arl"})
+    monkeypatch.setattr(deemix, "available", lambda: None)
+    calls = []
+
+    async def fake_download(url, dest, quality, on_progress, key="", artist_folder=True):
+        calls.append((dest, artist_folder))
+        d = os.path.join(dest, "Tired of Hanging Around (Deluxe)")
+        os.makedirs(d, exist_ok=True)
+        for i in range(1, 4):
+            open(os.path.join(d, f"0{i}- Track.flac"), "wb").close()
+        return []
+    monkeypatch.setattr(deemix, "download", fake_download)
+    asyncio.run(music.add_album(102))
+
+    async def run():
+        await music.process()
+        await music._task
+    asyncio.run(run())
+    assert calls == [(str(mine), False)]
+    assert db.one("SELECT folder FROM music_albums WHERE deezer_id=102")["folder"] == str(mine / "Tired of Hanging Around (Deluxe)")
+    assert sorted(os.listdir(flac / "Z")) == ["Zutons, The"]  # no second artist folder
