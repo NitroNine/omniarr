@@ -21,7 +21,7 @@ HOLD = (NoSpace, newznab.IndexerBusy)
 
 
 def _queued_bytes() -> int:
-    rows = db.q("SELECT size, progress FROM downloads WHERE status IN ('queued','downloading')")
+    rows = db.q("SELECT size, progress FROM downloads WHERE status IN ('queued','downloading') AND music_album_id IS NULL")
     return int(sum((r["size"] or 0) * (1 - (r["progress"] or 0) / 100) for r in rows))
 
 

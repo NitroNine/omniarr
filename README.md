@@ -11,6 +11,7 @@ Movies, TV and audiobooks in one self-hosted app, built for Unraid:
 - **Streaming tab:** browse Netflix, Apple TV+, Prime Video, Disney+, Max, Hulu, Paramount+, Peacock and more. Click a service's logo to see the movies and TV shows it offers, and add them with one click.
 - **Library import:** brings in media that's already in your movies and TV folders. Omniarr matches each folder on TMDB and works out the quality and TRaSH score of each file already there, so upgrades work straight away. Renaming is optional.
 - **Audiobooks:** search Audible's catalog (any store: US, Canada, UK, Germany, …) and pick the exact edition — narrator, unabridged or abridged, language. Omniarr searches your indexers' audiobook categories (3030 by default), scores each release against that edition, downloads the best match with the same NZBGet and files it as `Author/Series/Book 01 - Title` (or `Author/Title`) with its cover. Books already in the folder are recognised. Users can request audiobooks like movies. Ideas and matching rules from [Spokarr](https://github.com/BlugDeg/Spokarr).
+- **Music:** search Deezer for artists and albums, follow artists so their new albums and EPs download by themselves, or download any album on its own. The built-in deemix downloads them with your Deezer account (FLAC with a Premium plan) into your music folder as `Letter/Artist/Album/01- Title.flac`. Albums already in the folder, or in a format folder next to it (e.g. `Compressed` next to `FLAC`), are recognised.
 - **Quality limits per library:** choose which qualities are allowed (your maximum and minimum), the quality to *upgrade until*, and whether upgrades happen at all.
 - **Downloads:** a **built-in downloader** (NZBGet, shipped inside the image and run by Omniarr — no second container). Add your Usenet provider under **Settings → Downloads**. A separate NZBGet still works if you prefer. When a download finishes, Omniarr renames it with the TRaSH naming scheme and moves it (or hardlinks/copies it) into the title's folder. Failed downloads are blocklisted and searched again.
 
@@ -220,6 +221,21 @@ Omniarr has a built-in torrent client (qBittorrent) for torrents you add yoursel
   listening port (6882 TCP+UDP, published in the Unraid template; forward it on your router for speed), stop-seeding
   ratio and upload limit.
 
+## Music (Deezer)
+
+**Settings → Music**: paste your Deezer **ARL** (your login cookie: on deezer.com, signed in, open the browser's
+developer tools → Storage / Application → Cookies → `www.deezer.com` → `arl`), pick the quality and the music folder,
+then **Save & check login**. FLAC needs a Deezer Premium (HiFi) plan; an ARL lasts about three months.
+
+- **Music** tab: search Deezer, open an artist, and **Add artist**: *Follow* (new releases download by themselves),
+  *Download all missing* (also the albums you don't have, one edition of each), or *Just add*.
+  Click any album to download it on its own.
+- Albums download one at a time with the built-in [deemix](https://github.com/bambanah/deemix) into
+  `<music folder>/<Letter>/<Artist>/<Album>/` with tags and cover art, and show in Activity. An album that didn't fully
+  come down is tried again 6 hours later (only the missing tracks). Releases with a future date wait until they're out.
+- Followed artists are checked every 12 hours. Which kinds of releases they grab (albums, EPs, singles,
+  compilations) is set in Settings → Music.
+
 ## Media server scans (Silo, Jellyfin, Emby)
 
 Settings → Media server: after each import Omniarr asks the media server to scan just that movie's or show's
@@ -319,6 +335,10 @@ as the built-in downloader, unmodified, with the unrar and 7-Zip binaries from i
 
 It also includes [qBittorrent](https://www.qbittorrent.org) (`qbittorrent-nox`, GPL-2.0+, Debian's package, unmodified)
 as the built-in torrent client, run by Omniarr as a separate program.
+
+It also includes [deemix](https://github.com/bambanah/deemix) (GPL-3.0, source at that link; its licence is in
+`/opt/deemix` inside the image): its command-line tool, built unmodified from a pinned release, with
+[Node.js](https://nodejs.org) to run it. Omniarr runs it as a separate program for music downloads.
 
 The audiobook section's Audible catalog client and release scoring (`app/services/audible.py`,
 `app/audiobooks.py`) are ported from [Spokarr](https://github.com/BlugDeg/Spokarr):

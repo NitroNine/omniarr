@@ -38,6 +38,18 @@ CREATE TABLE IF NOT EXISTS audiobooks (
   added TEXT DEFAULT CURRENT_TIMESTAMP, last_search TEXT, imported TEXT
 );
 
+-- music (music.py): artists from Deezer (monitored = grab their new releases) and their albums
+-- (wanted = to download; folder = where it is in the music folders)
+CREATE TABLE IF NOT EXISTS music_artists (
+  id INTEGER PRIMARY KEY, deezer_id INTEGER UNIQUE NOT NULL, name TEXT NOT NULL, picture TEXT,
+  monitored INTEGER DEFAULT 1, added TEXT DEFAULT CURRENT_TIMESTAMP, last_refresh TEXT
+);
+CREATE TABLE IF NOT EXISTS music_albums (
+  id INTEGER PRIMARY KEY, deezer_id INTEGER UNIQUE NOT NULL, artist_id INTEGER NOT NULL, title TEXT NOT NULL,
+  record_type TEXT DEFAULT 'album', release_date TEXT, explicit INTEGER DEFAULT 0, cover TEXT, tracks INTEGER,
+  wanted INTEGER DEFAULT 0, folder TEXT, last_try TEXT, message TEXT, added TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- one row per version: a title can have a 1080p row ('hd') and a 4K row ('uhd')
 CREATE TABLE IF NOT EXISTS movies (
   id INTEGER PRIMARY KEY, tmdb_id INTEGER NOT NULL, imdb_id TEXT, title TEXT NOT NULL,
@@ -155,6 +167,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # /data/audiobooks, /data/Audiobooks … that exists.
     "audible_region": "us",
     "root_audiobooks": "",
+    # Music (music.py): the built-in deemix downloads from Deezer with this account login (ARL cookie), into
+    # root_music as <Letter>/<Artist>/<Album>. Empty root = the first of /data/music/FLAC, /data/media/music/FLAC,
+    # /data/music … that exists. music_types: Deezer record types grabbed for followed artists.
+    "deezer_arl": "",
+    "music_quality": "flac",
+    "music_types": "album,ep",
+    "root_music": "",
     # Media server told to scan a title's folder after each import (services/mediaserver.py): silo | jellyfin |
     # emby | "" (off). Path mapping only needed when the folder names don't match its library roots.
     "media_server_type": "",
@@ -229,6 +248,7 @@ MIGRATIONS = [
     ("indexers", "audio_categories", "TEXT DEFAULT '3030'"),
     ("downloads", "audiobook_id", "INTEGER"),
     ("downloads", "torrent_hash", "TEXT"),  # torrents added by hand and linked to a title (torrents.py)
+    ("downloads", "music_album_id", "INTEGER"),  # albums downloaded by the built-in deemix (music.py)
 ]
 
 

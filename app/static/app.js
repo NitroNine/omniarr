@@ -103,7 +103,7 @@ $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") clos
 
 // ------------------------------------------------------------- router ---
 const routes = { title: renderTitle, requests: (sub) => renderRequests(sub), discover: renderDiscover, collections: renderCollections, hallmark: renderHallmark, christmas: () => renderProvider(0), import: renderImport, movies: renderMovies, series: renderSeries, add: renderAdd, activity: renderActivity, settings: renderSettings, movie: renderMovie, show: renderShow };
-const ADMIN_PAGES = ["settings", "activity", "import"];
+const ADMIN_PAGES = ["settings", "activity", "import", "music"];
 async function route() {
   let [, name = "movies", arg, ...rest] = location.hash.split("/");
   if (!isAdmin() && ADMIN_PAGES.includes(name)) { location.hash = "#/movies"; return; }
@@ -426,7 +426,7 @@ async function renderMovie(id) {
 function historyTable(rows) {
   if (!rows || !rows.length) return '<p class="muted">Nothing yet.</p>';
   return `<div class="table-wrap"><table><tr><th>Release</th><th>Quality</th><th>Score</th><th>Status</th><th>Added</th></tr>
-  ${rows.map((d) => `<tr><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td><td>${esc(d.quality)}</td><td>${d.score}</td><td>${statusChip(d)}</td><td class="small muted">${esc(d.added)}</td></tr>`).join("")}</table></div>`;
+  ${rows.map((d) => `<tr><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td><td>${esc(d.quality)}</td><td>${d.score ?? ""}</td><td>${statusChip(d)}</td><td class="small muted">${esc(d.added)}</td></tr>`).join("")}</table></div>`;
 }
 function statusChip(d) {
   const cls = { imported: "ok", failed: "bad", import_failed: "bad", downloading: "warn", queued: "", importing: "warn" }[d.status] ?? "";
@@ -961,9 +961,9 @@ async function renderActivity(sub = "queue") {
   if (sub === "queue" || sub === "history") {
     const rows = (await api("/queue")).filter((d) => (sub === "queue") === ["queued", "downloading", "importing", "import_failed"].includes(d.status));
     el.innerHTML = rows.length ? `<div class="table-wrap"><table><tr><th>Item</th><th>Release</th><th>Quality</th><th>Score</th><th>Status</th><th></th></tr>
-      ${rows.map((d) => `<tr><td>${esc(d.movie_title || d.series_title || d.audiobook_title || "")}</td><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)} · ${esc(d.added)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td>
-      <td>${esc(d.quality)}</td><td>${d.score}</td><td>${statusChip(d)}${d.status === "downloading" ? `<div class="progress"><div style="width:${d.progress}%"></div></div>` : ""}</td>
-      <td>${d.status === "import_failed" ? `<button class="small" onclick="retryImport(${d.id})">Retry import</button> ` : ""}${sub === "queue" ? (d.torrent_hash ? `<a href="#/activity/torrents"><button class="small">Torrent…</button></a>` : `<button class="small danger" onclick="rmDl(${d.id})">Remove</button>`) : ""}</td></tr>`).join("")}</table></div>` : '<p class="muted">Empty.</p>';
+      ${rows.map((d) => `<tr><td>${esc(d.movie_title || d.series_title || d.audiobook_title || d.music_title || "")}</td><td>${esc(d.release_title)}<div class="small muted">${esc(d.indexer)} · ${size(d.size)} · ${esc(d.added)}</div>${d.message ? `<div class="rej">${esc(d.message)}</div>` : ""}</td>
+      <td>${esc(d.quality)}</td><td>${d.score ?? ""}</td><td>${statusChip(d)}${d.status === "downloading" ? `<div class="progress"><div style="width:${d.progress}%"></div></div>` : ""}</td>
+      <td>${d.status === "import_failed" ? `<button class="small" onclick="retryImport(${d.id})">Retry import</button> ` : ""}${d.music_album_id && d.status === "failed" ? `<button class="small" onclick="retryImport(${d.id})">Try again</button> ` : ""}${sub === "queue" ? (d.torrent_hash ? `<a href="#/activity/torrents"><button class="small">Torrent…</button></a>` : `<button class="small danger" onclick="rmDl(${d.id})">Remove</button>`) : ""}</td></tr>`).join("")}</table></div>` : '<p class="muted">Empty.</p>';
     if (sub === "queue") setTimeout(() => { if (location.hash.startsWith("#/activity/queue") || location.hash === "#/activity") renderActivity("queue"); }, 10000);
   } else if (sub === "events") {
     const rows = await api("/events");
@@ -1159,6 +1159,148 @@ async function abRemove(id, hasFiles) {
   await guard(async () => { await api("/audiobooks/" + id, { method: "DELETE" }); closeModal(); toast("Removed"); AB.rows = null; route(); });
 }
 routes.audiobooks = renderAudiobooks;
+
+// ----------------------------------------------------------------- music ---
+// Deezer catalog → follow artists / pick albums → the built-in deemix downloads them into the music folder.
+const MU = { term: "", results: null, disc: null };
+const MU_TYPES = { album: "Albums", ep: "EPs", single: "Singles", compile: "Compilations" };
+function muChip(a) {
+  if (a.state === "downloading") return `<span class="chip warn">Downloading ${Math.round(a.progress || 0)}%</span>`;
+  if (a.state === "have") return '<span class="chip ok">In library</span>';
+  if (a.state === "wanted") return a.upcoming ? `<span class="chip">Out ${esc(a.release_date)}</span>` : `<span class="chip bad" title="${esc(a.message || "Waiting for its turn")}">${a.message ? "Retrying" : "Wanted"}</span>`;
+  return "";
+}
+function muAlbumCard(a, ref) {
+  const year = (a.release_date || "").slice(0, 4);
+  return `<div class="card" onclick="muAlbum(${ref})" title="${esc(a.title)}">${poster(a.cover, a.title)}
+    <div class="meta"><div class="title">${esc(a.title)}</div><div class="small muted ellipsis">${esc(a.artist || "")}</div>
+    <div class="chips">${a.record_type && a.record_type !== "album" ? `<span class="chip">${esc(MU_TYPES[a.record_type] ? MU_TYPES[a.record_type].replace(/s$/, "") : a.record_type)}</span>` : ""}${year ? `<span class="chip">${year}</span>` : ""}${muChip(a)}</div></div></div>`;
+}
+function muArtistCard(a) {
+  const chips = a.have !== undefined ? `${a.have ? `<span class="chip ok">${a.have}</span>` : ""}${a.wanted ? `<span class="chip bad">${a.wanted} wanted</span>` : ""}${a.monitored ? '<span class="chip">Following</span>' : ""}`
+    : `${a.monitored ? '<span class="chip">Following</span>' : a.tracked ? '<span class="chip">In Omniarr</span>' : ""}`;
+  return `<div class="card" onclick="location.hash='#/music/artist/${a.deezer_id}'" title="${esc(a.name)}">${poster(a.picture, a.name)}
+    <div class="meta"><div class="title">${esc(a.name)}</div><div class="chips">${chips}</div></div></div>`;
+}
+async function renderMusic(sub, id) {
+  if (sub === "artist" && id) return renderMusicArtist(+id);
+  view.innerHTML = `<div class="toolbar"><h2 class="grow">Music</h2>
+    <input id="muterm" class="grow" placeholder="Artist or album" value="${esc(MU.term)}"><button class="primary" id="mugo">Search Deezer</button></div>
+    <div id="mustat"></div><div id="mures"></div><div id="mulib"></div><div id="mudisc"></div>`;
+  const go = () => guard(async () => {
+    MU.term = $("#muterm").value.trim();
+    if (!MU.term) { MU.results = null; drawMuResults(); return; }
+    $("#mures").innerHTML = '<p class="muted">Searching Deezer…</p>';
+    MU.results = await api("/music/search?term=" + encodeURIComponent(MU.term));
+    drawMuResults();
+  });
+  $("#mugo").onclick = go;
+  $("#muterm").addEventListener("keydown", (e) => e.key === "Enter" && go());
+  if (MU.term && MU.results) drawMuResults();
+  const lib = await api("/music");
+  $("#mustat").innerHTML = lib.problem ? `<p class="rej">${esc(lib.problem)}${lib.problem.includes("Settings") ? ' — <a href="#/settings/music">Settings → Music</a>' : ""}</p>` : "";
+  $("#mulib").innerHTML = lib.artists.length ? `<h3>Your artists <span class="muted small">(${lib.artists.length})</span></h3>
+    <div class="grid books">${lib.artists.map(muArtistCard).join("")}</div>
+    <p class="small muted">Albums go into <code>${esc(lib.root)}</code> as Letter / Artist / Album, in ${esc(lib.quality === "flac" ? "FLAC" : "MP3 " + lib.quality)}.
+    ${lib.folders.length > 1 ? `Albums already in ${lib.folders.slice(1).map((f) => `<code>${esc(f)}</code>`).join(", ")} count as in the library too.` : ""}
+    Followed artists' new ${esc(lib.types.map((t) => MU_TYPES[t] || t).join(" and ").toLowerCase())} download by themselves (<a href="#/settings/music">change</a>).</p>` : "";
+  if (!MU.disc) {
+    $("#mudisc").innerHTML = '<p class="muted">Loading Deezer…</p>';
+    MU.disc = await api("/music/discover").catch((e) => [{ title: "New releases", items: [], error: e.message }]);
+  }
+  drawMuDisc();
+}
+function drawMuDisc() {
+  if (!$("#mudisc")) return;
+  $("#mudisc").innerHTML = MU.disc.map((r, ri) => `<h3>${esc(r.title)}</h3>${r.error ? `<p class="rej">${esc(r.error)}</p>` : ""}
+    <div class="grid books">${r.items.map((a, i) => muAlbumCard(a, `MU.disc[${ri}].items[${i}]`)).join("") || '<p class="muted">Nothing right now.</p>'}</div>`).join("");
+}
+function drawMuResults() {
+  const el = $("#mures");
+  if (!el) return;
+  if (!MU.results) { el.innerHTML = ""; return; }
+  const r = MU.results;
+  el.innerHTML = `<div class="toolbar"><h3 class="grow">Results for “${esc(MU.term)}”</h3><button class="small" onclick="MU.term='';MU.results=null;$('#muterm').value='';drawMuResults()">Clear</button></div>
+    ${r.artists.length ? `<h4>Artists</h4><div class="grid books">${r.artists.map(muArtistCard).join("")}</div>` : ""}
+    ${r.albums.length ? `<h4>Albums</h4><div class="grid books">${r.albums.map((a, i) => muAlbumCard(a, `MU.results.albums[${i}]`)).join("")}</div>` : ""}
+    ${!r.artists.length && !r.albums.length ? '<p class="muted">Nothing found on Deezer.</p>' : ""}`;
+}
+async function renderMusicArtist(deezerId) {
+  const d = await api("/music/artist/" + deezerId);
+  window._mua = d;
+  const a = d.artist;
+  const groups = Object.keys(MU_TYPES).map((t) => [t, d.albums.map((x, i) => [x, i]).filter(([x]) => (x.record_type || "album") === t)]).filter(([, l]) => l.length);
+  const missing = d.missing || 0;  // one edition per title of the wanted types (Settings → Music)
+  view.innerHTML = `<div class="toolbar"><a href="#/music"><button class="small">← Music</button></a></div>
+    <div class="abbook">${a.picture ? `<img src="${esc(a.picture)}" alt="" style="border-radius:50%">` : ""}<div>
+      <h2>${esc(a.name)}</h2><p class="small muted">${a.albums ? `${a.albums} releases on Deezer` : ""}${a.fans ? ` · ${Number(a.fans).toLocaleString()} fans` : ""}</p>
+      ${d.tracked ? `<div class="toolbar"><label><input type="checkbox" id="mufollow" ${a.monitored ? "checked" : ""}> Follow: download new releases</label>
+          ${missing ? `<button id="muall">Download all missing (${missing})</button>` : ""}<button class="danger small" id="murm">Remove from Omniarr</button></div>`
+        : `<div class="toolbar"><select id="mumon"><option value="new">Follow: download new releases</option><option value="all">Download all missing albums + new releases</option><option value="none">Just add (download nothing yet)</option></select>
+          <button class="primary" id="muadd">${addLabel()} artist</button></div>`}
+      <p class="small muted">Albums already in your music folders show as In library. Click an album to download it on its own.</p></div></div>
+    ${groups.map(([t, l]) => `<h3>${MU_TYPES[t]} <span class="muted small">(${l.length})</span></h3><div class="grid books">${l.map(([x, i]) => muAlbumCard(x, `window._mua.albums[${i}]`)).join("")}</div>`).join("") || '<p class="muted">Deezer lists no albums for this artist.</p>'}`;
+  if (d.tracked) {
+    $("#mufollow").onchange = (e) => guard(async () => { await api("/music/artists/" + a.id, { method: "PUT", body: { monitored: e.target.checked } }); toast(e.target.checked ? "Following — new releases download by themselves" : "Not following"); });
+    if ($("#muall")) $("#muall").onclick = () => guard(async () => { $("#muall").disabled = true; await api("/music/artists/" + a.id, { method: "PUT", body: { want_all: true } }); toast("Downloading the missing albums, one at a time"); renderMusicArtist(deezerId); });
+    $("#murm").onclick = async () => { if (await ask(`Remove ${a.name} from Omniarr? Files already downloaded stay in the music folder.`)) guard(async () => { await api("/music/artists/" + a.id, { method: "DELETE" }); toast("Removed"); location.hash = "#/music"; }); };
+  } else {
+    $("#muadd").onclick = () => guard(async () => { $("#muadd").disabled = true; await api("/music/artists", { method: "POST", body: { deezer_id: deezerId, monitor: $("#mumon").value } }); toast(`Added ${a.name}`); renderMusicArtist(deezerId); });
+  }
+  if (d.albums.some((x) => x.state === "downloading" || (x.state === "wanted" && !x.upcoming))) setTimeout(() => { if (location.hash === `#/music/artist/${deezerId}` && $("#modal").classList.contains("hidden")) renderMusicArtist(deezerId); }, 10000);
+}
+async function muAlbum(a) {
+  window._mualb = a;
+  modal(`<div class="toolbar"><h2 class="grow">${esc(a.title)}</h2><button onclick="closeModal()">Close</button></div><p class="muted">Loading…</p>`);
+  const d = await guard(() => api("/music/album/" + a.deezer_id));
+  if (!d) return;
+  Object.assign(a, { state: d.state, progress: d.progress, album_id: d.album_id, folder: d.folder });
+  const secs = (s) => s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "";
+  const multi = new Set(d.track_list.map((t) => t.disc)).size > 1;
+  const btn = d.state === "have" ? `<span class="chip ok">In library</span><div class="small muted">${esc(d.folder || "")}</div>`
+    : d.state === "downloading" ? muChip(d)
+    : d.state === "wanted" ? `${muChip(d)} <button onclick="muWant(${d.album_id}, false)">Don't download</button>`
+    : `<button class="primary" onclick="muGet(${d.deezer_id}, this)">Download</button>`;
+  modal(`<div class="toolbar"><h2 class="grow">${esc(d.title)}</h2><button onclick="closeModal()">Close</button></div>
+    <div class="abbook">${d.cover_big || d.cover ? `<img src="${esc(d.cover_big || d.cover)}" alt="">` : ""}<div>
+      <p><a href="#/music/artist/${d.artist_id}" onclick="closeModal()">${esc(d.artist || "")}</a></p>
+      <p class="small muted">${esc([MU_TYPES[d.record_type] ? MU_TYPES[d.record_type].replace(/s$/, "") : d.record_type, d.release_date, d.label, d.genres.join(", "), `${d.tracks} tracks`, d.explicit ? "Explicit" : ""].filter(Boolean).join(" · "))}</p>
+      <div class="add-ctrls">${btn}</div></div></div>
+    <div class="table-wrap"><table>${d.track_list.map((t) => `<tr><td class="small muted">${multi ? t.disc + "-" : ""}${t.n}</td><td>${esc(t.title)}</td><td class="small muted">${secs(t.duration)}</td></tr>`).join("")}</table></div>`);
+}
+async function muGet(deezerId, btn) {
+  btn.disabled = true;
+  await guard(async () => {
+    const r = await api("/music/albums", { method: "POST", body: { deezer_id: deezerId } });
+    toast(r.state === "have" ? "Already in your music folder" : r.upcoming ? `Downloads when it comes out (${r.release_date})` : `${r.title}: downloading`);
+    MU.disc = null; closeModal();
+    if (location.hash.startsWith("#/music")) route();
+  });
+}
+async function muWant(albumId, wanted) {
+  await guard(async () => { await api("/music/albums/" + albumId, { method: "PUT", body: { wanted } }); toast(wanted ? "Wanted" : "Won't download"); MU.disc = null; closeModal(); route(); });
+}
+routes.music = renderMusic;
+
+// Settings → Music
+function renderMusicSettings(el, s) {
+  el.innerHTML = `<p class="small muted">Omniarr downloads music from Deezer with the built-in deemix, using your Deezer account. FLAC needs a Deezer Premium (HiFi) plan.</p>
+    <div class="form" id="muform">${formRows([
+      ["deezer_arl", "Deezer ARL", "password", "Your Deezer login cookie. On deezer.com, signed in: open the browser's developer tools → Storage / Application → Cookies → www.deezer.com → copy the value of <code>arl</code>. It lasts about 3 months; when downloads say the login failed, paste a new one."],
+      ["music_quality", "Quality", [["flac", "FLAC (lossless)"], ["320", "MP3 320 kbps"], ["128", "MP3 128 kbps"]], "Tracks Deezer doesn't have in this quality are skipped, not downloaded in a lower one."],
+      ["music_types", "Followed artists: download new", "text", "Deezer release types, comma-separated: <code>album</code>, <code>ep</code>, <code>single</code>, <code>compile</code> (compilations)."],
+      ["root_music", "Music folder", "folder", "Albums go in here as Letter / Artist / Album / 01- Title.flac. Empty = the first of /data/music/FLAC, /data/media/music/FLAC or /data/music that exists. Format folders next to it (e.g. Compressed next to FLAC) are checked for albums you already have."],
+    ], s)}
+    <span></span><div class="toolbar"><button class="primary" id="musave">Save</button><button id="mutest">Save &amp; check login</button></div>
+    <span></span><div id="mures2" class="small"></div></div>`;
+  const save = () => api("/settings", { method: "PUT", body: collect($("#muform")) });
+  $("#musave").onclick = () => guard(async () => { await save(); toast("Saved"); });
+  $("#mutest").onclick = () => guard(async () => {
+    await save(); $("#mures2").textContent = "Checking…";
+    const r = await api("/music/login");
+    $("#mures2").innerHTML = r.ok ? `<span class="chip ok">Logged in</span> as ${esc(r.name)}${r.country ? ` (${esc(r.country)})` : ""} · ${r.flac ? "FLAC available" : '<span class="rej">this account can\'t download FLAC: choose MP3 320</span>'}` : `<span class="rej">${esc(r.error)}</span>`;
+  });
+}
 
 // ---- live speed meter on Activity → Queue: samples every 2 s, graph of the last 3 minutes ----
 const SPD_KEEP = 90;
@@ -1412,7 +1554,7 @@ const SECTIONS = {
 };
 async function renderSettings(sub = "general") {
   const s = await api("/settings");
-  const tabs = { general: "Metadata", downloads: "Downloads", mediaserver: "Media server", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", users: "Users", naming: "Naming (TRaSH)", schedule: "Schedule", backup: "Backup" };
+  const tabs = { general: "Metadata", downloads: "Downloads", music: "Music", mediaserver: "Media server", indexers: "Indexers", roots: "Root folders", profiles: "Profiles (TRaSH)", limits: "Quality limits", users: "Users", naming: "Naming (TRaSH)", schedule: "Schedule", backup: "Backup" };
   view.innerHTML = `<h2>Settings</h2><div class="tabs2">${Object.entries(tabs).map(([k, v]) => `<button class="${k === sub ? "active" : ""}" onclick="location.hash='#/settings/${k}'">${v}</button>`).join("")}</div><div id="set" class="panel"></div>`;
   const el = $("#set");
   if (SECTIONS[sub]) {
@@ -1427,6 +1569,7 @@ async function renderSettings(sub = "general") {
     $("#save").onclick = () => guard(async () => { await api("/settings", { method: "PUT", body: collect(el) }); toast("Saved"); checkBanner(); });
   } else if (sub === "downloads") await renderDownloads(el, s);
   else if (sub === "mediaserver") renderMediaServer(el, s);
+  else if (sub === "music") renderMusicSettings(el, s);
   else if (sub === "indexers") await renderIndexers(el);
   else if (sub === "profiles") await renderProfiles(el, s);
   else if (sub === "limits") await renderLimits(el);

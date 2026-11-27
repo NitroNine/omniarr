@@ -1,4 +1,24 @@
 # syntax=docker/dockerfile:1.7
+
+# Music: deemix (GPL-3.0, https://github.com/bambanah/deemix), the Deezer downloader, built from a pinned tag.
+# Only its command-line tool is kept: one self-contained JavaScript bundle that Omniarr runs once per album.
+# Built on the build machine's own platform (it's plain JavaScript); Node.js itself comes from the target's image.
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS deemix
+ARG DEEMIX_REF=deemix-webui@4.8.0
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${DEEMIX_REF}" https://github.com/bambanah/deemix /src
+WORKDIR /src
+RUN corepack enable \
+ && pnpm install --frozen-lockfile --ignore-scripts --filter "deemix-cli..." \
+ && pnpm --filter "deemix-cli..." run build \
+ && mkdir -p /out \
+ && cp packages/cli/dist/main.cjs /out/deemix.cjs \
+ && cp LICENSE.txt /out/LICENSE.txt \
+ && cd /out && node deemix.cjs --version
+
+FROM node:24-bookworm-slim AS node
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -29,6 +49,11 @@ RUN case "$(dpkg --print-architecture)" in \
  && sh /tmp/nzbget.run --destdir /opt/nzbget --arch "$arch" --silent \
  && rm -f /tmp/nzbget.run \
  && /opt/nzbget/nzbget -v
+
+# Node.js + the deemix bundle (Music); Omniarr runs it with DEEMIX_DATA_DIR=/config/deemix
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=deemix /out /opt/deemix
+RUN node --version && cd /tmp && node /opt/deemix/deemix.cjs --version
 
 WORKDIR /app
 COPY requirements.txt .

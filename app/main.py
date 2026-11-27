@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import httpx
 import base64
 import json
 import logging
@@ -14,10 +15,11 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audiobooks, auth, torrents, backup, collections_, db, hallmark, requests_, decision, importer, library, manual_nzb, scanner, search, trash
+from . import audiobooks, auth, music, torrents, backup, collections_, db, hallmark, requests_, decision, importer, library, manual_nzb, scanner, search, trash
 from .services import audible, bluray, downloader, metadata, newznab, nzbget
 from .services import mediaserver
 from .services import qbittorrent as qbt
+from .services import deemix, deezer
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("omniarr")
@@ -80,6 +82,8 @@ async def scheduler():
             ("missing", int(s["search_interval_minutes"]) * 60, search.missing_search),
             ("backup", 3600, _auto_backup),
             ("bluray", 6 * 3600, bluray.sync),  # 4K disc release dates (Add → New releases → 4K disc)
+            ("music", 30, music.process),  # starts the next wanted album (built-in deemix, one at a time)
+            ("music_refresh", 3600, music.refresh_due),  # new releases of followed artists (each every 12 h)
             ("hallmark", 3600, hallmark.sync_due),  # every 6 h while Hallmark auto-add is on  # makes one a day (backup.auto_backup skips if the last is recent)
         ]
         if backup.restoring:  # the database is being swapped
@@ -322,7 +326,7 @@ def requests_cancel(rid: int, request: Request):
 
 
 # -------------------------------------------------------------- settings --
-SECRET_KEYS = {"tmdb_api_key", "nzbget_password", "media_server_api_key"}
+SECRET_KEYS = {"tmdb_api_key", "nzbget_password", "media_server_api_key", "deezer_arl"}
 
 
 @app.get("/api/settings")
@@ -1423,6 +1427,133 @@ async def media_server_scan_all():
     return {"ok": bool(sent), "sent": sent}
 
 
+# ----------------------------------------------------------------- music --
+def _music_err(e: Exception):
+    if isinstance(e, ValueError):
+        raise HTTPException(404 if "not found" in str(e).lower() else 400, str(e))
+    if isinstance(e, (deezer.DeezerError, httpx.HTTPError)):
+        raise HTTPException(502, f"Deezer: {e}")
+    raise e
+
+
+@app.get("/api/music")
+def music_library():
+    return {"artists": music.artists(), "root": music.root(), "folders": music.library_folders(),
+            "quality": db.setting("music_quality") or "flac", "types": sorted(music.wanted_types()),
+            "ready": bool((db.setting("deezer_arl") or "").strip()) and not deemix.available(),
+            "problem": deemix.available() or (None if (db.setting("deezer_arl") or "").strip() else "No Deezer ARL set (Settings → Music)")}
+
+
+@app.get("/api/music/search")
+async def music_search(term: str):
+    try:
+        artists, albums = await asyncio.gather(deezer.search_artists(term), deezer.search_albums(term))
+    except Exception as e:  # noqa: BLE001
+        _music_err(e)
+    tracked = {r["deezer_id"]: r for r in db.q("SELECT deezer_id, id, monitored FROM music_artists")}
+    for a in artists:
+        t = tracked.get(a["deezer_id"])
+        a["tracked"] = bool(t)
+        a["monitored"] = bool(t and t["monitored"])
+    return {"artists": artists, "albums": music.annotate(albums)}
+
+
+@app.get("/api/music/discover")
+async def music_discover():
+    out = []
+    mine = music.recent_releases()
+    if mine:
+        out.append({"title": "New from your artists", "items": mine})
+    for title, fn in (("Deezer editors' picks", deezer.editors_picks), ("Top albums on Deezer", deezer.chart_albums)):
+        try:
+            out.append({"title": title, "items": music.annotate(await fn())})
+        except Exception as e:  # noqa: BLE001
+            out.append({"title": title, "items": [], "error": str(e)})
+    return out
+
+
+@app.get("/api/music/artist/{deezer_id}")
+async def music_artist(deezer_id: int):
+    try:
+        return await music.artist_page(deezer_id)
+    except Exception as e:  # noqa: BLE001
+        _music_err(e)
+
+
+@app.get("/api/music/album/{deezer_id}")
+async def music_album(deezer_id: int):
+    try:
+        a = await deezer.album(deezer_id)
+    except Exception as e:  # noqa: BLE001
+        _music_err(e)
+    return music.annotate([a])[0]
+
+
+class ArtistIn(BaseModel):
+    deezer_id: int
+    monitor: str = "new"  # new | all | none
+
+
+@app.post("/api/music/artists")
+async def music_add_artist(body: ArtistIn):
+    try:
+        return await music.add_artist(body.deezer_id, body.monitor)
+    except Exception as e:  # noqa: BLE001
+        _music_err(e)
+
+
+@app.put("/api/music/artists/{aid}")
+async def music_edit_artist(aid: int, body: dict):
+    if not db.one("SELECT 1 FROM music_artists WHERE id=?", (aid,)):
+        raise HTTPException(404)
+    if "monitored" in body:
+        db.update("music_artists", aid, {"monitored": int(bool(body["monitored"]))})
+    if body.get("want_all"):  # want every missing album of the wanted types (one edition each)
+        music.want_missing(aid)
+        asyncio.create_task(_job("music", music.process))
+    return music.artist_state(aid)
+
+
+@app.delete("/api/music/artists/{aid}")
+def music_remove_artist(aid: int):
+    music.remove_artist(aid)
+    return {"ok": True}
+
+
+class AlbumIn(BaseModel):
+    deezer_id: int
+    download: bool = True
+
+
+@app.post("/api/music/albums")
+async def music_add_album(body: AlbumIn):
+    try:
+        row = await music.add_album(body.deezer_id, body.download)
+    except Exception as e:  # noqa: BLE001
+        _music_err(e)
+    asyncio.create_task(_job("music", music.process))
+    return row
+
+
+@app.put("/api/music/albums/{album_id}")
+async def music_edit_album(album_id: int, body: dict):
+    if not db.one("SELECT 1 FROM music_albums WHERE id=?", (album_id,)):
+        raise HTTPException(404)
+    row = music.set_album(album_id, bool(body.get("wanted", True)))
+    if row.get("wanted"):
+        asyncio.create_task(_job("music", music.process))
+    return row
+
+
+@app.get("/api/music/login")
+async def music_login():
+    """Who the Deezer ARL in Settings logs in as (never returns the ARL)."""
+    try:
+        return await deezer.check_arl((db.setting("deezer_arl") or "").strip())
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"Couldn't reach Deezer: {e}"}
+
+
 # -------------------------------------------------------------- torrents --
 def _torrent_error(e: Exception):
     raise HTTPException(400 if isinstance(e, ValueError) else 503, str(e)) from None
@@ -1511,15 +1642,20 @@ async def delete_torrent(h: str, files: bool = False):
 
 @app.get("/api/queue")
 def get_queue(limit: int = 200):
-    rows = db.q("""SELECT d.*, m.title AS movie_title, s.title AS series_title, a.title AS audiobook_title FROM downloads d
+    rows = db.q("""SELECT d.*, m.title AS movie_title, s.title AS series_title, a.title AS audiobook_title,
+        ma.title AS music_title FROM downloads d
         LEFT JOIN movies m ON m.id=d.movie_id LEFT JOIN series s ON s.id=d.series_id
-        LEFT JOIN audiobooks a ON a.id=d.audiobook_id
+        LEFT JOIN audiobooks a ON a.id=d.audiobook_id LEFT JOIN music_albums ma ON ma.id=d.music_album_id
         ORDER BY d.id DESC LIMIT ?""", (limit,))
     return rows
 
 
 @app.post("/api/queue/{did}/retry-import")
 async def retry_import(did: int):
+    dl = db.one("SELECT * FROM downloads WHERE id=?", (did,))
+    if dl and dl.get("music_album_id"):  # music: download the album again (deemix keeps the tracks it has)
+        await music.retry(dl["music_album_id"])
+        return {"ok": True}
     await importer.retry_import(did)
     return {"ok": True}
 
@@ -1531,6 +1667,10 @@ async def remove_download(did: int, blocklist: bool = False):
         raise HTTPException(404)
     if dl.get("torrent_hash"):  # a hand-added torrent: unlink only, the torrent itself stays (Activity → Torrents)
         db.ex("UPDATE downloads SET status='removed', message='Unlinked' WHERE id=?", (did,))
+        return {"ok": True}
+    if dl.get("music_album_id"):  # music: stop deemix and don't want the album any more
+        music.cancel(did)
+        db.update("music_albums", dl["music_album_id"], {"wanted": 0})
         return {"ok": True}
     if dl["status"] in ("queued", "downloading"):
         try:

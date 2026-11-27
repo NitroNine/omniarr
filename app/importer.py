@@ -277,7 +277,8 @@ async def process_downloads() -> None:
         await torrents.process()
     except Exception as e:  # noqa: BLE001
         db.log(f"Checking torrents failed: {e}", "warn")
-    active = db.q("SELECT * FROM downloads WHERE status IN ('queued','downloading','importing') AND torrent_hash IS NULL")
+    active = db.q("SELECT * FROM downloads WHERE status IN ('queued','downloading','importing') AND torrent_hash IS NULL "
+                "AND music_album_id IS NULL")
     if not active:
         return
     try:

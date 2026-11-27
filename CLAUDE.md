@@ -56,6 +56,17 @@ moved to local; this file carries the context over.
   scans it every 5 min and joins MP3 books into .m4b). Books already in the folder are matched by ASIN in the
   folder name or the title (`library_index`, `_folder_key`). Backlog search includes wanted books (5 per run).
   Requests: kind `audiobook`, `source` = ASIN, target_id 0. Genre menu (2026-11-24, Brendan): 10 genres (`audible.GENRES`), each store's category id looked up by name (`categories_num_levels=2`, cached 24 h); `discover(genre)` = that category's best sellers; Audible CA has no adult Action & Adventure → `FALLBACK` Literature & Fiction + keywords "action adventure". Choice remembered per browser (localStorage `omniarr-ab-genre`). Tests `tests/test_audiobooks.py`.
+- **Music** (2026-11-27, Brendan's request: "add Deemix", built in + artists & new releases; `app/music.py`,
+  `services/deezer.py` (public API, no key; `check_arl` for Settings → Music), `services/deemix.py`, `#/music`, admin-only):
+  the image builds bambanah/deemix's CLI (pinned `DEEMIX_REF`, one 2 MB bundle at /opt/deemix/deemix.cjs) + Node.js;
+  Omniarr runs `node deemix.cjs --path <root>/<Letter> --bitrate flac <album url>` with DEEMIX_DATA_DIR=/config/deemix
+  (config.json + login.json written each run from settings `deezer_arl` (secret), `music_quality`). Tables
+  `music_artists` (monitored = grab new releases), `music_albums` (wanted, folder, last_try); `downloads.music_album_id`
+  rows show in Activity (importer skips them). One album at a time (job `music`, 30 s); complete = audio files ≥ Deezer
+  track count, else retry after 6 h. Job `music_refresh`: each artist every 12 h, new releases of `music_types`
+  (default album,ep), one edition per base title. Owned albums = `find_album` over `root_music` (Tower:
+  /data/music/FLAC = /mnt/user/media/music/FLAC) + sibling format folders (Compressed, opus files), letter folders.
+  Brendan's old Deemix container (/mnt/user/appdata/Deemix) isn't used by Omniarr.
 - **Library import** of existing folders (`app/scanner.py`), **collections/universes**
   (TMDB collections and keywords, `app/collections_.py`), **Streaming tab** (TMDB watch providers),
   **user accounts + requests** with admin approval / per-user auto-approve and 4K permission
@@ -70,7 +81,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 157 tests
+.venv/bin/pytest -q                       # 167 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised
