@@ -163,6 +163,44 @@ def count_audio(folder: str) -> int:
     return n
 
 
+MIN_FLAC_BPS = 160_000  # real FLAC never gets this low; a file that does was cut off mid-download
+
+
+def flac_cut_off(path: str) -> bool:
+    """A FLAC whose size is far too small for the length its header promises: deemix was stopped while writing it
+    (Omniarr restarted, download cancelled). Its header and tags are there, so it looks fine but plays a few seconds."""
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"fLaC":
+                return False
+            head = f.read(4)
+            if len(head) < 4 or head[0] & 0x7F != 0:  # STREAMINFO is always the first block
+                return False
+            info = f.read(18)
+        rate = int.from_bytes(info[10:13], "big") >> 4
+        samples = int.from_bytes(info[13:18], "big") & 0xFFFFFFFFF
+        if not rate or not samples:
+            return False
+        return os.path.getsize(path) * 8 / (samples / rate) < MIN_FLAC_BPS
+    except OSError:
+        return False
+
+
+def remove_cut_off(folder: str) -> list[str]:
+    """Delete cut-off FLACs in an album folder so the next deemix run fetches them again (it skips existing files)."""
+    gone = []
+    for d, _sub, files in os.walk(folder):
+        for f in files:
+            p = os.path.join(d, f)
+            if f.lower().endswith(".flac") and flac_cut_off(p):
+                try:
+                    os.remove(p)
+                    gone.append(f)
+                except OSError:
+                    pass
+    return gone
+
+
 # ------------------------------------------------------------- the database --
 def _artist_row(deezer_id: int) -> dict | None:
     return db.one("SELECT * FROM music_artists WHERE deezer_id=?", (deezer_id,))
@@ -445,6 +483,11 @@ async def _run(dl_id: int, a: dict, quality: str) -> None:
                   (round(p, 1), dl_id))
     existing = await asyncio.to_thread(artist_dir, a["artist"])
     dest = existing or os.path.join(root(), letter(a["artist"]))
+    before = await asyncio.to_thread(find_album, a["artist"], a["title"], True)
+    if before and before.startswith(root()):  # a try that was cut off left half-written files
+        gone = await asyncio.to_thread(remove_cut_off, before)
+        if gone:
+            db.log(f"Music: {a['artist']} - {a['title']}: fetching {len(gone)} cut-off track(s) again")
     try:
         errors = await deemix.download(f"https://www.deezer.com/album/{a['deezer_id']}", dest, quality, progress,
                                        key=str(dl_id), artist_folder=not existing)
@@ -460,6 +503,8 @@ async def _run(dl_id: int, a: dict, quality: str) -> None:
                 expected = None
         forget_index()
         folder = await asyncio.to_thread(find_album, a["artist"], a["title"], True)
+        if folder and folder.startswith(root()):
+            await asyncio.to_thread(remove_cut_off, folder)  # never count (or keep) a half-written track
         got = await asyncio.to_thread(count_audio, folder) if folder and folder.startswith(root()) else 0
         missing = sum(1 for e in errors if deemix.unavailable(e))  # tracks Deezer doesn't have at this quality
         others = [e for e in errors if not deemix.unavailable(e)]

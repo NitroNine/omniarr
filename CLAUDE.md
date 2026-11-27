@@ -63,7 +63,7 @@ moved to local; this file carries the context over.
   (config.json + login.json written each run from settings `deezer_arl` (secret), `music_quality`). Tables
   `music_artists` (monitored = grab new releases), `music_albums` (wanted, folder, last_try); `downloads.music_album_id`
   rows show in Activity (importer skips them). One album at a time (job `music`, 30 s), into the artist's existing folder when `artist_dir` finds one (loose name match), else <root>/<Letter> with deemix making Artist/; complete = audio files + tracks Deezer lacks at that quality (`deemix.unavailable`, no fallback: Brendan wants FLAC only, 2026-11-27) ≥ Deezer
-  track count, else retry after 6 h; an album with no track at that quality gets wanted=0 + "Not in FLAC on Deezer" (state `unavailable`, not retried, skipped by Download all missing). Job `music_refresh`: each artist every 12 h, new releases of `music_types`
+  track count, else retry after 6 h; an album with no track at that quality gets wanted=0 + "Not in FLAC on Deezer" (state `unavailable`, not retried, skipped by Download all missing). deemix skips existing files (overwriteFile n), so a run killed mid-track leaves a cut-off FLAC that looks fine: `flac_cut_off` (< 160 kbit/s for its STREAMINFO length) files are deleted before and after each run. Job `music_refresh`: each artist every 12 h, new releases of `music_types`
   (default album,ep), one edition per base title. Owned albums = `find_album` over `root_music` (empty = `/music` mount
   if present; Tower: /music = /mnt/nvme2tb/Navidrome, Brendan's FLAC library served by Theremin, 2026-11-27) + sibling format folders (Compressed, opus files), letter folders.
   Brendan's old Deemix container (/mnt/user/appdata/Deemix) isn't used by Omniarr.
@@ -81,7 +81,7 @@ moved to local; this file carries the context over.
 ## Working on it
 ```bash
 python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/pytest -q                       # 171 tests
+.venv/bin/pytest -q                       # 172 tests
 OMNIARR_CONFIG=./config .venv/bin/uvicorn app.main:app --reload --port 8790
 ```
 Tests fake TMDB/indexers/NZBGet; none of the external services had been exercised

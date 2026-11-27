@@ -278,3 +278,43 @@ def test_album_without_flac_is_not_retried(env, monkeypatch):
     assert 102 not in [r["deezer_id"] for r in music.missing_editions(art)]  # "download all missing" leaves it
     assert deemix.unavailable("A - B :: Your account can't stream the track at the desired bitrate.")
     assert not deemix.unavailable("A - B :: ENOENT: no such file or directory")
+
+
+def _flac(path, seconds, size):
+    rate, samples = 44100, 44100 * seconds
+    info = bytearray(18)
+    info[10:13] = (rate << 4 | 1 << 1).to_bytes(3, "big")  # rate, 2 channels
+    info[13:18] = ((15 << 36) | samples).to_bytes(5, "big")  # 16 bit, total samples
+    data = b"fLaC" + bytes([0x80, 0, 0, 34]) + bytes(info) + bytes(16)
+    with open(path, "wb") as f:
+        f.write(data + bytes(max(0, size - len(data))))
+
+
+def test_cut_off_flac_is_fetched_again(env, monkeypatch):
+    flac, _ = _roots(env)
+    _fake(monkeypatch, ALBUMS)
+    asyncio.run(music.add_album(102))  # wanted; then a first try is cut off after two tracks
+    album = flac / "Z" / "The Zutons" / "Tired of Hanging Around (Deluxe)"
+    album.mkdir(parents=True)
+    _flac(album / "01- Track.flac", 150, 20_000_000)  # ~1 Mbit/s: fine
+    _flac(album / "02- Track.flac", 150, 2_000_000)  # ~107 kbit/s: cut off
+    assert not music.flac_cut_off(str(album / "01- Track.flac")) and music.flac_cut_off(str(album / "02- Track.flac"))
+    music.forget_index()
+    seen = []
+
+    async def fake_download(url, dest, quality, on_progress, key="", artist_folder=True):
+        d = os.path.join(dest, "Tired of Hanging Around (Deluxe)")
+        seen.append(sorted(os.listdir(d)))
+        for i in (2, 3):
+            _flac(os.path.join(d, f"0{i}- Track.flac"), 150, 20_000_000)
+        return []
+    db.save_settings({"deezer_arl": "secret-arl"})
+    monkeypatch.setattr(deemix, "available", lambda: None)
+    monkeypatch.setattr(deemix, "download", fake_download)
+
+    async def run():
+        await music.process()
+        await music._task
+    asyncio.run(run())
+    assert seen == [["01- Track.flac"]]  # the cut-off track was removed before deemix ran
+    assert db.one("SELECT status FROM downloads")["status"] == "imported"
