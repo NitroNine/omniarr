@@ -1166,7 +1166,8 @@ const MU = { term: "", results: null, disc: null };
 const MU_TYPES = { album: "Albums", ep: "EPs", single: "Singles", compile: "Compilations" };
 function muChip(a) {
   if (a.state === "downloading") return `<span class="chip warn">Downloading ${Math.round(a.progress || 0)}%</span>`;
-  if (a.state === "have") return '<span class="chip ok">In library</span>';
+  if (a.state === "have") return `<span class="chip ok"${a.message ? ` title="${esc(a.message)}"` : ""}>In library</span>`;
+  if (a.state === "unavailable") return `<span class="chip" title="${esc(a.message)}. Download it to try again">${esc(a.message)}</span>`;
   if (a.state === "wanted") return a.upcoming ? `<span class="chip">Out ${esc(a.release_date)}</span>` : `<span class="chip bad" title="${esc(a.message || "Waiting for its turn")}">${a.message ? "Retrying" : "Wanted"}</span>`;
   return "";
 }
@@ -1254,13 +1255,13 @@ async function muAlbum(a) {
   modal(`<div class="toolbar"><h2 class="grow">${esc(a.title)}</h2><button onclick="closeModal()">Close</button></div><p class="muted">Loading…</p>`);
   const d = await guard(() => api("/music/album/" + a.deezer_id));
   if (!d) return;
-  Object.assign(a, { state: d.state, progress: d.progress, album_id: d.album_id, folder: d.folder });
+  Object.assign(a, { state: d.state, progress: d.progress, album_id: d.album_id, folder: d.folder, message: d.message });
   const secs = (s) => s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "";
   const multi = new Set(d.track_list.map((t) => t.disc)).size > 1;
-  const btn = d.state === "have" ? `<span class="chip ok">In library</span><div class="small muted">${esc(d.folder || "")}</div>`
+  const btn = d.state === "have" ? `<span class="chip ok">In library</span><div class="small muted">${esc(d.folder || "")}${d.message ? ` · ${esc(d.message)}` : ""}</div>`
     : d.state === "downloading" ? muChip(d)
     : d.state === "wanted" ? `${muChip(d)} <button onclick="muWant(${d.album_id}, false)">Don't download</button>`
-    : `<button class="primary" onclick="muGet(${d.deezer_id}, this)">Download</button>`;
+    : `${d.state === "unavailable" ? `${muChip(d)} ` : ""}<button class="primary" onclick="muGet(${d.deezer_id}, this)">${d.state === "unavailable" ? "Try again" : "Download"}</button>`;
   modal(`<div class="toolbar"><h2 class="grow">${esc(d.title)}</h2><button onclick="closeModal()">Close</button></div>
     <div class="abbook">${d.cover_big || d.cover ? `<img src="${esc(d.cover_big || d.cover)}" alt="">` : ""}<div>
       <p><a href="#/music/artist/${d.artist_id}" onclick="closeModal()">${esc(d.artist || "")}</a></p>

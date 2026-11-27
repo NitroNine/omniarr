@@ -215,7 +215,7 @@ def missing_editions(artist_id: int) -> list[dict]:
     editions is in the library or already wanted."""
     rows = db.q("SELECT * FROM music_albums WHERE artist_id=?", (artist_id,))
     types = wanted_types()
-    covered = {(r["record_type"], base(r["title"])) for r in rows if r["folder"] or r["wanted"]}
+    covered = {(r["record_type"], base(r["title"])) for r in rows if r["folder"] or r["wanted"] or r["message"]}
     todo = [{**r, "explicit": bool(r["explicit"])} for r in rows
             if r["record_type"] in types and (r["record_type"], base(r["title"])) not in covered]
     return _pick_editions(todo)
@@ -320,10 +320,12 @@ def _state(row: dict | None, active: dict[int, dict], artist: str, title: str) -
         if d:
             return {"state": "downloading", "progress": d["progress"], "album_id": row["id"]}
         if row["folder"]:
-            return {"state": "have", "folder": row["folder"], "album_id": row["id"]}
+            return {"state": "have", "folder": row["folder"], "album_id": row["id"], "message": row.get("message")}
         if row["wanted"]:
             return {"state": "wanted", "album_id": row["id"], "message": row.get("message"),
                     "upcoming": bool(row.get("release_date") and row["release_date"] > time.strftime("%Y-%m-%d"))}
+        if row.get("message"):  # e.g. "Not in FLAC on Deezer": not retried until asked again
+            return {"state": "unavailable", "album_id": row["id"], "message": row["message"]}
         return {"state": "", "album_id": row["id"]}
     f = find_album(artist, title)
     return {"state": "have", "folder": f} if f else {"state": ""}
@@ -459,19 +461,30 @@ async def _run(dl_id: int, a: dict, quality: str) -> None:
         forget_index()
         folder = await asyncio.to_thread(find_album, a["artist"], a["title"], True)
         got = await asyncio.to_thread(count_audio, folder) if folder and folder.startswith(root()) else 0
-        if folder and folder.startswith(root()) and got and (got >= (expected or 0)) and (expected or not errors):
+        missing = sum(1 for e in errors if deemix.unavailable(e))  # tracks Deezer doesn't have at this quality
+        others = [e for e in errors if not deemix.unavailable(e)]
+        label = deemix.LABEL.get(quality, quality)
+        complete = (got + missing >= expected) if expected else not others
+        if folder and folder.startswith(root()) and got and complete:
             await asyncio.to_thread(_tidy, folder, True)
-            db.update("music_albums", a["id"], {"folder": folder, "message": None})
+            note = f"{missing} track{'s' if missing != 1 else ''} not in {label} on Deezer" if missing else None
+            db.update("music_albums", a["id"], {"folder": folder, "message": note})
             db.ex("UPDATE downloads SET status='imported', progress=100, dest_dir=?, message=?, updated=datetime('now') WHERE id=?",
-                  (folder, f"{got} tracks", dl_id))
-            db.log(f"Music: downloaded {a['artist']} - {a['title']} ({got} tracks)")
+                  (folder, f"{got} tracks" + (f" ({note})" if note else ""), dl_id))
+            db.log(f"Music: downloaded {a['artist']} - {a['title']} ({got} tracks{', ' + note if note else ''})")
             from .services import mediaserver
             mediaserver.scan_soon([folder])
             return
         if folder and folder.startswith(root()) and not got:
             await asyncio.to_thread(_tidy, folder, False)
             folder = None
-        why = errors[0] if errors else "no files came down"
+        if not got and missing and not others:  # nothing at this quality: a retry won't help
+            msg = f"Not in {label} on Deezer"
+            db.update("music_albums", a["id"], {"wanted": 0, "message": msg})
+            db.ex("UPDATE downloads SET status='failed', message=?, updated=datetime('now') WHERE id=?", (msg, dl_id))
+            db.log(f"Music: {a['artist']} - {a['title']}: {msg} (not retried)", "warn")
+            return
+        why = (others or errors)[0] if errors else "no files came down"
         msg = f"{got} of {expected or '?'} tracks" + (f": {why}" if why else "")
         db.update("music_albums", a["id"], {"message": msg})
         db.ex("UPDATE downloads SET status='failed', message=?, dest_dir=?, updated=datetime('now') WHERE id=?",

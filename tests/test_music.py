@@ -101,7 +101,7 @@ def test_download_lands_in_letter_folder(env, monkeypatch):
             open(os.path.join(d, f"0{i}- Track.flac"), "wb").close()
         open(os.path.join(d, "errors.txt"), "w").close()
         on_progress(100)
-        return [] if len(calls) > 1 else ["The Zutons - Track 3 :: Track not available on Deezer"]
+        return [] if len(calls) > 1 else ["The Zutons - Track 3 :: ECONNRESET: socket hang up"]
     monkeypatch.setattr(deemix, "download", fake_download)
     asyncio.run(music.add_album(102))
 
@@ -236,3 +236,45 @@ def test_try_with_no_tracks_leaves_no_empty_album(env, monkeypatch):
     asyncio.run(run())
     assert db.one("SELECT status FROM downloads")["status"] == "failed"
     assert not os.path.exists(flac / "Z" / "The Zutons" / "Tired of Hanging Around (Deluxe)")
+
+
+def _run_album(monkeypatch, files, errors):
+    db.save_settings({"deezer_arl": "secret-arl"})
+    monkeypatch.setattr(deemix, "available", lambda: None)
+
+    async def fake_download(url, dest, quality, on_progress, key="", artist_folder=True):
+        d = os.path.join(dest, "The Zutons", "Tired of Hanging Around (Deluxe)")
+        os.makedirs(d, exist_ok=True)
+        for i in range(1, files + 1):
+            open(os.path.join(d, f"0{i}- Track.flac"), "wb").close()
+        return errors
+    monkeypatch.setattr(deemix, "download", fake_download)
+    asyncio.run(music.add_album(102))
+
+    async def run():
+        await music.process()
+        await music._task
+    asyncio.run(run())
+    return db.one("SELECT * FROM music_albums WHERE deezer_id=102"), db.one("SELECT * FROM downloads ORDER BY id DESC")
+
+
+def test_tracks_without_flac_dont_keep_the_album_wanted(env, monkeypatch):
+    _roots(env)
+    _fake(monkeypatch, ALBUMS)
+    a, dl = _run_album(monkeypatch, 2, ["The Zutons - Track 3 :: Track not found at desired bitrate and no alternative found!"])
+    assert dl["status"] == "imported" and a["folder"] and a["message"] == "1 track not in FLAC on Deezer"
+    assert music.next_album() is None
+
+
+def test_album_without_flac_is_not_retried(env, monkeypatch):
+    flac, _ = _roots(env)
+    _fake(monkeypatch, ALBUMS)
+    errs = [f"The Zutons - Track {i} :: Track not found at desired bitrate." for i in (1, 2, 3)]
+    a, dl = _run_album(monkeypatch, 0, errs)
+    assert dl["status"] == "failed" and a["wanted"] == 0 and a["message"] == "Not in FLAC on Deezer"
+    assert music.album_state(a["id"])["state"] == "unavailable"
+    assert not os.path.exists(flac / "Z" / "The Zutons" / "Tired of Hanging Around (Deluxe)")
+    art = db.one("SELECT id FROM music_artists")["id"]
+    assert 102 not in [r["deezer_id"] for r in music.missing_editions(art)]  # "download all missing" leaves it
+    assert deemix.unavailable("A - B :: Your account can't stream the track at the desired bitrate.")
+    assert not deemix.unavailable("A - B :: ENOENT: no such file or directory")

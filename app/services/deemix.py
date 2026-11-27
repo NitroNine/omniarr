@@ -16,6 +16,10 @@ from .. import db
 
 CLI = os.environ.get("OMNIARR_DEEMIX", "/opt/deemix/deemix.cjs")
 QUALITY = {"flac": 9, "320": 3, "128": 1}
+LABEL = {"flac": "FLAC", "320": "MP3 320", "128": "MP3 128"}
+# errors that won't change on a retry: Deezer has no file at the chosen quality (fallback to a lower one is off)
+_UNAVAILABLE = ("track not found at desired bitrate", "your account can't stream the track at the desired bitrate",
+                "track not available on deezer", "track not yet encoded")
 _PROGRESS = re.compile(r"Downloading: (\d+(?:\.\d+)?)%")
 # info lines look like "[Album] Artist - Track :: Track downloaded."; anything else after " :: " is an error
 _INFO = ("Getting tags", "Tags got", "Getting download URL", "Download URL got", "Downloading album art",
@@ -81,6 +85,12 @@ def _write_config(quality: str, artist_folder: bool = True) -> None:
     fd = os.open(login, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump({"arl": arl}, f)
+
+
+def unavailable(error: str) -> bool:
+    """True for a track error that a retry won't fix (not at this quality on Deezer)."""
+    msg = error.split(" :: ", 1)[-1].strip().lower()
+    return msg.startswith(_UNAVAILABLE)
 
 
 def parse_line(line: str) -> tuple[float | None, str | None]:
