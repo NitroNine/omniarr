@@ -99,6 +99,7 @@ def test_download_lands_in_letter_folder(env, monkeypatch):
         os.makedirs(d, exist_ok=True)
         for i in range(1, 4 if len(calls) > 1 else 3):  # first try: 2 of 3 tracks
             open(os.path.join(d, f"0{i}- Track.flac"), "wb").close()
+        open(os.path.join(d, "errors.txt"), "w").close()
         on_progress(100)
         return [] if len(calls) > 1 else ["The Zutons - Track 3 :: Track not available on Deezer"]
     monkeypatch.setattr(deemix, "download", fake_download)
@@ -118,6 +119,7 @@ def test_download_lands_in_letter_folder(env, monkeypatch):
     a = db.one("SELECT * FROM music_albums WHERE deezer_id=102")
     assert a["folder"] == str(flac / "Z" / "The Zutons" / "Tired of Hanging Around (Deluxe)")
     assert db.one("SELECT status FROM downloads ORDER BY id DESC")["status"] == "imported"
+    assert not os.path.exists(os.path.join(a["folder"], "errors.txt"))
 
 
 def test_restart_leftovers_retry(env):
@@ -211,3 +213,26 @@ def test_download_goes_into_existing_artist_folder(env, monkeypatch):
     assert calls == [(str(mine), False)]
     assert db.one("SELECT folder FROM music_albums WHERE deezer_id=102")["folder"] == str(mine / "Tired of Hanging Around (Deluxe)")
     assert sorted(os.listdir(flac / "Z")) == ["Zutons, The"]  # no second artist folder
+
+
+def test_try_with_no_tracks_leaves_no_empty_album(env, monkeypatch):
+    flac, _ = _roots(env)
+    _fake(monkeypatch, ALBUMS)
+    db.save_settings({"deezer_arl": "secret-arl"})
+    monkeypatch.setattr(deemix, "available", lambda: None)
+
+    async def fake_download(url, dest, quality, on_progress, key="", artist_folder=True):
+        d = os.path.join(dest, "The Zutons", "Tired of Hanging Around (Deluxe)")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "errors.txt"), "w") as f:
+            f.write("1 | x | ENOENT")
+        return ["The Zutons - x :: ENOENT"]
+    monkeypatch.setattr(deemix, "download", fake_download)
+    asyncio.run(music.add_album(102))
+
+    async def run():
+        await music.process()
+        await music._task
+    asyncio.run(run())
+    assert db.one("SELECT status FROM downloads")["status"] == "failed"
+    assert not os.path.exists(flac / "Z" / "The Zutons" / "Tired of Hanging Around (Deluxe)")

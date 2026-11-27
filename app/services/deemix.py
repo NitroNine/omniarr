@@ -111,7 +111,11 @@ async def download(url: str, dest: str, quality: str = "flac", on_progress: Call
         raise DeemixError("No Deezer ARL set (Settings → Music)")
     os.makedirs(dest, exist_ok=True)
     await asyncio.to_thread(_write_config, quality, artist_folder)
-    env = {**os.environ, "DEEMIX_DATA_DIR": config_dir() + "/", "NODE_ENV": "production"}
+    # deemix keeps cover art in $TMPDIR/deemix-imgs; give it a folder of its own so a /tmp/deemix-imgs left by
+    # another user (e.g. a run as root) can't make every track fail with "ENOENT ... unlink"
+    tmp = os.path.join(config_dir(), "tmp")
+    os.makedirs(tmp, exist_ok=True)
+    env = {**os.environ, "DEEMIX_DATA_DIR": config_dir() + "/", "NODE_ENV": "production", "TMPDIR": tmp}
     proc = await asyncio.create_subprocess_exec(
         "node", CLI, "--path", dest, "--bitrate", quality, url, cwd=config_dir(), env=env,
         stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)

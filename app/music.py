@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shutil
 import time
 
 from . import db
@@ -139,6 +140,20 @@ def artist_dir(artist: str) -> str | None:
             if len(e) > 1 and e != "0-9" and norm(e) == n and os.path.isdir(p):
                 return p
     return None
+
+
+def _tidy(folder: str, done: bool) -> None:
+    """After a download: drop deemix's errors.txt once the album is complete; remove the album folder again when a
+    try brought down no audio at all (only errors.txt / cover art), so the library has no empty albums."""
+    try:
+        if done:
+            p = os.path.join(folder, "errors.txt")
+            if os.path.isfile(p):
+                os.remove(p)
+        elif not count_audio(folder):
+            shutil.rmtree(folder, ignore_errors=True)
+    except OSError:
+        pass
 
 
 def count_audio(folder: str) -> int:
@@ -445,6 +460,7 @@ async def _run(dl_id: int, a: dict, quality: str) -> None:
         folder = await asyncio.to_thread(find_album, a["artist"], a["title"], True)
         got = await asyncio.to_thread(count_audio, folder) if folder and folder.startswith(root()) else 0
         if folder and folder.startswith(root()) and got and (got >= (expected or 0)) and (expected or not errors):
+            await asyncio.to_thread(_tidy, folder, True)
             db.update("music_albums", a["id"], {"folder": folder, "message": None})
             db.ex("UPDATE downloads SET status='imported', progress=100, dest_dir=?, message=?, updated=datetime('now') WHERE id=?",
                   (folder, f"{got} tracks", dl_id))
@@ -452,6 +468,9 @@ async def _run(dl_id: int, a: dict, quality: str) -> None:
             from .services import mediaserver
             mediaserver.scan_soon([folder])
             return
+        if folder and folder.startswith(root()) and not got:
+            await asyncio.to_thread(_tidy, folder, False)
+            folder = None
         why = errors[0] if errors else "no files came down"
         msg = f"{got} of {expected or '?'} tracks" + (f": {why}" if why else "")
         db.update("music_albums", a["id"], {"message": msg})
