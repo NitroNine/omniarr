@@ -52,7 +52,7 @@ def settings_for(quality: str, artist_folder: bool = True) -> dict:
         "createAlbumFolder": True, "albumNameTemplate": "%album%",
         "createCDFolder": True, "createSingleFolder": True, "createPlaylistFolder": True,
         "padTracks": True, "padSingleDigit": True, "paddingSize": "2",
-        "illegalCharacterReplacer": "_",
+        "illegalCharacterReplacer": " ",  # "Legs?" → "Legs " (Omniarr trims it after the album is complete)
         "queueConcurrency": 3,
         "maxBitrate": QUALITY.get(quality, 9),
         "fallbackBitrate": False,  # a FLAC library shouldn't quietly fill up with MP3s

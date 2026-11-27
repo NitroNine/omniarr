@@ -98,7 +98,7 @@ def test_download_lands_in_letter_folder(env, monkeypatch):
         d = os.path.join(dest, *(["The Zutons"] if artist_folder else []), "Tired of Hanging Around (Deluxe)")
         os.makedirs(d, exist_ok=True)
         for i in range(1, 4 if len(calls) > 1 else 3):  # first try: 2 of 3 tracks
-            open(os.path.join(d, f"0{i}- Track.flac"), "wb").close()
+            open(os.path.join(d, f"0{i}- Track.flac" if i < 3 else "03- Track _Why .flac"), "wb").close()
         open(os.path.join(d, "errors.txt"), "w").close()
         on_progress(100)
         return [] if len(calls) > 1 else ["The Zutons - Track 3 :: ECONNRESET: socket hang up"]
@@ -120,6 +120,7 @@ def test_download_lands_in_letter_folder(env, monkeypatch):
     assert a["folder"] == str(flac / "Z" / "The Zutons" / "Tired of Hanging Around (Deluxe)")
     assert db.one("SELECT status FROM downloads ORDER BY id DESC")["status"] == "imported"
     assert not os.path.exists(os.path.join(a["folder"], "errors.txt"))
+    assert sorted(os.listdir(a["folder"])) == ["01- Track.flac", "02- Track.flac", "03- Track Why.flac"]
 
 
 def test_restart_leftovers_retry(env):

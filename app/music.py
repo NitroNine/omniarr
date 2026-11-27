@@ -142,6 +142,20 @@ def artist_dir(artist: str) -> str | None:
     return None
 
 
+def tidy_names(folder: str) -> None:
+    """Track names like the rest of the library: "NN- Title", underscores as spaces, no double or trailing spaces
+    (deemix puts a space where a title has a character a file name can't hold, e.g. "Where's My Legs?").
+    Only once an album is complete: deemix skips files by its own names, so renaming earlier would fetch them again."""
+    for d, _sub, files in os.walk(folder):
+        for f in files:
+            stem, ext = os.path.splitext(f)
+            if ext.lower() not in AUDIO and ext.lower() != ".lrc":
+                continue
+            new = re.sub(r"\s+", " ", stem.replace("_", " ")).strip()
+            if new and new + ext != f and not os.path.exists(os.path.join(d, new + ext)):
+                os.rename(os.path.join(d, f), os.path.join(d, new + ext))
+
+
 def _tidy(folder: str, done: bool) -> None:
     """After a download: drop deemix's errors.txt once the album is complete; remove the album folder again when a
     try brought down no audio at all (only errors.txt / cover art), so the library has no empty albums."""
@@ -150,6 +164,7 @@ def _tidy(folder: str, done: bool) -> None:
             p = os.path.join(folder, "errors.txt")
             if os.path.isfile(p):
                 os.remove(p)
+            tidy_names(folder)
         elif not count_audio(folder):
             shutil.rmtree(folder, ignore_errors=True)
     except OSError:
