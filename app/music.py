@@ -353,6 +353,17 @@ def _save_album(a: dict, artist_row: dict, wanted: bool = False) -> dict:
     return db.one("SELECT * FROM music_albums WHERE id=?", (aid,))
 
 
+_LIVE = re.compile(r"[(\[]\s*live\b|\blive\s*[)\]]|\blive (?:at|in|from|on|@)\b|\s[-–:]\s*live\b|\bunplugged\b|"
+                   r"\bin concert\b|\blive (?:album|recording|session)s?\b|\bthe live\b|^live$|[&+]\s*live\b", re.I)
+
+
+def is_live(title: str) -> bool:
+    """A live album by its title ("Scream Real Loud (Live)", "Live at River Plate", "MTV Unplugged"): never grabbed
+    by Follow or Download all missing (Brendan doesn't want live albums, 2026-11-27). "Long Live…" / "Live Fast…"
+    aren't live albums. Downloading one by hand still works."""
+    return bool(_LIVE.search(title or ""))
+
+
 def _pick_editions(albums: list[dict]) -> list[dict]:
     """One edition per title and type: explicit over clean, then the first Deezer lists."""
     best: dict[tuple, dict] = {}
@@ -382,7 +393,7 @@ def missing_editions(artist_id: int) -> list[dict]:
     types = wanted_types()
     covered = {(r["record_type"], base(r["title"])) for r in rows if r["folder"] or r["wanted"] or r["message"]}
     todo = [{**r, "explicit": bool(r["explicit"])} for r in rows
-            if r["record_type"] in types and (r["record_type"], base(r["title"])) not in covered]
+            if r["record_type"] in types and (r["record_type"], base(r["title"])) not in covered and not is_live(r["title"])]
     return _pick_editions(todo)
 
 
@@ -424,7 +435,7 @@ async def refresh_artist(artist_id: int) -> list[str]:
     for a in _pick_editions(fresh) if fresh else []:
         dup = (a.get("record_type"), base(a["title"])) in have_titles  # another edition of something known
         row = _save_album(a, art)
-        if art["monitored"] and not dup and a.get("record_type") in types and not row["folder"]:
+        if art["monitored"] and not dup and a.get("record_type") in types and not row["folder"] and not is_live(a["title"]):
             db.update("music_albums", row["id"], {"wanted": 1})
             new_titles.append(a["title"])
     for a in fresh:  # the other editions, not wanted

@@ -359,3 +359,22 @@ def test_deemix_config_has_no_disc_tags(env):
     deemix._write_config("flac")
     cfg = json.load(open(os.path.join(deemix.config_dir(), "config.json")))
     assert cfg["tags"]["discNumber"] is False and cfg["createCDFolder"] is True
+
+
+def test_live_albums_are_never_wanted():
+    live = ["Scream Real Loud (Live)", "Live at River Plate", "Live On The Internet", "MTV Unplugged in New York",
+            "Restless & Live", "Symphonic Terror (Live at Wacken 2017)", "At the Garage - Live", "Live in Chicago 2019",
+            "Truth or Consequence (Live from El Coyote)", "Live"]
+    not_live = ["Long Live Heavy Metal", "LIVE.LOVE.A$AP", "Live Fast Diarrhea", "Live Forever", "Livin' on a Prayer",
+                "Alive", "Love Songs for Your Dad", "Oliver's Army"]
+    assert [t for t in live if not music.is_live(t)] == []
+    assert [t for t in not_live if music.is_live(t)] == []
+
+
+def test_follow_and_download_all_skip_live(env, monkeypatch):
+    _roots(env)
+    albums = ALBUMS + [{"deezer_id": 110, "title": "Live at the Liverpool Academy", "record_type": "album",
+                        "release_date": "2007-01-01", "explicit": False, "tracks": 9}]
+    _fake(monkeypatch, albums)
+    st = asyncio.run(music.add_artist(10, "all"))
+    assert {a["deezer_id"]: a for a in st["albums"]}[110]["state"] == ""
