@@ -17,7 +17,7 @@ import time
 from . import db
 from .services import deemix, deezer
 
-ROOT_GUESSES = ["/data/music/FLAC", "/data/media/music/FLAC", "/data/music", "/data/media/music", "/data/Music"]
+ROOT_GUESSES = ["/music", "/data/music/FLAC", "/data/media/music/FLAC", "/data/music", "/data/media/music", "/data/Music"]
 _FORMAT_DIR = re.compile(r"^(flac|lossless|hi-?res|compressed|lossy|mp3|opus|aac|m4a|ogg|vorbis)$", re.I)
 AUDIO = (".flac", ".mp3", ".m4a", ".opus", ".ogg", ".aac", ".wav", ".alac", ".wma")
 RETRY_HOURS = 6

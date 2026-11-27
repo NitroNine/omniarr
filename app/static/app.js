@@ -1289,7 +1289,7 @@ function renderMusicSettings(el, s) {
       ["deezer_arl", "Deezer ARL", "password", "Your Deezer login cookie. On deezer.com, signed in: open the browser's developer tools → Storage / Application → Cookies → www.deezer.com → copy the value of <code>arl</code>. It lasts about 3 months; when downloads say the login failed, paste a new one."],
       ["music_quality", "Quality", [["flac", "FLAC (lossless)"], ["320", "MP3 320 kbps"], ["128", "MP3 128 kbps"]], "Tracks Deezer doesn't have in this quality are skipped, not downloaded in a lower one."],
       ["music_types", "Followed artists: download new", "text", "Deezer release types, comma-separated: <code>album</code>, <code>ep</code>, <code>single</code>, <code>compile</code> (compilations)."],
-      ["root_music", "Music folder", "folder", "Albums go in here as Letter / Artist / Album / 01- Title.flac. Empty = the first of /data/music/FLAC, /data/media/music/FLAC or /data/music that exists. Format folders next to it (e.g. Compressed next to FLAC) are checked for albums you already have."],
+      ["root_music", "Music folder", "folder", "Albums go in here as Letter / Artist / Album / 01- Title.flac. Empty = the /music mount if the container has one, else the first of /data/music/FLAC, /data/media/music/FLAC or /data/music that exists. Format folders next to it (e.g. Compressed next to FLAC) are checked for albums you already have."],
     ], s)}
     <span></span><div class="toolbar"><button class="primary" id="musave">Save</button><button id="mutest">Save &amp; check login</button></div>
     <span></span><div id="mures2" class="small"></div></div>`;

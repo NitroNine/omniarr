@@ -225,7 +225,8 @@ Omniarr has a built-in torrent client (qBittorrent) for torrents you add yoursel
 
 **Settings → Music**: paste your Deezer **ARL** (your login cookie: on deezer.com, signed in, open the browser's
 developer tools → Storage / Application → Cookies → `www.deezer.com` → `arl`), pick the quality and the music folder,
-then **Save & check login**. FLAC needs a Deezer Premium (HiFi) plan; an ARL lasts about three months.
+then **Save & check login**. If your music library lives outside the Data share, map it to `/music` (the template's
+optional **Music** path) and Omniarr uses it automatically. FLAC needs a Deezer Premium (HiFi) plan; an ARL lasts about three months.
 
 - **Music** tab: search Deezer, open an artist, and **Add artist**: *Follow* (new releases download by themselves),
   *Download all missing* (also the albums you don't have, one edition of each), or *Just add*.
